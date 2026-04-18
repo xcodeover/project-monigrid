@@ -1,8 +1,13 @@
 # Monitoring Backend (monigrid-be)
 
 monigrid-fe와 연동되는 Python 기반 모니터링 백엔드입니다.
-`config.json` + `sql/*.sql` 조합으로 REST API를 구성하고, JDBC로 DB 조회 결과를 제공합니다.
+**공유 설정 DB (`monigrid_*` 테이블)** 에 저장된 연결·API·SQL 정보를 바탕으로 REST API 를 구성하고, JDBC 로 대상 DB 조회 결과를 제공합니다.
 네트워크 테스트(Ping/Telnet), 서버 리소스 모니터링(CPU/Memory/Disk), DB 성능 진단 등의 기능을 포함합니다.
+
+> **v2.0+ 주요 변경**
+> - 설정/SQL 저장소가 파일(`config.json`, `sql/*.sql`)에서 **공유 설정 DB** 로 이전되었습니다 (Active-Active 대응).
+> - 부트스트랩은 [`initsetting.json`](initsetting.json) 으로 설정 DB 접속 정보를 읽고, 최초 1회 `config.json`·`sql/*.sql` 을 설정 DB 로 시드한 뒤 파일을 `.bak` 으로 이름 변경합니다.
+> - 대시보드 설정 편집기 / SQL 편집기에서의 변경은 `monigrid_*` 테이블에 저장되어 양 A-A 노드에 즉시 반영됩니다.
 
 ---
 
@@ -14,8 +19,8 @@ monigrid-fe와 연동되는 Python 기반 모니터링 백엔드입니다.
 4. [빠른 시작 (Quick Start)](#4-빠른-시작-quick-start)
 5. [개발 모드 실행](#5-개발-모드-실행)
 6. [EXE 빌드 (PyInstaller)](#6-exe-빌드-pyinstaller)
-7. [config.json 설정](#7-configjson-설정)
-8. [SQL 파일 작성](#8-sql-파일-작성)
+7. [설정 (설정 DB 스키마 / 시드 JSON 구조)](#7-설정-설정-db-스키마--시드-json-구조)
+8. [SQL 쿼리 작성](#8-sql-쿼리-작성)
 9. [DB 드라이버 준비 (JDBC)](#9-db-드라이버-준비-jdbc)
 10. [주요 API 레퍼런스](#10-주요-api-레퍼런스)
 11. [환경 변수](#11-환경-변수)
@@ -23,6 +28,7 @@ monigrid-fe와 연동되는 Python 기반 모니터링 백엔드입니다.
 13. [운영 가이드](#13-운영-가이드)
 14. [IIS 단일 사이트 배포 (Frontend + Backend 같은 포트)](#14-iis-단일-사이트-배포-frontend--backend-같은-포트)
 15. [트러블슈팅](#15-트러블슈팅)
+16. [initsetting.json (설정 DB 접속 정보)](#16-initsettingjson-설정-db-접속-정보)
 
 ---
 
@@ -30,9 +36,10 @@ monigrid-fe와 연동되는 Python 기반 모니터링 백엔드입니다.
 
 ### 데이터 수집 & 캐싱
 
-- **설정 기반 REST API 라우팅** — `config.json`의 `apis[].rest_api_path`로 동적 엔드포인트 생성
-- **SQL 파일 기반 쿼리 실행** — `sql/<sql_id>.sql` 파일을 읽어 JDBC로 실행
+- **설정 DB 기반 REST API 라우팅** — `monigrid_apis` 테이블의 `rest_api_path` 로 동적 엔드포인트 생성
+- **설정 DB 기반 SQL 쿼리 실행** — `monigrid_sql_queries.content` 를 읽어 JDBC 로 실행
 - **DB 연결 풀** — 스레드 안전한 JDBC 커넥션 풀 관리
+- **설정 DB 자동 재연결** — 유휴 연결이 서버 측(`wait_timeout` 등)에서 끊겨도 커서 발급 시 `Connection.isValid(2)` 로 확인 후 자동 재연결
 - **백그라운드 캐시 자동 갱신** — 엔드포인트별 주기적 캐시 리프레시 (데몬 스레드)
 - **기동 시 캐시 워밍업** — 서버 시작 시 모든 활성 엔드포인트의 DB 쿼리를 병렬 실행하여 캐시 사전 적재
 
@@ -58,7 +65,7 @@ monigrid-fe와 연동되는 Python 기반 모니터링 백엔드입니다.
 ### 운영 편의
 
 - **설정 핫 리로드** — `POST /dashboard/reload-config`로 서버 재시작 없이 설정 반영
-- **SQL Editor** — 대시보드에서 SQL 파일 조회·수정 (관리자 전용, SELECT만 허용)
+- **SQL Editor** — 대시보드에서 설정 DB의 SQL 쿼리 조회·수정 (관리자 전용, SELECT만 허용; MariaDB/MSSQL 은 `FROM` 없는 SELECT 허용, Oracle 만 `FROM DUAL` 요구)
 - **일자별 로그 파일** — 자동 생성 및 보관 기간 자동 정리
 
 ---
@@ -103,35 +110,36 @@ pip install -r requirements.txt
 
 ```text
 monigrid-be/
-├── monigrid_be.py         # Flask 앱 진입점, 라우트 정의
-├── monigrid_be.spec       # PyInstaller 빌드 스펙
-├── build_backend_exe.bat      # 원클릭 EXE 빌드 스크립트
+├── monigrid_be.py              # Flask 앱 진입점, 라우트 정의
+├── monigrid_be.spec            # PyInstaller 빌드 스펙
+├── build_backend_exe.bat       # 원클릭 EXE 빌드 스크립트
 ├── requirements.txt
-├── pyproject.toml             # 프로젝트 메타데이터
-├── .env.example               # 환경변수 참고 파일
-├── config.json                # 서버·DB·API 설정
-├── sql/                       # SQL 쿼리 파일 (sql_id.sql)
-│   ├── status.sql
-│   ├── alerts.sql
-│   ├── metrics.sql
-│   └── mssql-health.sql
-├── drivers/                   # JDBC 드라이버 JAR 파일
+├── pyproject.toml              # 프로젝트 메타데이터
+├── .env.example                # 환경변수 참고 파일
+├── initsetting.json            # 설정 DB 접속 정보 (부트스트랩) ★
+├── initsetting.example.json    # 템플릿 (운영자가 복사하여 편집)
+├── config.json                 # 최초 1회 시드 소스 (시드 후 config.json.bak 로 rename)
+├── sql/                        # 최초 1회 시드 소스 (시드 후 sql.bak/ 로 rename)
+├── drivers/                    # JDBC 드라이버 JAR (설정 DB + 대상 DB 용)
 │   ├── ojdbc11.jar
 │   ├── mariadb-java-client-3.4.1.jar
 │   └── mssql-jdbc-12.8.1.jre11.jar
-├── logs/                      # 날짜별 로그 파일 (자동 생성)
-├── app/                       # 핵심 비즈니스 로직 패키지
-│   ├── __init__.py            # 패키지 초기화
-│   ├── auth.py                # JWT 인증, 로그인 검증
-│   ├── cache.py               # 엔드포인트 캐시 엔트리 관리
-│   ├── config.py              # config.json 파싱, 데이터클래스
-│   ├── db.py                  # JVM 라이프사이클, JDBC 커넥션 풀
-│   ├── exceptions.py          # 커스텀 예외 클래스
-│   ├── logging_setup.py       # 로깅 설정 (파일·콘솔)
-│   ├── service.py             # MonitoringBackend 서비스 (핵심 로직)
-│   ├── sql_validator.py       # SQL SELECT 검증, 오타 탐지
-│   └── utils.py               # 유틸리티 함수
-└── exe_api_smoke_test.py      # EXE 기동 후 빠른 API 검증 스크립트
+├── logs/                       # 날짜별 로그 파일 (자동 생성)
+├── app/                        # 핵심 비즈니스 로직 패키지
+│   ├── __init__.py             # 패키지 초기화
+│   ├── auth.py                 # JWT 인증, 로그인 검증
+│   ├── cache.py                # 엔드포인트 캐시 엔트리 관리
+│   ├── config.py               # 설정 DTO / AppConfig 데이터클래스
+│   ├── db.py                   # JVM 라이프사이클, JDBC 커넥션 풀
+│   ├── exceptions.py           # 커스텀 예외 클래스
+│   ├── jdbc_executor.py        # 엔드포인트 SQL 실행기
+│   ├── logging_setup.py        # 로깅 설정 (파일·콘솔)
+│   ├── service.py              # MonitoringBackend 서비스 (핵심 로직)
+│   ├── settings_store.py       # 설정 DB (SettingsStore, SqlRepository) ★
+│   ├── sql_editor_service.py   # SQL 편집기 서비스
+│   ├── sql_validator.py        # SQL SELECT 검증 (dialect-aware)
+│   └── utils.py                # 유틸리티 함수
+└── exe_api_smoke_test.py       # EXE 기동 후 빠른 API 검증 스크립트
 ```
 
 ### EXE 빌드 결과물 트리
@@ -218,10 +226,11 @@ python monigrid_be.py
 기본 접속: `http://127.0.0.1:5000`
 
 서버 시작 시 다음이 자동으로 수행됩니다:
-1. `config.json` 로드 및 유효성 검증
-2. JVM 시작 (JDBC 드라이버 JAR 클래스패스 포함)
-3. 활성 엔드포인트 캐시 워밍업 (모든 DB 쿼리 1회 병렬 실행)
-4. 백그라운드 캐시 리프레시 스레드 시작
+1. `initsetting.json` 로드 → 설정 DB 에 연결 (JVM 시작, JDBC 드라이버 JAR 클래스패스 포함)
+2. 최초 기동 시: `monigrid_*` 테이블 DDL 생성 + `config.json` / `sql/*.sql` 시드 → 원본을 `.bak` 으로 rename
+3. 설정 DB 에서 `AppConfig` (연결·API·SQL·검증 규칙) 로드 및 유효성 검증
+4. 활성 엔드포인트 캐시 워밍업 (모든 DB 쿼리 1회 병렬 실행)
+5. 백그라운드 캐시 리프레시 스레드 시작
 
 ---
 
@@ -285,7 +294,9 @@ python exe_api_smoke_test.py
 
 ---
 
-## 7. config.json 설정
+## 7. 설정 (설정 DB 스키마 / 시드 JSON 구조)
+
+> 아래 JSON 구조는 **최초 기동 시 설정 DB 로 시드되는 `config.json` 의 형태** 이자, 대시보드 **설정 편집기** 가 설정 DB 테이블을 노출할 때 사용하는 논리적 스키마입니다. 운영 중에는 파일이 아닌 `monigrid_*` 테이블이 진실 공급원(source of truth) 입니다. 부트스트랩 파일에 대한 설명은 [initsetting.json](#16-initsettingjson-설정-db-접속-정보) 을 참조하세요.
 
 ### 7.1 전체 구조
 
@@ -411,28 +422,29 @@ python exe_api_smoke_test.py
 
 ---
 
-## 8. SQL 파일 작성
+## 8. SQL 쿼리 작성
 
-- 파일 위치: `sql/<sql_id>.sql`
-- `apis[].sql_id` 값과 파일명이 일치해야 합니다.
+- 저장 위치: **설정 DB** 의 `monigrid_sql_queries` 테이블 (`sql_id` PK, `content` TEXT/CLOB)
+- `apis[].sql_id` 와 `monigrid_sql_queries.sql_id` 가 매핑됩니다.
 - **SELECT / WITH(CTE) 구문만 허용**합니다. UPDATE·DELETE·DROP 등은 차단됩니다.
 
-예시 (`sql/status.sql`):
+예시 (`status` 엔트리 내용):
 
 ```sql
 SELECT app_name, status, cpu_usage, memory_usage, collected_at
 FROM app_status
 ORDER BY collected_at DESC
-LIMIT 100;
+LIMIT 100
 ```
 
-> EXE 실행 환경에서는 `monigrid-be.exe` 옆의 `sql/` 폴더를 읽습니다.
-> SQL 파일을 수정한 후 `POST /dashboard/reload-config` 호출 권장.
+> 대시보드 **SQL 편집기** 에서 저장하면 `monigrid_sql_queries` 에 즉시 반영 + 엔드포인트 캐시가 자동 갱신됩니다. 별도 reload-config 호출이 필요하지 않습니다.
+> 파일 기반 편집이 필요하면 `sql.bak/` 에 남은 시드 파일을 편집한 뒤 SQL 편집기로 복사-붙여넣기하거나, `POST /dashboard/sql-editor/files` API 를 활용하세요.
 
 ### SQL 편집 주의사항
 
-- SQL 오타 자동 감지: `config.json`의 `sql_validation.typo_patterns`에 정의된 패턴으로 검사
-- 세미콜론(`;`)은 있어도 없어도 무방
+- SQL 오타 자동 감지: 설정 DB 의 `sql_validation.typo_patterns` 에 정의된 패턴으로 검사
+- **FROM 절**: Oracle 은 필수 (스칼라 SELECT 에도 `FROM DUAL` 필요). MariaDB/MSSQL 은 `SELECT NOW()`, `SELECT 1+1` 등 FROM 없는 SELECT 허용
+- 세미콜론(`;`)은 있어도 없어도 무방 (단일 문장만 허용)
 - 주석(`--`, `/* */`)은 허용
 
 ---
@@ -1163,3 +1175,52 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:5000/dashboard/cache/st
 2. `POST /dashboard/cache/refresh`로 수동 갱신 시도
 3. 로그 파일에서 `Cache refresh failed` 검색
 4. DB 연결 문제인 경우 `reset_connection: true` 옵션으로 강제 재연결
+
+### 15.10 설정 DB `Connection is closed`
+
+**증상**: `/api/*` 가 500 으로 응답하고 로그에 `java.sql.SQLNonTransientConnectionException: (conn=NN) Connection is closed` 기록됨 — 설정 DB(MariaDB 등) 의 `wait_timeout` 으로 유휴 연결이 서버 측에서 끊긴 경우입니다.
+
+**해결**:
+- v2.0+ 는 커서 발급 직전에 `Connection.isValid(2)` 로 상태를 확인하고 자동 재연결하므로, 재기동 없이 다음 요청부터 정상화됩니다.
+- 반복적으로 발생하면 설정 DB 서버의 `wait_timeout` 을 늘리거나 네트워크 방화벽의 idle timeout 을 확인하세요.
+
+---
+
+## 16. initsetting.json (설정 DB 접속 정보)
+
+설정 DB 에 접속하기 위한 부트스트랩 파일입니다. 실행 경로 기준으로 아래 위치에서 찾습니다(오버라이드: 환경변수 `MONITORING_INIT_SETTINGS_PATH`):
+
+- **개발 모드**: `monigrid_be.py` 와 같은 폴더 (`monigrid-be/initsetting.json`)
+- **onedir 빌드**: `monigrid-be.exe` 와 같은 폴더 (`dist/initsetting.json`)
+
+### 16.1 예시 (MariaDB)
+
+```json
+{
+    "settings_db": {
+        "db_type": "mariadb",
+        "jdbc_driver_class": "org.mariadb.jdbc.Driver",
+        "jdbc_url": "jdbc:mariadb://192.168.0.71:3336/monigrid_db",
+        "username": "monigrid",
+        "password": "change-me",
+        "jdbc_jars": ["drivers/mariadb-java-client-3.4.1.jar"]
+    }
+}
+```
+
+| 키 | 설명 |
+|----|------|
+| `db_type` | `oracle` / `mariadb` / `mssql` |
+| `jdbc_driver_class` | JDBC 드라이버 클래스 FQCN |
+| `jdbc_url` | JDBC 접속 URL |
+| `username` / `password` | 설정 DB 계정 — **최초 기동 시 DDL 권한 필요** (테이블 자동 생성) |
+| `jdbc_jars` | JDBC 드라이버 JAR 경로 배열 |
+
+### 16.2 최초 기동 시 시드 동작
+
+1. `initsetting.json` 로드 → JDBC 연결 수립
+2. `monigrid_settings_meta.bootstrapped` 조회 → `true` 면 시드 건너뜀
+3. `false` / 테이블 없음 → DDL 실행 후 `config.json` 및 `sql/*.sql` 내용을 각각 `monigrid_settings_kv` / `monigrid_connections` / `monigrid_apis` / `monigrid_sql_queries` 로 삽입
+4. 시드 완료 시 원본을 `config.json.bak` / `sql.bak/` 로 rename
+
+이후 기동부터는 파일이 읽히지 않으며, 운영 중의 모든 설정 변경은 대시보드 편집기 또는 `PUT /dashboard/config` / `PUT /dashboard/sql-editor/*` API 를 통해 설정 DB 에 기록됩니다.

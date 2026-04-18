@@ -2,6 +2,10 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom";
 import apiClient from "../services/http.js";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import {
+    sortAlertsFirst,
+    useAutoScrollTopOnDataChange,
+} from "../utils/widgetListHelpers";
 import "./ApiCard.css";
 import "./NetworkTestCard.css";
 
@@ -293,6 +297,22 @@ const NetworkTestCard = ({
         onAlarmChange(statusSummary.fail > 0 ? "dead" : "live");
     }, [statusSummary, onAlarmChange]);
 
+    /* ── NG(실패/에러) 대상을 목록 상단으로 끌어올림 ──────────────── */
+    // statusSummary 의 fail 판정과 동일한 기준: 체크 완료 & success=false.
+    const displayTargets = useMemo(
+        () =>
+            sortAlertsFirst(targets, (t) => {
+                const s = targetStates[t.id];
+                if (!s || s.lastChecked == null) return false;
+                return !s.success;
+            }),
+        [targets, targetStates],
+    );
+
+    /* ── 갱신 주기마다 목록 스크롤 최상단으로 ─────────────────────── */
+    const scrollRef = useRef(null);
+    useAutoScrollTopOnDataChange(scrollRef, targetStates);
+
     /* ── settings modal state ────────────────────────────────────── */
     const [showSettings, setShowSettings] = useState(false);
     const hasAutoOpened = useRef(false);
@@ -521,8 +541,11 @@ const NetworkTestCard = ({
                         <button type="button" className="size-preset-btn" onClick={openSettings}>설정 열기</button>
                     </div>
                 ) : (
-                    <div className={`net-list net-list-${displayMode}`}>
-                        {targets.map((t) => (
+                    <div
+                        className={`net-list net-list-${displayMode}`}
+                        ref={scrollRef}
+                    >
+                        {displayTargets.map((t) => (
                             <TargetRow
                                 key={t.id}
                                 target={t}

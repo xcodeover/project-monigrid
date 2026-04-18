@@ -12,6 +12,8 @@ const DashboardHeader = ({
     widgetCount,
     user,
     isAdmin,
+    isFullscreen,
+    onToggleFullscreen,
     onOpenSettings,
     onOpenConfigEditor,
     onOpenAddApi,
@@ -21,7 +23,9 @@ const DashboardHeader = ({
     onLogout,
 }) => {
     return (
-        <header className='dashboard-header'>
+        <header
+            className={`dashboard-header${isFullscreen ? " dashboard-header-compact" : ""}`}
+        >
             <div className='header-left'>
                 <h1 className='app-title'>
                     <AppLogo size={34} className='app-title-logo' />
@@ -50,6 +54,14 @@ const DashboardHeader = ({
                         title='로그아웃'
                     >
                         ⎋
+                    </button>
+                    <button
+                        className={`fullscreen-btn icon${isFullscreen ? " active" : ""}`}
+                        onClick={onToggleFullscreen}
+                        title={isFullscreen ? "전체 화면 종료" : "전체 화면"}
+                        aria-pressed={isFullscreen ? "true" : "false"}
+                    >
+                        ⛶
                     </button>
                 </div>
 

@@ -4,8 +4,8 @@ import {
     Bar,
     BarChart,
     CartesianGrid,
-    Cell,
     Legend,
+    Rectangle,
     ReferenceLine,
     ResponsiveContainer,
     Tooltip,
@@ -71,22 +71,6 @@ const formatInterval = (sec) => {
     return `every ${sec}s`;
 };
 
-/**
- * Tooltip formatter — reads the raw value straight from the hovered row
- * (entry.payload[dataKey]) instead of trusting entry.value, because recharts
- * can report 0 when `<Cell>` + `activeBar` are combined. This guarantees the
- * number shown in the tooltip matches the bar the user is actually pointing at.
- */
-const formatTooltipValue = (value, _name, entry) => {
-    const rawValue =
-        entry?.payload != null && entry?.dataKey != null
-            ? entry.payload[entry.dataKey]
-            : value;
-    const num = Number(rawValue);
-    if (Number.isFinite(num)) return num.toLocaleString();
-    return String(rawValue ?? "—");
-};
-
 const TOOLTIP_CONTENT_STYLE = {
     background: "rgba(13, 18, 27, 0.96)",
     border: "1px solid rgba(148, 163, 184, 0.22)",
@@ -100,7 +84,13 @@ const TOOLTIP_LABEL_STYLE = {
     fontWeight: 600,
     marginBottom: "4px",
 };
-const TOOLTIP_ITEM_STYLE = { color: "#e2e8f0" };
+const TOOLTIP_ITEM_STYLE = { color: "#e2e8f0", lineHeight: 1.5 };
+
+const formatTooltipNumber = (raw) => {
+    if (raw == null || raw === "") return "—";
+    const num = Number(raw);
+    return Number.isFinite(num) ? num.toLocaleString() : String(raw);
+};
 
 const BarChartCard = ({
     title,
@@ -146,6 +136,10 @@ const BarChartCard = ({
     const [thresholdsDraft, setThresholdsDraft] = useState(() =>
         normalizeThresholds(chartSettings?.thresholds),
     );
+    // recharts 3.8.1: <Cell>/activeBar 경로의 tooltip payload 가 첫 row 로 고정되는
+    // 버그가 있어, 마우스 이동 이벤트에서 활성 index 를 직접 추적해
+    // chartRows 로부터 올바른 row 를 룩업한다.
+    const [activeIdx, setActiveIdx] = useState(null);
 
     useEffect(() => setTitleDraft(title), [title]);
     useEffect(() => setEndpointDraft(endpoint), [endpoint]);
@@ -213,6 +207,22 @@ const BarChartCard = ({
     const useCellColors = singleYMode && chartRows.length <= CELL_COLOR_THRESHOLD;
     // 대량 데이터에서 입장/퇴장 애니메이션은 렌더링 비용이 높으므로 비활성화
     const animationActive = chartRows.length <= ANIMATION_THRESHOLD;
+
+    // Diagnostics: log the exact chartRows + key mapping recharts receives.
+    useEffect(() => {
+        // eslint-disable-next-line no-console
+        console.log("[BarChartCard data]", {
+            title,
+            xAxisKey,
+            yAxisKeys,
+            chartRowsLength: chartRows.length,
+            firstThreeRows: chartRows.slice(0, 3),
+            sampleValues: chartRows.map((r) => ({
+                x: xAxisKey ? r?.[xAxisKey] : undefined,
+                y0: yAxisKeys[0] ? r?.[yAxisKeys[0]] : undefined,
+            })),
+        });
+    }, [chartRows, xAxisKey, yAxisKeys, title]);
 
     const handleApplySettings = () => {
         const resolvedX = xKeyDraft || xAxisKey;
@@ -781,6 +791,36 @@ const BarChartCard = ({
                                 layout={rechartsLayout}
                                 data={chartRows}
                                 margin={{ top: 6, right: 16, left: 0, bottom: truncated ? 0 : 4 }}
+                                onMouseMove={(state) => {
+                                    // recharts 3.8.1 의 state.activeTooltipIndex 는
+                                    // String(clampedIndex) 로 반환되므로 Number 변환이 필요.
+                                    const raw = state?.activeTooltipIndex;
+                                    const idx =
+                                        raw == null || raw === ""
+                                            ? NaN
+                                            : Number(raw);
+                                    // eslint-disable-next-line no-console
+                                    console.log("[BarChart onMouseMove]", {
+                                        rawActiveTooltipIndex: raw,
+                                        parsedIdx: idx,
+                                        isTooltipActive: state?.isTooltipActive,
+                                        activeLabel: state?.activeLabel,
+                                    });
+                                    if (
+                                        state?.isTooltipActive &&
+                                        Number.isInteger(idx) &&
+                                        idx >= 0
+                                    ) {
+                                        setActiveIdx(idx);
+                                    } else {
+                                        setActiveIdx(null);
+                                    }
+                                }}
+                                onMouseLeave={() => {
+                                    // eslint-disable-next-line no-console
+                                    console.log("[BarChart onMouseLeave]");
+                                    setActiveIdx(null);
+                                }}
                             >
                                 <CartesianGrid
                                     strokeDasharray='3 3'
@@ -826,10 +866,116 @@ const BarChartCard = ({
                                 )}
                                 <Tooltip
                                     cursor={{ fill: "rgba(255,255,255,0.04)" }}
-                                    contentStyle={TOOLTIP_CONTENT_STYLE}
-                                    labelStyle={TOOLTIP_LABEL_STYLE}
-                                    itemStyle={TOOLTIP_ITEM_STYLE}
-                                    formatter={formatTooltipValue}
+                                    content={(tooltipProps) => {
+                                        if (!tooltipProps?.active) return null;
+                                        // eslint-disable-next-line no-console
+                                        console.log("[Tooltip content]", {
+                                            active: tooltipProps?.active,
+                                            label: tooltipProps?.label,
+                                            activeIdxState: activeIdx,
+                                            payloadItems:
+                                                tooltipProps?.payload?.map(
+                                                    (p) => ({
+                                                        dataKey: p?.dataKey,
+                                                        name: p?.name,
+                                                        value: p?.value,
+                                                        payloadRow: p?.payload,
+                                                    }),
+                                                ) ?? null,
+                                            xAxisKey,
+                                            yAxisKeys,
+                                            chartRowsCount: chartRows.length,
+                                            firstRow: chartRows[0],
+                                        });
+                                        // recharts payload 가 신뢰할 수 없다는 전제로,
+                                        // 우리가 직접 추적한 activeIdx 를 1순위로 사용하고,
+                                        // 그것이 없으면 label(카테고리 값)로 chartRows 에서
+                                        // row 를 찾아낸다. `payload[0].payload` 참조 매칭은
+                                        // 내부적으로 recharts 가 복제할 수 있으므로 제외.
+                                        const labelKey = xAxisKey;
+                                        const labelIdx =
+                                            labelKey &&
+                                            tooltipProps.label != null &&
+                                            tooltipProps.label !== ""
+                                                ? chartRows.findIndex(
+                                                      (r) =>
+                                                          String(
+                                                              r?.[labelKey],
+                                                          ) ===
+                                                          String(
+                                                              tooltipProps.label,
+                                                          ),
+                                                  )
+                                                : -1;
+                                        const idx =
+                                            activeIdx != null
+                                                ? activeIdx
+                                                : labelIdx >= 0
+                                                  ? labelIdx
+                                                  : null;
+                                        if (idx == null || !chartRows[idx])
+                                            return null;
+                                        const row = chartRows[idx];
+                                        const labelValue = xAxisKey
+                                            ? row?.[xAxisKey]
+                                            : tooltipProps.label;
+                                        const items = (
+                                            tooltipProps.payload?.length
+                                                ? tooltipProps.payload.map(
+                                                      (p) => ({
+                                                          key:
+                                                              typeof p?.dataKey ===
+                                                              "string"
+                                                                  ? p.dataKey
+                                                                  : p?.name,
+                                                          name:
+                                                              p?.name ??
+                                                              p?.dataKey,
+                                                          color:
+                                                              p?.color ||
+                                                              p?.fill ||
+                                                              "#e2e8f0",
+                                                      }),
+                                                  )
+                                                : yAxisKeys.map((k, i) => ({
+                                                      key: k,
+                                                      name: k,
+                                                      color:
+                                                          CHART_COLORS[
+                                                              i %
+                                                                  CHART_COLORS.length
+                                                          ],
+                                                  }))
+                                        ).filter((it) => it.key);
+                                        return (
+                                            <div style={TOOLTIP_CONTENT_STYLE}>
+                                                {labelValue != null &&
+                                                    labelValue !== "" && (
+                                                        <div
+                                                            style={
+                                                                TOOLTIP_LABEL_STYLE
+                                                            }
+                                                        >
+                                                            {labelValue}
+                                                        </div>
+                                                    )}
+                                                {items.map((it, i) => (
+                                                    <div
+                                                        key={`${it.key}-${i}`}
+                                                        style={{
+                                                            ...TOOLTIP_ITEM_STYLE,
+                                                            color: it.color,
+                                                        }}
+                                                    >
+                                                        {it.name}:{" "}
+                                                        {formatTooltipNumber(
+                                                            row?.[it.key],
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        );
+                                    }}
                                 />
                                 {activeThresholds.map((t, idx) => {
                                     const numericValue = Number(t.value);
@@ -879,6 +1025,9 @@ const BarChartCard = ({
                                 {yAxisKeys.map((key, i) =>
                                     useCellColors ? (
                                         // 소량 데이터: 막대별 개별 색상
+                                        // recharts 3.x: deprecated <Cell> + activeBar 조합은
+                                        // tooltip payload 가 첫 row 로 고정되는 버그가 있어
+                                        // shape render prop 으로 per-bar 색상을 적용한다.
                                         <Bar
                                             key={key}
                                             dataKey={key}
@@ -890,21 +1039,23 @@ const BarChartCard = ({
                                             }
                                             maxBarSize={40}
                                             activeBar={{ fillOpacity: 0.75, stroke: "rgba(255,255,255,0.18)", strokeWidth: 1 }}
-                                        >
-                                            {chartRows.map((_, idx) => (
-                                                <Cell
-                                                    key={idx}
-                                                    fill={
-                                                        CHART_COLORS[
-                                                            idx %
-                                                                CHART_COLORS.length
-                                                        ]
-                                                    }
-                                                />
-                                            ))}
-                                        </Bar>
+                                            shape={(barProps) => {
+                                                const idx = barProps?.index ?? 0;
+                                                return (
+                                                    <Rectangle
+                                                        {...barProps}
+                                                        fill={
+                                                            CHART_COLORS[
+                                                                idx %
+                                                                    CHART_COLORS.length
+                                                            ]
+                                                        }
+                                                    />
+                                                );
+                                            }}
+                                        />
                                     ) : (
-                                        // 대량 데이터: 단일/계열 색상 (Cell 컴포넌트 생성 없음)
+                                        // 대량 데이터: 단일/계열 색상
                                         <Bar
                                             key={key}
                                             dataKey={key}

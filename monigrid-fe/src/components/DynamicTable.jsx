@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { doesRowMatchCriteria, evaluateCriteria } from "../utils/helpers";
+import { useAutoScrollTopOnDataChange } from "../utils/widgetListHelpers";
 import "./DynamicTable.css";
 
 /**
@@ -38,6 +39,9 @@ const DynamicTable = ({
         direction: "asc",
     });
     const [expandedRows, setExpandedRows] = useState(new Set());
+    // 갱신 주기마다 테이블 스크롤을 상단으로 리셋
+    const scrollRef = useRef(null);
+    useAutoScrollTopOnDataChange(scrollRef, data);
 
     // 데이터가 배열인지 객체인지 확인하고 배열로 정규화
     const normalizeData = (rawData) => {
@@ -296,7 +300,7 @@ const DynamicTable = ({
                 </div>
             )}
 
-            <div className='table-wrapper'>
+            <div className='table-wrapper' ref={scrollRef}>
                 <table
                     className='dynamic-table'
                     style={{ fontSize: `${fontSize}px` }}

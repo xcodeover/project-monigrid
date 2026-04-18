@@ -111,6 +111,30 @@ const DashboardPage = () => {
     const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(rememberedApiBaseUrl);
     const [apiBaseUrlSaved, setApiBaseUrlSaved] = useState(false);
     const [backendVersion, setBackendVersion] = useState(null);
+    const [isFullscreen, setIsFullscreen] = useState(
+        () => typeof document !== "undefined" && !!document.fullscreenElement,
+    );
+
+    useEffect(() => {
+        const handleFullscreenChange = () => {
+            setIsFullscreen(!!document.fullscreenElement);
+        };
+        document.addEventListener("fullscreenchange", handleFullscreenChange);
+        return () => {
+            document.removeEventListener(
+                "fullscreenchange",
+                handleFullscreenChange,
+            );
+        };
+    }, []);
+
+    const handleToggleFullscreen = () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen?.().catch(() => {});
+        } else {
+            document.exitFullscreen?.().catch(() => {});
+        }
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -544,6 +568,8 @@ const DashboardPage = () => {
                 widgetCount={dashboardWidgets.length}
                 user={user}
                 isAdmin={isAdmin}
+                isFullscreen={isFullscreen}
+                onToggleFullscreen={handleToggleFullscreen}
                 onOpenSettings={() => setShowDashboardSettings(true)}
                 onOpenConfigEditor={() => setShowConfigEditor(true)}
                 onOpenAddApi={() => setShowAddApi(true)}

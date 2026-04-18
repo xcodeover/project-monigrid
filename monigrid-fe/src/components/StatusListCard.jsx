@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import { useAutoScrollTopOnDataChange } from "../utils/widgetListHelpers";
 import "./ApiCard.css";
 import "./StatusListCard.css";
 
@@ -79,6 +80,9 @@ const StatusListCard = ({
         serializeEndpoints(endpoints),
     );
     const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+    // 갱신 주기마다 목록 스크롤을 상단으로 리셋
+    const scrollRef = useRef(null);
+    useAutoScrollTopOnDataChange(scrollRef, data);
 
     useEffect(() => {
         // 부모(useWidgetApiData)가 새 결과를 내려줄 때마다 갱신 시각을 저장.
@@ -416,7 +420,7 @@ const StatusListCard = ({
                         표시할 API 상태가 없습니다.
                     </div>
                 ) : (
-                    <div className='status-list-items'>
+                    <div className='status-list-items' ref={scrollRef}>
                         {items.map((item) => (
                             <div key={item.id} className='status-list-item'>
                                 <span

@@ -23,6 +23,10 @@ import {
 import ServerRow from "./ServerRow";
 import ServerDetailPopup from "./ServerDetailPopup";
 import ServerResourceSettingsModal from "./ServerResourceSettingsModal";
+import {
+    sortAlertsFirst,
+    useAutoScrollTopOnDataChange,
+} from "../utils/widgetListHelpers";
 import "./ApiCard.css";
 import "./ServerResourceCard.css";
 
@@ -258,6 +262,18 @@ const ServerResourceCard = ({
         [violationsMap],
     );
 
+    /* ── NG(알람) 서버를 목록 상단으로 끌어올림 ───────────────────── */
+    // 판정 기준은 statusCounts 와 동일: 접속 에러(데이터 없음) 또는 임계치 위반.
+    const displayServers = useMemo(
+        () =>
+            sortAlertsFirst(servers, (srv) => {
+                const state = serverStates[srv.id];
+                if (state?.error && !state?.data) return true;
+                return (violationsMap[srv.id] || []).length > 0;
+            }),
+        [servers, serverStates, violationsMap],
+    );
+
     const statusCounts = useMemo(() => {
         let ok = 0,
             ng = 0;
@@ -302,6 +318,10 @@ const ServerResourceCard = ({
         if (!onAlarmChange) return;
         onAlarmChange(totalViolations > 0 || isDead ? "dead" : "live");
     }, [totalViolations, isDead, onAlarmChange]);
+
+    /* ── 갱신 주기마다 목록 스크롤 최상단으로 ─────────────────────── */
+    const scrollRef = useRef(null);
+    useAutoScrollTopOnDataChange(scrollRef, serverStates);
 
     /* ── settings modal state ────────────────────────────────────── */
     const [showSettings, setShowSettings] = useState(false);
@@ -585,8 +605,11 @@ const ServerResourceCard = ({
                         </button>
                     </div>
                 ) : (
-                    <div className={`srv-list srv-list-${displayMode}`}>
-                        {servers.map((srv) => (
+                    <div
+                        className={`srv-list srv-list-${displayMode}`}
+                        ref={scrollRef}
+                    >
+                        {displayServers.map((srv) => (
                             <ServerRow
                                 key={srv.id}
                                 server={srv}
