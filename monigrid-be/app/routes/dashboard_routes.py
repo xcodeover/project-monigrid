@@ -1,8 +1,6 @@
 """Dashboard endpoints: endpoint listing, cache, sql-editor, db-health, config."""
 from __future__ import annotations
 
-import json
-
 from flask import jsonify, request
 
 from app.auth import require_admin, require_auth, verify_jwt_token
@@ -83,7 +81,7 @@ def register(app, backend, limiter) -> None:
     @require_auth
     @require_admin
     def dashboard_sql_editor_create_file():
-        """Create (or overwrite) a standalone SQL file at <sql_dir>/<sqlId>.sql.
+        """Create (or overwrite) a standalone SQL entry in the settings DB.
 
         JSON body:
           sqlId     — required, [A-Za-z0-9_-]{1,64}
@@ -171,16 +169,14 @@ def register(app, backend, limiter) -> None:
     @require_auth
     @require_admin
     def handle_config():
-        """GET: return config.json content. PUT: write config.json and reload."""
+        """GET: return the config stored in the settings DB (same shape as
+        the legacy config.json so the frontend is unchanged).
+        PUT : persist the config back into the settings DB and reload."""
         if request.method == "GET":
-            config_path = backend.config_path
             try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    config_data = json.load(f)
-                return jsonify(config_data), 200
-            except FileNotFoundError:
-                return jsonify({"message": "config.json not found"}), 404
+                return jsonify(backend.settings_store.load_config_dict()), 200
             except Exception as e:
+                backend.logger.exception("Config read from settings DB failed")
                 return jsonify({"message": "failed to read config", "detail": str(e)}), 500
 
         # PUT
@@ -189,13 +185,11 @@ def register(app, backend, limiter) -> None:
         if not config_data or not isinstance(config_data, dict):
             return jsonify({"message": "invalid config JSON"}), 400
 
-        config_path = backend.config_path
         try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(config_data, f, indent=4, ensure_ascii=False)
-            backend.logger.info("Config file updated by admin clientIp=%s", client_ip)
+            backend.settings_store.save_config_dict(config_data)
+            backend.logger.info("Config updated in settings DB by admin clientIp=%s", client_ip)
         except Exception as e:
-            backend.logger.exception("Config write failed clientIp=%s", client_ip)
+            backend.logger.exception("Config write to settings DB failed clientIp=%s", client_ip)
             return jsonify({"message": "failed to write config", "detail": str(e)}), 500
 
         try:

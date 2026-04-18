@@ -29,5 +29,9 @@ monigrid-fe/release/
 monigrid-be/logs/
 *.log
 
+# ── Settings bootstrap (local only; contains DB credentials) ─────────────────
+monigrid-be/initsetting.json
+monigrid-be/config.json.bak
+
 # ── Temp ─────────────────────────────────────────────────────────────────────
 temp/

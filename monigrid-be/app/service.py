@@ -15,33 +15,21 @@ which sub-service does the work:
 from __future__ import annotations
 
 import logging
-import os
-import sys
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .cache import EndpointCacheEntry
-from .config import ApiEndpointConfig, AppConfig, load_app_config
+from .config import ApiEndpointConfig, AppConfig
 from .db import DBConnectionPool, ensure_jvm_started
 from .db_health_service import DbHealthService
 from .endpoint_cache_manager import EndpointCacheManager
 from .jdbc_executor import JdbcQueryExecutor
 from .log_reader import LogReader
 from .logging_setup import _startup_log, configure_logging
+from .settings_store import SettingsStore, SqlRepository
 from .sql_editor_service import SqlEditorService
 from .utils import get_env
-
-
-def _resolve_sql_dir() -> str:
-    """Return the sql/ directory path.
-
-    - Dev mode : <repo_root>/sql/  (two levels up from this file)
-    - Frozen   : <exe_dir>/sql/    (beside the exe, editable without rebuild)
-    """
-    if getattr(sys, "frozen", False):
-        return os.path.join(os.path.dirname(sys.executable), "sql")
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sql")
 
 
 # NOTE: _normalize_db_type and _DIAGNOSTIC_SQL were moved to db_health_service.py
@@ -57,13 +45,16 @@ class MonitoringBackend:
 
     def __init__(
         self,
-        config_path: str,
+        *,
+        settings_store: SettingsStore,
+        config_reloader: Callable[[], AppConfig],
         logger: logging.Logger,
-        initial_config: AppConfig | None = None,
+        initial_config: AppConfig,
     ) -> None:
-        self.config_path = config_path
+        self.settings_store = settings_store
+        self._config_reloader = config_reloader
         self.logger = logger
-        self.config = initial_config or load_app_config(config_path)
+        self.config = initial_config
         self.executor = ThreadPoolExecutor(
             max_workers=self.config.thread_pool_size,
             thread_name_prefix="jdbc-worker",
@@ -76,7 +67,7 @@ class MonitoringBackend:
         # Use lambdas so the sub-services always observe the *current*
         # executor / db_pools / config — both `executor` and `db_pools`
         # are reassigned during reload().
-        sql_dir = _resolve_sql_dir()
+        self._sql_repository = SqlRepository(settings_store)
         self._db_health = DbHealthService(
             config_provider=lambda: self.config,
             executor_provider=lambda: self.executor,
@@ -84,7 +75,7 @@ class MonitoringBackend:
             logger=self.logger,
         )
         self._jdbc = JdbcQueryExecutor(
-            sql_dir=sql_dir,
+            sql_repository=self._sql_repository,
             config_provider=lambda: self.config,
             executor_provider=lambda: self.executor,
             pool_provider=lambda conn_id: self.db_pools[conn_id],
@@ -98,7 +89,7 @@ class MonitoringBackend:
             logger=self.logger,
         )
         self._sql_editor = SqlEditorService(
-            sql_dir=sql_dir,
+            sql_repository=self._sql_repository,
             config_provider=lambda: self.config,
             on_sql_updated=lambda endpoint, client_ip: self._cache_manager.refresh_endpoint_cache(
                 endpoint, source="sql-update", client_ip=client_ip, reset_connection=True,
@@ -270,7 +261,7 @@ class MonitoringBackend:
             pool.close_all()
 
     def reload(self) -> None:
-        new_config = load_app_config(self.config_path)
+        new_config = self._config_reloader()
         old_executor = self.executor
 
         self._stop_background_refreshers()

@@ -27,15 +27,12 @@ import AddApiModal from "./AddApiModal";
 import DashboardSettingsModal from "./DashboardSettingsModal";
 import WidgetRenderer from "./WidgetRenderer";
 import {
-    DEFAULT_CONTENT_ZOOM,
     DEFAULT_REFRESH_INTERVAL_SEC,
     DEFAULT_WIDGET_FONT_SIZE,
     DEFAULT_WIDGET_LAYOUT,
     GRID_COLUMNS,
-    MAX_CONTENT_ZOOM,
     MAX_WIDGET_H,
     MAX_WIDGET_W,
-    MIN_CONTENT_ZOOM,
     MIN_WIDGET_H,
     MIN_WIDGET_W,
     WIDGET_TYPE_NETWORK_TEST,
@@ -109,9 +106,6 @@ const DashboardPage = () => {
     const [fontSizeDraft, setFontSizeDraft] = useState(
         dashboardSettings?.widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE,
     );
-    const [zoomDraft, setZoomDraft] = useState(
-        dashboardSettings?.contentZoom ?? DEFAULT_CONTENT_ZOOM,
-    );
     const [configJsonDraft, setConfigJsonDraft] = useState("");
     const [configErrorMessage, setConfigErrorMessage] = useState("");
     const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(rememberedApiBaseUrl);
@@ -139,10 +133,6 @@ const DashboardPage = () => {
             dashboardSettings?.widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE,
         );
     }, [dashboardSettings?.widgetFontSize]);
-
-    useEffect(() => {
-        setZoomDraft(dashboardSettings?.contentZoom ?? DEFAULT_CONTENT_ZOOM);
-    }, [dashboardSettings?.contentZoom]);
 
     useEffect(() => {
         if (widgets !== null) {
@@ -481,18 +471,9 @@ const DashboardPage = () => {
             18,
             DEFAULT_WIDGET_FONT_SIZE,
         );
-        const normalizedZoom = clampValue(
-            zoomDraft,
-            MIN_CONTENT_ZOOM,
-            MAX_CONTENT_ZOOM,
-            DEFAULT_CONTENT_ZOOM,
-        );
-
         setFontSizeDraft(normalizedFontSize);
-        setZoomDraft(normalizedZoom);
         setDashboardSettings({
             widgetFontSize: normalizedFontSize,
-            contentZoom: normalizedZoom,
         });
     };
 
@@ -554,8 +535,6 @@ const DashboardPage = () => {
         setApiBaseUrlSaved(false);
     };
 
-    const contentZoom =
-        dashboardSettings?.contentZoom ?? DEFAULT_CONTENT_ZOOM;
     const widgetFontSize =
         dashboardSettings?.widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE;
 
@@ -592,8 +571,6 @@ const DashboardPage = () => {
                     onApplyApiBaseUrl={handleApplyApiBaseUrl}
                     fontSizeDraft={fontSizeDraft}
                     onFontSizeDraftChange={setFontSizeDraft}
-                    zoomDraft={zoomDraft}
-                    onZoomDraftChange={setZoomDraft}
                     onApplyDashboardSettings={handleApplyDashboardSettings}
                     alarmSound={alarmSound}
                     soundEnabled={soundEnabled}
@@ -623,19 +600,7 @@ const DashboardPage = () => {
             )}
 
             <div className='dashboard-content-wrapper'>
-                <div
-                    className={`dashboard-content${contentZoom !== 100 ? " zoom-scaled" : ""}`}
-                    style={(() => {
-                        const s = contentZoom / 100;
-                        return s !== 1
-                            ? {
-                                  transform: `scale(${s})`,
-                                  transformOrigin: "top left",
-                                  width: `${100 / s}%`,
-                              }
-                            : undefined;
-                    })()}
-                >
+                <div className='dashboard-content'>
                     {dashboardWidgets.length === 0 ? (
                         <div className='empty-state'>
                             <div className='empty-icon'>📭</div>
@@ -680,7 +645,6 @@ const DashboardPage = () => {
                             containerPadding={[0, 0]}
                             draggableHandle='.api-card-header'
                             resizeHandles={["se"]}
-                            transformScale={contentZoom / 100}
                             onDragStop={handleLayoutCommit}
                             onResizeStop={handleLayoutCommit}
                         >

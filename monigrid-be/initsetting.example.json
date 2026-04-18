@@ -1,0 +1,13 @@
+{
+    "_comment": "Bootstrap-only config. Declares which DB stores runtime settings. All other settings live in that DB (monigrid_* tables). On first run, the backend creates the tables, seeds them from config.json + sql/*.sql, then renames config.json to config.json.bak. Keep this file in sync across A-A nodes (both must point at the same settings DB).",
+    "settings_db": {
+        "db_type": "mariadb",
+        "jdbc_driver_class": "org.mariadb.jdbc.Driver",
+        "jdbc_url": "jdbc:mariadb://192.168.0.71:3336/monigrid_db",
+        "username": "monigrid",
+        "password": "tjwns0130!@#",
+        "jdbc_jars": [
+            "drivers/mariadb-java-client-3.4.1.jar"
+        ]
+    }
+}

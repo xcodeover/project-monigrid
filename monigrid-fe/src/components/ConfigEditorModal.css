@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════════════════════════
-   ConfigEditorModal  –  Backend config.json editor
+   ConfigEditorModal  –  Backend settings editor (persists to settings DB)
    ══════════════════════════════════════════════════════════════════ */
 
 .cfg-editor-popup {
@@ -238,6 +238,28 @@
     background: rgba(239, 68, 68, 0.12);
     border-color: rgba(239, 68, 68, 0.3);
     color: #ef4444;
+}
+
+.cfg-duplicate-btn {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 4px;
+    color: rgba(148, 163, 184, 0.7);
+    font-size: 13px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s;
+}
+
+.cfg-duplicate-btn:hover {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.3);
+    color: #60a5fa;
 }
 
 /* ── Chevron for collapsible cards ───────────────────────────── */

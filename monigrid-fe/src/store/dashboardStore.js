@@ -3,7 +3,6 @@ import { STORAGE_KEYS } from "./storageKeys.js";
 
 const DEFAULT_DASHBOARD_SETTINGS = {
     widgetFontSize: 13,
-    contentZoom: 100,
 };
 
 // ── Storage helpers (DRY) ─────────────────────────────────────────────────────
