@@ -1,0 +1,259 @@
+/* ══════════════════════════════════════════════════════════════════
+   NetworkTestCard  –  Compact single-line per target
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── Target list (main display area) ────────────────────────────── */
+
+.net-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 8px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.net-list-compact {
+    gap: 1px;
+    padding: 4px 6px;
+}
+
+.net-list-wide {
+    gap: 3px;
+    padding: 8px 10px;
+}
+
+/* ── Target row (one target per line) ────────────────────────────── */
+
+.net-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 8px;
+    height: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    border-radius: 6px;
+    background: rgba(15, 29, 43, 0.78);
+    border: 1px solid rgba(124, 151, 171, 0.15);
+    min-width: 0;
+    overflow: hidden;
+    flex-shrink: 0;
+    flex-grow: 0;
+    box-sizing: border-box;
+}
+
+.net-row:hover {
+    background: rgba(15, 29, 43, 0.95);
+}
+
+.net-row.fail {
+    border-color: rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.04);
+}
+
+/* ── Compact mode (width ≤ 3) ──────────────────────────────────── */
+
+.net-row.mode-compact {
+    gap: 4px;
+    padding: 0 5px;
+    height: 24px;
+    min-height: 24px;
+    max-height: 24px;
+}
+
+.mode-compact .net-row-label {
+    font-size: 10px;
+}
+
+.mode-compact .net-row-right {
+    gap: 4px;
+}
+
+.mode-compact .net-row-type {
+    font-size: 8px;
+    padding: 0 4px;
+    min-width: 28px;
+}
+
+.mode-compact .net-row-status {
+    font-size: 9px;
+    min-width: 24px;
+}
+
+.mode-compact .net-row-latency {
+    font-size: 9px;
+    min-width: 32px;
+}
+
+.mode-compact .net-row-host {
+    font-size: 9px;
+    max-width: 100px;
+}
+
+/* ── Wide mode (width > 6) ─────────────────────────────────────── */
+
+.net-row.mode-wide {
+    gap: 12px;
+    padding: 0 10px;
+    height: 32px;
+    min-height: 32px;
+    max-height: 32px;
+}
+
+.mode-wide .net-row-label {
+    font-size: 13px;
+}
+
+.mode-wide .net-row-right {
+    gap: 12px;
+}
+
+.mode-wide .net-row-host {
+    font-size: 11px;
+    max-width: 240px;
+}
+
+.mode-wide .net-row-type {
+    font-size: 10px;
+    padding: 2px 8px;
+    min-width: 44px;
+}
+
+.mode-wide .net-row-status {
+    font-size: 12px;
+    min-width: 40px;
+}
+
+.mode-wide .net-row-latency {
+    font-size: 11px;
+    min-width: 54px;
+}
+
+/* ── status dot ─────────────────────────────────────────────────── */
+
+.net-row-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: background-color 0.4s ease;
+}
+
+.mode-compact .net-row-dot {
+    width: 6px;
+    height: 6px;
+}
+
+.net-row-dot.pulse {
+    animation: net-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes net-dot-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+    50% { opacity: 0.6; box-shadow: 0 0 0 3px rgba(239, 68, 68, 0); }
+}
+
+/* ── target name (left-aligned) ─────────────────────────────────── */
+
+.net-row-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-primary, #e2e8f0);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 30px;
+}
+
+/* ── right-side group (host + type + status + latency) ──────────── */
+
+.net-row-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+/* ── host address ───────────────────────────────────────────────── */
+
+.net-row-host {
+    font-size: 10px;
+    color: var(--text-tertiary, #64748b);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
+    min-width: 0;
+}
+
+/* ── type badge ─────────────────────────────────────────────────── */
+
+.net-row-type {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-tertiary, #64748b);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    border-radius: 6px;
+    padding: 1px 5px;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+    min-width: 36px;
+    text-align: center;
+}
+
+/* ── status text ────────────────────────────────────────────────── */
+
+.net-row-status {
+    font-size: 11px;
+    font-weight: 700;
+    color: #94a3b8;
+    flex-shrink: 0;
+    min-width: 32px;
+    text-align: center;
+}
+
+.net-row-status.live {
+    color: #22c55e;
+}
+
+.net-row-status.dead {
+    color: #ef4444;
+}
+
+/* ── latency ────────────────────────────────────────────────────── */
+
+.net-row-latency {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(25, 160, 255, 0.85);
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 46px;
+    text-align: right;
+}
+
+/* ── loading spinner ────────────────────────────────────────────── */
+
+.net-row-spinner {
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(148, 163, 184, 0.2);
+    border-top-color: rgba(25, 160, 255, 0.7);
+    border-radius: 50%;
+    animation: net-spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+.mode-compact .net-row-spinner {
+    width: 8px;
+    height: 8px;
+}
+
+@keyframes net-spin {
+    to { transform: rotate(360deg); }
+}

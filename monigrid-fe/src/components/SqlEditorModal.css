@@ -1,0 +1,347 @@
+.sql-editor-modal {
+    max-width: 980px;
+    width: min(96vw, 980px);
+    max-height: min(92vh, 980px);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.sql-editor-subtitle {
+    margin: 6px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.sql-mode-tabs {
+    display: inline-flex;
+    align-self: flex-start;
+    gap: 0;
+    padding: 4px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 12px;
+}
+
+.sql-mode-tab {
+    padding: 7px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.sql-mode-tab:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.sql-mode-tab.active {
+    background: rgba(25, 160, 255, 0.18);
+    color: #19a0ff;
+}
+
+.sql-mode-tab:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.sql-id-hint {
+    margin: 6px 0 0;
+    font-size: 11px;
+}
+
+.sql-id-hint.error {
+    color: #ffb2bf;
+}
+
+.sql-id-hint.warn {
+    color: #ffd58e;
+}
+
+.sql-id-hint.ok {
+    color: #91ffd0;
+}
+
+.sql-editor-body {
+    display: grid;
+    gap: 14px;
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.sql-toolbar-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+}
+
+.sql-toolbar-grid .form-group {
+    margin-bottom: 0;
+}
+
+.sql-summary-group {
+    display: block;
+}
+
+.sql-endpoint-summary {
+    display: flex;
+    align-items: center;
+    min-width: 120px;
+    padding: 11px 14px;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.sql-summary-label {
+    display: block;
+    margin: 0;
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sql-summary-value {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.sql-editor-error,
+.sql-editor-success {
+    margin: 0;
+    padding: 12px 14px;
+    border-radius: 12px;
+    font-size: 12px;
+}
+
+.sql-editor-error {
+    color: #ffd6dc;
+    background: rgba(127, 29, 29, 0.86);
+    border: 1px solid rgba(248, 113, 113, 0.22);
+}
+
+.sql-editor-success {
+    color: #c8ffe7;
+    background: rgba(6, 95, 70, 0.76);
+    border: 1px solid rgba(45, 212, 191, 0.2);
+}
+
+.sql-editor-status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.sql-status-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.sql-status-note {
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+
+.sql-editor-surface {
+    min-height: 360px;
+    max-height: min(52vh, 560px);
+    border-radius: 16px;
+    overflow: auto;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    background: #0b1119;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.sql-editor-instance {
+    min-height: 360px;
+    min-width: 100%;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.sql-editor-pre,
+.sql-editor-textarea {
+    min-height: 360px;
+    outline: none;
+    white-space: pre;
+    word-break: normal;
+    overflow: auto;
+}
+
+.sql-editor-pre {
+    margin: 0;
+    color: #d7dfec;
+}
+
+.sql-editor-textarea {
+    caret-color: #ffffff;
+    color: transparent;
+}
+
+.sql-editor-textarea::selection {
+    background: rgba(25, 160, 255, 0.28);
+}
+
+.sql-editor-loading {
+    min-height: 360px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-tertiary);
+    font-size: 13px;
+}
+
+.sql-validation-panel {
+    display: grid;
+    gap: 8px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.sql-validation-panel h4 {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.sql-validation-ok {
+    margin: 0;
+    color: #91ffd0;
+    font-size: 12px;
+}
+
+.sql-validation-list {
+    margin: 0;
+    padding-left: 18px;
+    display: grid;
+    gap: 6px;
+}
+
+.sql-validation-item {
+    font-size: 12px;
+}
+
+.sql-validation-item.error {
+    color: #ffb2bf;
+}
+
+.sql-validation-item.warning {
+    color: #ffd58e;
+}
+
+.sql-editor-pre .token.keyword,
+.sql-editor-pre .token.boolean,
+.sql-editor-pre .token.operator {
+    color: #7dc4ff;
+}
+
+.sql-editor-pre .token.function,
+.sql-editor-pre .token.builtin,
+.sql-editor-pre .token.class-name {
+    color: #ffd479;
+}
+
+.sql-editor-pre .token.string,
+.sql-editor-pre .token.char,
+.sql-editor-pre .token.attr-value {
+    color: #9ee7b7;
+}
+
+.sql-editor-pre .token.number {
+    color: #f9a8d4;
+}
+
+.sql-editor-pre .token.comment {
+    color: #7f8ea3;
+}
+
+.sql-editor-pre .token.punctuation {
+    color: #c8d3e3;
+}
+
+.sql-save-confirm-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(3, 8, 20, 0.62);
+    backdrop-filter: blur(2px);
+    z-index: 20;
+}
+
+.sql-save-confirm-dialog {
+    width: min(92%, 460px);
+    background:
+        linear-gradient(
+            180deg,
+            rgba(255, 255, 255, 0.03),
+            rgba(255, 255, 255, 0.01)
+        ),
+        rgba(17, 23, 34, 0.96);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 16px;
+    box-shadow: 0 24px 56px rgba(3, 8, 20, 0.48);
+    padding: 18px;
+    display: grid;
+    gap: 10px;
+}
+
+.sql-save-confirm-dialog h4 {
+    margin: 0;
+    font-size: 16px;
+    color: var(--text-primary);
+}
+
+.sql-save-confirm-dialog p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.sql-save-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 2px;
+}
+
+@media (max-width: 768px) {
+    .sql-editor-modal {
+        width: 95vw;
+    }
+
+    .sql-toolbar-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .sql-editor-status-row {
+        align-items: flex-start;
+    }
+}

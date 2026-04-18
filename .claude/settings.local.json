@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(pyinstaller monitoring_backend.spec --clean)",
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(python -c \"import py7zr; print\\(''''ok''''\\)\")",
+      "Bash(node -e \":*)",
+      "Bash(grep -rn \"winCodeSign\\\\|''''winCodeSign''''\" d:/workspace/dev/x-react/MonitoringDashboard/node_modules/ --include=*.js -l)"
+    ]
+  }
+}

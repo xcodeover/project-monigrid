@@ -1,0 +1,1165 @@
+# Monitoring Backend (monigrid-be)
+
+monigrid-fe와 연동되는 Python 기반 모니터링 백엔드입니다.
+`config.json` + `sql/*.sql` 조합으로 REST API를 구성하고, JDBC로 DB 조회 결과를 제공합니다.
+네트워크 테스트(Ping/Telnet), 서버 리소스 모니터링(CPU/Memory/Disk), DB 성능 진단 등의 기능을 포함합니다.
+
+---
+
+## 목차
+
+1. [주요 기능](#1-주요-기능)
+2. [요구사항](#2-요구사항)
+3. [폴더 구조](#3-폴더-구조)
+4. [빠른 시작 (Quick Start)](#4-빠른-시작-quick-start)
+5. [개발 모드 실행](#5-개발-모드-실행)
+6. [EXE 빌드 (PyInstaller)](#6-exe-빌드-pyinstaller)
+7. [config.json 설정](#7-configjson-설정)
+8. [SQL 파일 작성](#8-sql-파일-작성)
+9. [DB 드라이버 준비 (JDBC)](#9-db-드라이버-준비-jdbc)
+10. [주요 API 레퍼런스](#10-주요-api-레퍼런스)
+11. [환경 변수](#11-환경-변수)
+12. [로그](#12-로그)
+13. [운영 가이드](#13-운영-가이드)
+14. [IIS 단일 사이트 배포 (Frontend + Backend 같은 포트)](#14-iis-단일-사이트-배포-frontend--backend-같은-포트)
+15. [트러블슈팅](#15-트러블슈팅)
+
+---
+
+## 1. 주요 기능
+
+### 데이터 수집 & 캐싱
+
+- **설정 기반 REST API 라우팅** — `config.json`의 `apis[].rest_api_path`로 동적 엔드포인트 생성
+- **SQL 파일 기반 쿼리 실행** — `sql/<sql_id>.sql` 파일을 읽어 JDBC로 실행
+- **DB 연결 풀** — 스레드 안전한 JDBC 커넥션 풀 관리
+- **백그라운드 캐시 자동 갱신** — 엔드포인트별 주기적 캐시 리프레시 (데몬 스레드)
+- **기동 시 캐시 워밍업** — 서버 시작 시 모든 활성 엔드포인트의 DB 쿼리를 병렬 실행하여 캐시 사전 적재
+
+### 인증 & 보안
+
+- **JWT 로그인/인증** — `POST /auth/login`으로 토큰 발급, 모든 API에 `Bearer` 토큰 필요
+- **관리자 전용 API** — SQL Editor 등 민감 작업은 admin 권한만 허용
+- **Rate Limiting** — Flask-Limiter 기반 요청 제한 (기본 100/분)
+
+### 네트워크 & 서버 모니터링
+
+- **Ping/Telnet 테스트** — `POST /dashboard/network-test`로 네트워크 연결 진단
+- **서버 리소스 모니터링** — `POST /dashboard/server-resources`로 원격/로컬 서버 CPU·메모리·디스크 수집
+  - Linux: SSH(paramiko)로 원격 접속하여 `top`, `/proc/meminfo`, `df` 실행
+  - Windows: WMI 명령, SSH+PowerShell, 또는 WinRM(pywinrm)으로 수집
+- **Health-Check 프록시** — `POST /dashboard/health-check-proxy`로 CORS 우회 HTTP 상태 체크
+
+### DB 성능 진단
+
+- **슬로우 쿼리 / 테이블스페이스 / 오브젝트 락** 진단 쿼리 실행
+- Oracle / MariaDB / MSSQL 지원
+
+### 운영 편의
+
+- **설정 핫 리로드** — `POST /dashboard/reload-config`로 서버 재시작 없이 설정 반영
+- **SQL Editor** — 대시보드에서 SQL 파일 조회·수정 (관리자 전용, SELECT만 허용)
+- **일자별 로그 파일** — 자동 생성 및 보관 기간 자동 정리
+
+---
+
+## 2. 요구사항
+
+### 개발 모드
+
+| 항목 | 버전 | 비고 |
+|------|------|------|
+| Python | 3.13+ | |
+| JDK | 11+ | `JAVA_HOME` 환경변수 필수 |
+| pip 패키지 | `requirements.txt` | 아래 참조 |
+
+```bash
+pip install -r requirements.txt
+```
+
+### 주요 패키지
+
+| 패키지 | 용도 |
+|--------|------|
+| Flask, flask-cors, flask-limiter | 웹 프레임워크 / CORS / Rate Limit |
+| pydantic | 요청 데이터 검증 |
+| PyJWT | JWT 인증 |
+| JayDeBeApi, JPype1 | JDBC 브릿지 (Java DB 드라이버 사용) |
+| paramiko | SSH 원격 명령 실행 (서버 리소스 모니터링) |
+| pywinrm | WinRM 원격 명령 실행 (Windows 서버 리소스 모니터링) |
+| requests | HTTP 클라이언트 (Health-Check 프록시) |
+| pyinstaller | EXE 패키징 |
+
+### EXE 빌드 추가 요구사항
+
+- PyInstaller 6.x (requirements.txt에 포함)
+- Windows 환경에서 빌드
+
+---
+
+## 3. 폴더 구조
+
+### 소스 트리
+
+```text
+monigrid-be/
+├── monigrid_be.py         # Flask 앱 진입점, 라우트 정의
+├── monigrid_be.spec       # PyInstaller 빌드 스펙
+├── build_backend_exe.bat      # 원클릭 EXE 빌드 스크립트
+├── requirements.txt
+├── pyproject.toml             # 프로젝트 메타데이터
+├── .env.example               # 환경변수 참고 파일
+├── config.json                # 서버·DB·API 설정
+├── sql/                       # SQL 쿼리 파일 (sql_id.sql)
+│   ├── status.sql
+│   ├── alerts.sql
+│   ├── metrics.sql
+│   └── mssql-health.sql
+├── drivers/                   # JDBC 드라이버 JAR 파일
+│   ├── ojdbc11.jar
+│   ├── mariadb-java-client-3.4.1.jar
+│   └── mssql-jdbc-12.8.1.jre11.jar
+├── logs/                      # 날짜별 로그 파일 (자동 생성)
+├── app/                       # 핵심 비즈니스 로직 패키지
+│   ├── __init__.py            # 패키지 초기화
+│   ├── auth.py                # JWT 인증, 로그인 검증
+│   ├── cache.py               # 엔드포인트 캐시 엔트리 관리
+│   ├── config.py              # config.json 파싱, 데이터클래스
+│   ├── db.py                  # JVM 라이프사이클, JDBC 커넥션 풀
+│   ├── exceptions.py          # 커스텀 예외 클래스
+│   ├── logging_setup.py       # 로깅 설정 (파일·콘솔)
+│   ├── service.py             # MonitoringBackend 서비스 (핵심 로직)
+│   ├── sql_validator.py       # SQL SELECT 검증, 오타 탐지
+│   └── utils.py               # 유틸리티 함수
+└── exe_api_smoke_test.py      # EXE 기동 후 빠른 API 검증 스크립트
+```
+
+### EXE 빌드 결과물 트리
+
+```text
+dist/
+├── monigrid-be.exe        # 실행 파일
+├── _internal/                 # Python 런타임 (수정 불필요)
+├── config.json                # ★ 편집 가능 — DB 연결·API·인증 설정
+├── sql/                       # ★ 편집 가능 — SQL 쿼리 파일
+├── drivers/                   # ★ 편집 가능 — JDBC JAR 파일
+├── logs/                      # 첫 실행 시 자동 생성
+└── .env.example               # 환경변수 참고 파일
+```
+
+> `_internal/` 외 폴더/파일(`config.json`, `sql/`, `drivers/`)은 exe 옆에 위치하므로
+> **재빌드 없이 자유롭게 편집** 가능합니다.
+
+---
+
+## 4. 빠른 시작 (Quick Start)
+
+### 초보자를 위한 단계별 안내
+
+#### Step 1: 사전 준비
+
+1. **Python 3.13+** 설치 (https://www.python.org/downloads/)
+   - 설치 시 "Add Python to PATH" 체크 필수
+2. **JDK 11+** 설치 (https://adoptium.net/)
+3. **JAVA_HOME 환경변수 설정**:
+   - 시작 → "환경 변수" 검색 → 시스템 환경 변수 → `JAVA_HOME` 추가
+   - 값: JDK 설치 경로 (예: `C:\Program Files\Eclipse Adoptium\jdk-17.0.x`)
+4. 설정 확인:
+   ```bash
+   python --version       # Python 3.13.x
+   java -version          # openjdk 17.x.x 등
+   echo %JAVA_HOME%       # JDK 경로 출력 확인
+   ```
+
+#### Step 2: 의존성 설치 및 실행
+
+```bash
+cd monigrid-be
+pip install -r requirements.txt
+python monigrid_be.py
+```
+
+#### Step 3: 동작 확인
+
+```bash
+# 1. 서버 상태 확인
+curl http://127.0.0.1:5000/health
+
+# 2. 로그인
+curl -X POST http://127.0.0.1:5000/auth/login ^
+  -H "Content-Type: application/json" ^
+  -d "{\"username\":\"admin\",\"password\":\"admin\"}"
+# → {"token":"eyJhbG...","user":{"id":1,"username":"admin","role":"admin"}}
+
+# 3. 토큰으로 API 호출
+curl http://127.0.0.1:5000/api/status ^
+  -H "Authorization: Bearer eyJhbG..."
+```
+
+#### Step 4: 프론트엔드 연동
+
+- 프론트엔드(`monigrid-fe`)를 실행하고 로그인 화면에서 백엔드 URL `http://127.0.0.1:5000` 입력
+- 기본 로그인: `admin` / `admin`
+
+---
+
+## 5. 개발 모드 실행
+
+```bash
+cd monigrid-be
+
+# 의존성 설치 (최초 1회)
+pip install -r requirements.txt
+
+# 서버 실행
+python monigrid_be.py
+```
+
+기본 접속: `http://127.0.0.1:5000`
+
+서버 시작 시 다음이 자동으로 수행됩니다:
+1. `config.json` 로드 및 유효성 검증
+2. JVM 시작 (JDBC 드라이버 JAR 클래스패스 포함)
+3. 활성 엔드포인트 캐시 워밍업 (모든 DB 쿼리 1회 병렬 실행)
+4. 백그라운드 캐시 리프레시 스레드 시작
+
+---
+
+## 6. EXE 빌드 (PyInstaller)
+
+### 6.1 원클릭 빌드
+
+```bat
+cd monigrid-be
+build_backend_exe.bat
+```
+
+내부적으로 다음 단계를 순서대로 실행합니다:
+
+| 단계 | 내용 |
+|------|------|
+| 1 | `pip install -r requirements.txt` |
+| 2 | 이전 빌드 산출물 정리 (`_internal/`, `monigrid-be.exe`만 삭제, 런타임 파일 보존) |
+| 3 | `pyinstaller --noconfirm --clean monigrid_be.spec` |
+| 4 | dist 폴더 플래튼 (`dist\monigrid-be\` → `dist\`로 exe, `_internal` 이동) |
+| 5 | 런타임 파일 확인 — `config.json`, `sql/`, `drivers/`가 없을 때만 초기 복사 (기존 파일 보존) |
+| 6 | `logs/` 디렉토리 생성 (없을 때만) |
+
+> **재빌드 시 `config.json`, `sql/`, `drivers/`, `logs/`는 덮어쓰지 않습니다.**
+> 운영 환경에서 수정한 설정이 빌드로 인해 초기화되지 않으므로 안심하고 재빌드할 수 있습니다.
+
+### 6.2 빌드 결과물 확인
+
+```text
+dist\
+  monigrid-be.exe    ← 배포 대상 실행 파일
+  _internal\             ← Python 런타임 (함께 배포, 수정 불필요)
+  config.json            ← 배포 후 환경에 맞게 편집
+  sql\                   ← SQL 파일 추가·수정 가능
+  drivers\               ← JDBC JAR 추가·교체 가능
+  logs\                  ← 첫 실행 시 자동 생성
+```
+
+### 6.3 배포 시 체크리스트
+
+- [ ] 배포 서버에 **JDK 11+** 설치 및 `JAVA_HOME` 환경변수 설정
+- [ ] `config.json` 내 DB 접속 정보 (host, port, username, password) 배포 환경에 맞게 수정
+- [ ] `config.json` 내 `auth.username`, `auth.password`를 실제 운영 계정으로 변경
+- [ ] `drivers/` 에 연결할 DB 종류에 맞는 JDBC JAR가 있는지 확인
+- [ ] 방화벽에서 백엔드 포트 (기본 5000) 허용
+- [ ] (선택) `.env` 파일로 `JWT_SECRET_KEY` 등 보안 설정 오버라이드
+
+### 6.4 EXE 직접 실행
+
+```bat
+cd dist
+monigrid-be.exe
+```
+
+### 6.5 기동 후 API 검증
+
+```bash
+# Python이 설치된 환경에서
+python exe_api_smoke_test.py
+```
+
+---
+
+## 7. config.json 설정
+
+### 7.1 전체 구조
+
+```json
+{
+    "server": {
+        "host": "127.0.0.1",
+        "port": 5000,
+        "thread_pool_size": 16,
+        "refresh_interval_sec": 5,
+        "query_timeout_sec": 10
+    },
+    "auth": {
+        "username": "admin",
+        "password": "admin"
+    },
+    "sql_validation": {
+        "typo_patterns": {
+            "where":    ["whre", "wehre", "wher"],
+            "order_by": ["oder", "odrer", "ordder"],
+            "group_by": ["gorup", "gruop", "gropu"],
+            "having":   ["havng", "hvaing"],
+            "join":     ["jion", "joim"]
+        }
+    },
+    "logging": {
+        "directory": "logs",
+        "file_prefix": "monigrid_be",
+        "level": "INFO",
+        "retention_days": 7,
+        "slow_query_threshold_sec": 10
+    },
+    "global_jdbc_jars": "drivers/ojdbc11.jar;drivers/mariadb-java-client-3.4.1.jar;drivers/mssql-jdbc-12.8.1.jre11.jar",
+    "connections": [...],
+    "apis": [...]
+}
+```
+
+### 7.2 server — 서버 설정
+
+| 키 | 설명 | 기본값 |
+|----|------|--------|
+| `host` | 바인드 주소 (`0.0.0.0`이면 외부 접근 허용) | `127.0.0.1` |
+| `port` | 서버 포트 | `5000` |
+| `thread_pool_size` | DB 쿼리 실행 스레드 풀 크기 | `16` |
+| `refresh_interval_sec` | 기본 캐시 갱신 주기 (초) | `5` |
+| `query_timeout_sec` | 기본 쿼리 타임아웃 (초) | `10` |
+
+### 7.3 connections — DB 연결 설정
+
+```json
+"connections": [
+    {
+        "id": "oracle-main",
+        "db_type": "oracle",
+        "jdbc_driver_class": "oracle.jdbc.OracleDriver",
+        "jdbc_url": "jdbc:oracle:thin:@//localhost:1521/XEPDB1",
+        "username": "monitor",
+        "password": "monitor"
+    },
+    {
+        "id": "mariadb-main",
+        "db_type": "mariadb",
+        "jdbc_driver_class": "org.mariadb.jdbc.Driver",
+        "jdbc_url": "jdbc:mariadb://192.168.0.71:3336/mydb",
+        "username": "dbuser",
+        "password": "dbpass"
+    },
+    {
+        "id": "mssql-main",
+        "db_type": "mssql",
+        "jdbc_driver_class": "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+        "jdbc_url": "jdbc:sqlserver://127.0.0.1:1433;databaseName=mydb;encrypt=true;trustServerCertificate=true",
+        "username": "sa",
+        "password": "YourPassword!"
+    }
+]
+```
+
+| 키 | 설명 |
+|----|------|
+| `id` | 연결 고유 식별자 (apis에서 참조) |
+| `db_type` | `oracle` / `mariadb` / `mssql` |
+| `jdbc_driver_class` | JDBC 드라이버 클래스명 |
+| `jdbc_url` | JDBC 접속 URL |
+| `username` / `password` | DB 접속 계정 |
+| `jdbc_jars` | (선택) 이 연결 전용 JAR 경로 |
+
+`global_jdbc_jars`에 세미콜론(`;`)으로 모든 DB의 JAR를 나열하면, 모든 connection에 자동 적용됩니다.
+
+### 7.4 apis — REST API 엔드포인트 설정
+
+```json
+"apis": [
+    {
+        "id": "status",
+        "rest_api_path": "/api/status",
+        "connection_id": "mariadb-main",
+        "sql_id": "status",
+        "enabled": true,
+        "refresh_interval_sec": 5,
+        "query_timeout_sec": 10
+    }
+]
+```
+
+| 키 | 설명 |
+|----|------|
+| `id` | API 고유 식별자 |
+| `rest_api_path` | REST 경로 (중복 불가) |
+| `connection_id` | `connections[].id` 참조 |
+| `sql_id` | `sql/<sql_id>.sql` 파일과 매핑 |
+| `enabled` | `false`로 설정 시 라우팅에서 제외 |
+| `refresh_interval_sec` | 백그라운드 캐시 갱신 주기 (초) |
+| `query_timeout_sec` | 쿼리 타임아웃 (초) |
+
+### 7.5 설정 변경 후 적용
+
+| 방법 | 적용 범위 |
+|------|-----------|
+| `POST /dashboard/reload-config` | DB 연결·API 엔드포인트·SQL 검증 규칙 (서버 재시작 불필요) |
+| EXE 재시작 | 서버 포트·스레드 풀 등 서버 레벨 설정 변경 |
+
+---
+
+## 8. SQL 파일 작성
+
+- 파일 위치: `sql/<sql_id>.sql`
+- `apis[].sql_id` 값과 파일명이 일치해야 합니다.
+- **SELECT / WITH(CTE) 구문만 허용**합니다. UPDATE·DELETE·DROP 등은 차단됩니다.
+
+예시 (`sql/status.sql`):
+
+```sql
+SELECT app_name, status, cpu_usage, memory_usage, collected_at
+FROM app_status
+ORDER BY collected_at DESC
+LIMIT 100;
+```
+
+> EXE 실행 환경에서는 `monigrid-be.exe` 옆의 `sql/` 폴더를 읽습니다.
+> SQL 파일을 수정한 후 `POST /dashboard/reload-config` 호출 권장.
+
+### SQL 편집 주의사항
+
+- SQL 오타 자동 감지: `config.json`의 `sql_validation.typo_patterns`에 정의된 패턴으로 검사
+- 세미콜론(`;`)은 있어도 없어도 무방
+- 주석(`--`, `/* */`)은 허용
+
+---
+
+## 9. DB 드라이버 준비 (JDBC)
+
+`drivers/` 폴더에 사용할 DB의 JDBC JAR를 배치합니다.
+
+| DB 종류 | 드라이버 파일 예시 | 다운로드 |
+|---------|-------------------|----------|
+| Oracle | `ojdbc11.jar` | Oracle JDBC Downloads |
+| MariaDB / MySQL | `mariadb-java-client-3.4.1.jar` | MariaDB Connector/J |
+| MS SQL Server | `mssql-jdbc-12.8.1.jre11.jar` | Microsoft JDBC Driver |
+
+### JAR 경로 설정
+
+```json
+// 방법 1: 모든 연결에 공통 적용
+"global_jdbc_jars": "drivers/ojdbc11.jar;drivers/mariadb-java-client-3.4.1.jar"
+
+// 방법 2: 특정 연결에만 적용 (connection 항목에 추가)
+"jdbc_jars": "drivers/special-driver.jar"
+```
+
+> JVM 시작 시 모든 JAR가 클래스패스에 등록됩니다.
+> 새 JAR를 추가한 경우 EXE를 **재시작**해야 합니다 (JVM 클래스패스는 시작 시 고정).
+
+---
+
+## 10. 주요 API 레퍼런스
+
+### 10.1 인증
+
+| 메서드 | 경로 | 설명 | 인증 |
+|--------|------|------|------|
+| POST | `/auth/login` | JWT 토큰 발급 | 불필요 |
+| POST | `/auth/logout` | 로그아웃 | 필요 |
+
+```bash
+# 로그인
+curl -X POST http://127.0.0.1:5000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin"}'
+
+# 응답: {"token":"eyJhbG...","user":{"id":1,"username":"admin","role":"admin"}}
+```
+
+이후 모든 요청에 `Authorization: Bearer <token>` 헤더가 필요합니다.
+
+### 10.2 데이터 조회 (동적 라우팅)
+
+- `GET /<rest_api_path>` — `config.json`의 `apis[]` 기준 동적 라우팅
+- 예: `GET /api/status` → `sql/status.sql` 실행 결과 반환
+
+### 10.3 운영 관리
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/health` | 서버 상태 및 로드된 API 수 (인증 불필요) |
+| GET | `/dashboard/endpoints` | 활성화된 엔드포인트 목록 |
+| POST | `/dashboard/reload-config` | 설정 재적재 (무중단) |
+| GET | `/dashboard/cache/status` | 캐시 상태 (갱신 시각, 행 수, 오류) |
+| POST | `/dashboard/cache/refresh` | 캐시 즉시 갱신 |
+| GET | `/dashboard/config` | config.json 조회 (관리자 전용) |
+| PUT | `/dashboard/config` | config.json 수정 및 핫 리로드 (관리자 전용) |
+
+**캐시 리프레시 요청 예시:**
+
+```bash
+# 특정 엔드포인트 캐시 갱신
+curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"api_id":"status","reset_connection":true}'
+
+# 전체 엔드포인트 캐시 갱신
+curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+### 10.4 SQL Editor (관리자 전용)
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/dashboard/sql-editor/endpoints` | 편집 가능 API 목록 |
+| GET | `/dashboard/sql-editor/<api_id>` | SQL 파일 조회 |
+| PUT | `/dashboard/sql-editor/<api_id>` | SQL 파일 수정 |
+| GET | `/dashboard/sql-editor/validation-rules` | 오타 검증 규칙 조회 |
+
+### 10.5 DB 성능 진단
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/dashboard/db-health/connections` | 설정된 DB 연결 목록 |
+| GET | `/dashboard/db-health/status` | DB 성능 진단 쿼리 실행 |
+
+쿼리 파라미터:
+
+| 파라미터 | 필수 | 설명 |
+|----------|------|------|
+| `connection_id` | O | `connections[].id` 값 |
+| `category` | O | `slow_queries` / `tablespace` / `locks` |
+| `timeout_sec` | X | 타임아웃 초 (기본 10, 최대 60) |
+
+### 10.6 네트워크 테스트
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| POST | `/dashboard/network-test` | Ping 또는 TCP 연결(Telnet) 테스트 (단건) |
+| POST | `/dashboard/network-test-batch` | 다중 타겟 Ping/Telnet 테스트 (배치) |
+
+**요청 body:**
+
+```json
+{
+    "type": "ping",       // "ping" 또는 "telnet"
+    "host": "192.168.0.71",
+    "port": 322,          // telnet일 때 필수
+    "count": 4,           // ping 횟수 (기본 4, 최대 10)
+    "timeout": 5          // 초 (기본 5, 최대 30)
+}
+```
+
+**응답 예시 (Ping):**
+
+```json
+{
+    "type": "ping",
+    "host": "192.168.0.71",
+    "count": 4,
+    "success": true,
+    "responseTimeMs": 1234,
+    "output": "Reply from 192.168.0.71: bytes=32 time<1ms TTL=64\n...",
+    "message": "Ping successful"
+}
+```
+
+**응답 예시 (Telnet):**
+
+```json
+{
+    "type": "telnet",
+    "host": "192.168.0.71",
+    "port": 322,
+    "success": true,
+    "responseTimeMs": 15,
+    "message": "Connection successful"
+}
+```
+
+**배치 요청 body (`/dashboard/network-test-batch`):**
+
+```json
+{
+    "targets": [
+        { "type": "ping", "host": "192.168.0.71", "count": 4, "timeout": 5 },
+        { "type": "telnet", "host": "192.168.0.71", "port": 322, "timeout": 5 }
+    ]
+}
+```
+
+배치 응답은 `results` 배열로 각 타겟의 결과를 동일 순서로 반환합니다.
+
+### 10.7 서버 리소스 모니터링
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| POST | `/dashboard/server-resources` | CPU/Memory/Disk 사용률 수집 (단건) |
+| POST | `/dashboard/server-resources-batch` | 다중 서버 리소스 수집 (배치) |
+
+**요청 body (Linux 원격 서버):**
+
+```json
+{
+    "os_type": "linux-rhel8",
+    "host": "192.168.0.71",
+    "username": "sshuser",
+    "password": "sshpass",
+    "port": 322
+}
+```
+
+**요청 body (로컬 Windows):**
+
+```json
+{
+    "os_type": "windows",
+    "host": "localhost"
+}
+```
+
+**요청 body (Windows WinRM 원격 서버):**
+
+```json
+{
+    "os_type": "windows-winrm",
+    "host": "192.168.0.100",
+    "username": "Administrator",
+    "password": "winpass",
+    "port": 5985,
+    "domain": "MYDOMAIN",
+    "transport": "ntlm"
+}
+```
+
+> - `port`: WinRM 포트 (기본 5985=HTTP, 5986=HTTPS)
+> - `transport`: 인증 방식 — `ntlm`(기본), `basic`, `kerberos`, `credssp`
+> - `domain`: 도메인 지정 시 `DOMAIN\username` 형태로 인증
+
+**응답 예시:**
+
+```json
+{
+    "osType": "linux-rhel8",
+    "host": "192.168.0.71",
+    "cpu": { "usedPct": 23.5 },
+    "memory": {
+        "totalGb": 31.25,
+        "usedGb": 18.72,
+        "usedPct": 59.9
+    },
+    "disks": [
+        { "mount": "/", "totalGb": 50.0, "usedGb": 32.1, "usedPct": 64.0 },
+        { "mount": "/data", "totalGb": 200.0, "usedGb": 145.3, "usedPct": 72.0 }
+    ],
+    "error": null
+}
+```
+
+| os_type 값 | 설명 |
+|------------|------|
+| `windows` | Windows 서버 (로컬: WMI, 원격: WMI /node) |
+| `windows-ssh` | Windows 서버 (SSH + PowerShell, paramiko) |
+| `windows-winrm` | Windows 서버 (WinRM + PowerShell, pywinrm) |
+| `linux-rhel8` | RHEL 8.x / CentOS 8.x |
+| `linux-rhel7` | RHEL 7.x / CentOS 7.x |
+| `linux-ubuntu24` | Ubuntu 24.04 |
+| `linux-generic` | 범용 Linux (Ubuntu, Debian 등) |
+
+**배치 요청 body (`/dashboard/server-resources-batch`):**
+
+```json
+{
+    "servers": [
+        { "os_type": "linux-rhel8", "host": "192.168.0.71", "username": "sshuser", "password": "sshpass", "port": 322 },
+        { "os_type": "windows", "host": "localhost" },
+        { "os_type": "windows-winrm", "host": "192.168.0.100", "username": "Administrator", "password": "winpass", "port": 5985 }
+    ]
+}
+```
+
+배치 응답은 `results` 배열로 각 서버의 결과를 동일 순서로 반환합니다.
+
+### 10.8 Health-Check 프록시
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| POST | `/dashboard/health-check-proxy` | 외부 URL HTTP GET 프록시 (CORS 우회, 단건) |
+| POST | `/dashboard/health-check-proxy-batch` | 다중 URL HTTP GET 프록시 (배치) |
+
+**배치 요청 body (`/dashboard/health-check-proxy-batch`):**
+
+```json
+{
+    "urls": [
+        { "id": "svc1", "url": "https://example.com/health", "timeout": 5 },
+        { "id": "svc2", "url": "https://api.example.com/status", "timeout": 5 }
+    ]
+}
+```
+
+배치 응답은 `results` 배열로 각 URL의 결과를 동일 순서로 반환합니다.
+
+### 10.9 로그 조회
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/logs` | 로그 조회 |
+| GET | `/logs/available-dates` | 로그 파일이 존재하는 날짜 목록 |
+
+`/logs` 쿼리 파라미터:
+
+| 파라미터 | 설명 |
+|----------|------|
+| `start_date` | 시작일 (YYYY-MM-DD) |
+| `end_date` | 종료일 (YYYY-MM-DD) |
+| `max_lines` | 최대 행 수 (기본 1000) |
+| `cursor` | 페이지네이션 커서 |
+| `follow_latest` | `true`이면 최신 로그부터 |
+
+---
+
+## 11. 환경 변수
+
+`.env` 파일 또는 시스템 환경변수로 설정합니다. `config.json` 값보다 **우선 적용**됩니다.
+
+| 변수명 | 설명 | 기본값 |
+|--------|------|--------|
+| `MONITORING_CONFIG_PATH` | config.json 경로 오버라이드 | `(exe 옆 config.json)` |
+| `FLASK_ENV` | Flask 실행 환경 | `development` |
+| `DEBUG` | 디버그 모드 | `False` |
+| `API_HOST` | 서버 바인드 주소 | `127.0.0.1` |
+| `API_PORT` | 서버 포트 | `5000` |
+| `API_RATE_LIMIT` | API 요청 제한 | `100/minute` |
+| `CORS_ORIGINS` | 허용 CORS 출처 (쉼표 구분) | `http://127.0.0.1:3000` |
+| `AUTH_USERNAME` | 로그인 계정 오버라이드 | config.json 값 |
+| `AUTH_PASSWORD` | 로그인 비밀번호 오버라이드 | config.json 값 |
+| `ADMIN_USERNAME` | 관리자 판별 사용자명 | `admin` |
+| `JWT_SECRET_KEY` | JWT 서명 키 (운영 시 반드시 변경) | `default-secret-key` |
+| `JWT_ALGORITHM` | JWT 알고리즘 | `HS256` |
+| `JWT_EXPIRATION_HOURS` | JWT 만료 시간 (시간) | `24` |
+| `LOG_LEVEL` | 로그 레벨 | `INFO` |
+| `LOG_DIRECTORY` | 로그 디렉토리 | `logs` |
+| `LOG_FILE_PREFIX` | 로그 파일 접두사 | `monitoring_backend` |
+| `LOG_RETENTION_DAYS` | 로그 보관 일수 | `7` |
+| `LOG_SLOW_QUERY_THRESHOLD_SEC` | 슬로우 쿼리 경고 기준 (초) | `10` |
+| `DB_POOL_SIZE` | DB 연결 풀 크기 | `5` |
+| `DB_POOL_TIMEOUT_SEC` | DB 풀 연결 타임아웃 (초) | `30` |
+| `DB_POOL_RECYCLE_SEC` | DB 풀 연결 재활용 주기 (초) | `3600` |
+| `CACHE_TTL_SEC` | 캐시 TTL (초) | `300` |
+| `ENABLE_CACHE` | 캐시 활성화 여부 | `true` |
+| `THREAD_POOL_SIZE` | 스레드 풀 크기 | `16` |
+
+### 보안 권장 사항
+
+운영 환경에서는 반드시 다음 환경변수를 변경하세요:
+
+```env
+JWT_SECRET_KEY=your-very-long-random-secret-key-here
+AUTH_USERNAME=your_admin_id
+AUTH_PASSWORD=your_secure_password
+```
+
+---
+
+## 12. 로그
+
+### 로그 파일 위치
+
+```text
+logs/monigrid_be-YYYY-MM-DD.log
+```
+
+### 로그 설정 (config.json)
+
+| 항목 | 설명 | 기본값 |
+|------|------|--------|
+| `logging.directory` | 로그 디렉토리 | `logs` |
+| `logging.file_prefix` | 파일명 접두사 | `monigrid_be` |
+| `logging.level` | 로그 레벨 (`DEBUG`/`INFO`/`WARN`/`ERROR`) | `INFO` |
+| `logging.retention_days` | 자동 삭제 보관 일수 | `7` |
+| `logging.slow_query_threshold_sec` | 슬로우 쿼리 경고 기준 (초) | `10` |
+
+### 로그 형식 예시
+
+```
+2026-04-01 10:23:45,123 INFO  [monitoring_backend] JVM started successfully
+2026-04-01 10:23:46,456 INFO  [monitoring_backend] Starting initial cache warm-up for 1 endpoints...
+2026-04-01 10:23:47,789 INFO  [monitoring_backend] Cache refreshed apiId=status path=/api/status source=startup rows=42 durationSec=0.123 clientIp=scheduler
+2026-04-01 10:23:47,790 INFO  [monitoring_backend] Initial cache warm-up completed.
+2026-04-01 10:23:47,791 INFO  [monitoring_backend] Starting MonitoringBackend host=127.0.0.1 port=5000
+```
+
+슬로우 쿼리 경고:
+
+```
+2026-04-01 10:30:15,123 WARNING [monitoring_backend] Slow query apiId=metrics durationSec=12.5 threshold=10
+```
+
+---
+
+## 13. 운영 가이드
+
+### 13.1 일상 운영
+
+| 작업 | 방법 |
+|------|------|
+| 설정 변경 후 적용 | `POST /dashboard/reload-config` (재시작 불필요) |
+| SQL 쿼리 수정 | `sql/` 폴더의 파일 수정 후 reload-config |
+| 캐시 즉시 갱신 | `POST /dashboard/cache/refresh` |
+| 캐시 상태 확인 | `GET /dashboard/cache/status` |
+| 새 DB 드라이버 추가 | `drivers/`에 JAR 복사 → `config.json` 수정 → EXE 재시작 |
+| 로그 확인 | `GET /logs?follow_latest=true` 또는 `logs/` 폴더 직접 확인 |
+
+### 13.2 새 API 엔드포인트 추가
+
+1. `sql/` 폴더에 SQL 파일 생성 (예: `sql/new-report.sql`)
+2. `config.json`의 `apis` 배열에 항목 추가:
+   ```json
+   {
+       "id": "new-report",
+       "rest_api_path": "/api/new-report",
+       "connection_id": "mariadb-main",
+       "sql_id": "new-report",
+       "enabled": true,
+       "refresh_interval_sec": 30
+   }
+   ```
+3. `POST /dashboard/reload-config` 호출
+4. 프론트엔드에서 위젯 추가 시 엔드포인트 URL: `http://<backend>/api/new-report`
+
+### 13.3 새 DB 연결 추가
+
+1. `drivers/` 폴더에 해당 DB의 JDBC JAR 배치
+2. `config.json`의 `global_jdbc_jars`에 JAR 경로 추가 (세미콜론 구분)
+3. `config.json`의 `connections` 배열에 연결 정보 추가
+4. EXE **재시작** (JVM 클래스패스 변경은 재시작 필요)
+
+### 13.4 서버 리소스 모니터링 설정
+
+프론트엔드 위젯에서 직접 서버 접속 정보를 설정합니다 (백엔드 config.json에 설정 불필요).
+
+- **Linux 서버**: SSH 접속 정보 필요 (호스트, 포트, 계정, 비밀번호)
+- **Windows 서버 (WMI)**: 로컬은 자동, 원격은 WMI 접근 필요
+- **Windows 서버 (WinRM)**: WinRM 접속 정보 필요 (호스트, 포트, 계정, 비밀번호, 도메인, transport)
+- 백엔드에 `paramiko` 패키지가 설치되어 있어야 SSH 접속 가능
+- 백엔드에 `pywinrm` 패키지가 설치되어 있어야 WinRM 접속 가능
+- WinRM 대상 서버에서 `winrm quickconfig` 실행으로 WinRM 서비스가 활성화되어 있어야 함
+
+### 13.5 백업 & 복원
+
+| 백업 대상 | 파일/폴더 |
+|-----------|-----------|
+| 설정 | `config.json` |
+| SQL 쿼리 | `sql/` 폴더 전체 |
+| 드라이버 | `drivers/` 폴더 전체 |
+| 로그 | `logs/` 폴더 (선택) |
+
+복원: 백업한 파일/폴더를 `dist/` 아래에 덮어쓰기 후 EXE 재시작
+
+---
+
+## 14. IIS 단일 사이트 배포 (Frontend + Backend 같은 포트)
+
+Windows IIS 환경에서 **프론트엔드와 백엔드를 하나의 사이트(같은 포트)로 통합 배포**할 때 백엔드가 어떻게 동작해야 하는지 설명합니다.
+
+> **전체 구성과 IIS web.config 작성법은 프론트엔드 README의 "7. IIS 단일 사이트 배포" 섹션을 참조하세요.**
+> 이 섹션은 백엔드 측면에서 필요한 설정과 주의사항만 다룹니다.
+
+### 14.1 배포 구조 개요
+
+```
+다른 PC 브라우저
+  → IIS (서버:80)                           ← 외부 노출
+       │
+       ├─ 정적 파일 (frontend dist/)        ← IIS 직접 서빙
+       └─ /auth/*, /dashboard/*, /api/* 등  ← 리버스 프록시
+              │
+              ▼
+         Flask Backend (127.0.0.1:5000)     ← 서버 내부 (외부 노출 X)
+```
+
+이 구성에서 백엔드는 **서버 내부에서만 접근 가능**하면 충분합니다. 외부 방화벽에서 5000 포트를 열 필요가 없습니다.
+
+### 14.2 백엔드 바인딩 설정 (`config.json`)
+
+`config.json`의 `server.host`를 **127.0.0.1**(localhost)로 설정합니다.
+
+```json
+{
+    "server": {
+        "host": "127.0.0.1",
+        "port": 5000,
+        "query_timeout_sec": 30,
+        "refresh_interval_sec": 5,
+        "thread_pool_size": 16
+    }
+}
+```
+
+| 항목 | 값 | 이유 |
+|------|----|------|
+| `host` | `127.0.0.1` | 외부 네트워크에서 직접 접근 차단. IIS만 접근 가능 |
+| `port` | `5000` | IIS web.config의 프록시 대상 포트와 일치해야 함 |
+
+> **`0.0.0.0`으로 두면** 백엔드가 모든 인터페이스에서 LISTEN 됩니다. 외부 PC에서 `http://<서버IP>:5000`으로 직접 접근 가능해지므로, 단일 사이트 배포 의도에 어긋나고 보안상 권장하지 않습니다.
+
+### 14.3 백엔드 실행 방법
+
+IIS와 백엔드는 **별개의 프로세스**입니다. IIS가 백엔드를 자동으로 띄워주지 않으므로 별도로 실행해야 합니다.
+
+**옵션 A: 콘솔 실행 (개발/테스트)**
+
+```bash
+cd monigrid-be
+python monigrid_be.py
+```
+
+**옵션 B: PyInstaller EXE 실행 (운영)**
+
+```bash
+cd dist\monigrid-be
+monigrid-be.exe
+```
+
+**옵션 C: Windows 서비스 등록 (운영 권장)**
+
+[NSSM (Non-Sucking Service Manager)](https://nssm.cc/)을 사용하여 서비스로 등록하면 서버 부팅 시 자동 실행됩니다.
+
+```bash
+nssm install monigrid-be "D:\path\to\monigrid-be\dist\monigrid-be\monigrid-be.exe"
+nssm set monigrid-be AppDirectory "D:\path\to\monigrid-be\dist\monigrid-be"
+nssm set monigrid-be Start SERVICE_AUTO_START
+nssm set monigrid-be AppStdout "D:\path\to\logs\stdout.log"
+nssm set monigrid-be AppStderr "D:\path\to\logs\stderr.log"
+nssm start monigrid-be
+```
+
+서비스 상태 확인:
+
+```bash
+sc query monigrid-be
+nssm status monigrid-be
+```
+
+### 14.4 CORS 설정
+
+IIS 단일 사이트 배포에서는 프론트엔드와 백엔드가 **같은 origin**(IIS 자체)이므로 **CORS가 필요 없습니다**.
+
+기존 `monigrid_be.py`의 CORS 설정은 그대로 두어도 무방합니다 (요청이 같은 origin이면 CORS 헤더가 무시됨). 보안을 더 강화하려면 다음과 같이 origin을 제한할 수도 있습니다.
+
+```python
+CORS(
+    app,
+    resources={r"/*": {"origins": ["http://your-iis-host"]}},
+    supports_credentials=False,
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+)
+```
+
+### 14.5 클라이언트 IP 추적 (X-Forwarded-For)
+
+기본 상태에서는 백엔드의 모든 요청 client IP가 `127.0.0.1`(IIS 자신)로 기록됩니다.
+실제 사용자의 IP를 로그에 남기려면 다음 두 가지 작업이 필요합니다.
+
+**1) IIS web.config에 X-Forwarded-For 헤더 추가**
+
+```xml
+<rewrite>
+  <rules>
+    <rule name="API - auth" stopProcessing="true">
+      <match url="^auth/(.*)" />
+      <serverVariables>
+        <set name="HTTP_X_FORWARDED_FOR" value="{REMOTE_ADDR}" />
+      </serverVariables>
+      <action type="Rewrite" url="http://127.0.0.1:5000/auth/{R:1}" />
+    </rule>
+    <!-- 다른 규칙들도 동일하게 serverVariables 추가 -->
+  </rules>
+</rewrite>
+```
+
+> `<serverVariables>`의 `HTTP_X_FORWARDED_FOR` 변수를 IIS Manager의 **URL Rewrite → View Server Variables → Add** 메뉴에서 먼저 허용 목록에 등록해야 합니다.
+
+**2) 백엔드의 클라이언트 IP 추출 함수가 X-Forwarded-For를 인식하는지 확인**
+
+`app/utils.py`의 `get_client_ip()` 함수가 X-Forwarded-For 헤더를 우선 참조하면 됩니다. 일반적으로 다음과 같이 구현됩니다:
+
+```python
+def get_client_ip() -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+```
+
+### 14.6 API 경로 접두어 (Rate Limit, 라우트 매칭)
+
+백엔드의 라우트 경로(`/auth/*`, `/dashboard/*`, `/health`, `/logs`, `/api/*`)는 IIS의 web.config 프록시 규칙과 **1:1 대응**되어야 합니다. 백엔드에 새 라우트를 추가하면 web.config에도 해당 경로 프록시 규칙을 추가해야 합니다.
+
+**예시 — `/metrics` 신규 추가 시:**
+
+`monigrid_be.py`:
+
+```python
+@app.route("/metrics", methods=["GET"])
+def metrics():
+    ...
+```
+
+`web.config`:
+
+```xml
+<rule name="API - metrics" stopProcessing="true">
+  <match url="^metrics$" />
+  <action type="Rewrite" url="http://127.0.0.1:5000/metrics" />
+</rule>
+```
+
+> 이 규칙이 없으면 IIS는 `/metrics` 요청을 정적 파일로 처리하려고 시도하다가 SPA fallback으로 빠져 `index.html`을 반환하게 됩니다.
+
+### 14.7 동작 검증 (백엔드 측면)
+
+**1) 백엔드 단독 LISTEN 확인**
+
+```bash
+netstat -an | findstr :5000
+# TCP 127.0.0.1:5000 ... LISTENING  ← 이렇게 떠야 함
+# TCP 0.0.0.0:5000 ... LISTENING    ← 이건 외부에 노출됨 (의도와 다름)
+```
+
+**2) 백엔드 직접 호출**
+
+```bash
+curl http://127.0.0.1:5000/health
+```
+
+**3) IIS를 통한 호출 (프록시 동작 확인)**
+
+```bash
+curl http://localhost/health
+```
+
+같은 응답이 나와야 합니다.
+
+**4) 외부 PC에서 백엔드 직접 호출 → 실패해야 정상**
+
+외부 PC에서 `http://<서버IP>:5000/health` 요청 시 **연결 거부**되어야 합니다 (`host: "127.0.0.1"` 설정 효과).
+
+### 14.8 백엔드 측 트러블슈팅
+
+| 증상 | 원인 | 해결 |
+|------|------|------|
+| IIS가 502 Bad Gateway 반환 | 백엔드가 죽어 있음 | `curl http://127.0.0.1:5000/health` 로 확인 후 재시작 |
+| IIS가 500 반환, 백엔드 로그에 에러 | 백엔드 자체 오류 | `logs/monigrid_be_*.log` 확인 |
+| 외부에서 5000 포트 직접 접근 가능 | `host: "0.0.0.0"`으로 설정됨 | `config.json`의 `server.host`를 `127.0.0.1`로 변경 후 재시작 |
+| 백엔드 로그의 client IP가 모두 127.0.0.1 | X-Forwarded-For 미설정 | 14.5 참조 |
+| Rate limit이 IIS 한 IP(127.0.0.1)로 묶여 모든 사용자가 차단됨 | X-Forwarded-For 미인식 | 14.5의 `get_client_ip()` 적용 |
+
+---
+
+## 15. 트러블슈팅
+
+### 15.1 서버가 시작되지 않음
+
+**증상**: 실행 시 바로 종료되거나 에러 출력
+
+| 원인 | 해결 |
+|------|------|
+| Python 버전 부족 | `python --version`으로 3.13+ 확인 |
+| JAVA_HOME 미설정 | `echo %JAVA_HOME%` 확인 → JDK 경로 설정 |
+| JDK 미설치 | JDK 11+ 설치 (JRE만으로는 부족할 수 있음) |
+| config.json 오류 | JSON 문법 확인 (쉼표, 중괄호 등) |
+| 포트 충돌 | `config.json`의 `server.port` 변경 또는 기존 프로세스 종료 |
+
+### 15.2 "Class org.mariadb.jdbc.Driver is not found"
+
+**원인**: JVM 시작 시 JDBC 드라이버 JAR가 클래스패스에 포함되지 않음
+
+**해결**:
+1. `drivers/` 폴더에 해당 JAR 파일이 존재하는지 확인
+2. `config.json`의 `global_jdbc_jars`에 JAR 경로가 올바르게 설정되어 있는지 확인
+3. JAR 경로가 상대경로인 경우 `config.json` 기준 상대경로인지 확인
+4. EXE 재시작 (JVM은 한 번 시작되면 클래스패스 변경 불가)
+
+### 15.3 DB 연결 실패
+
+**증상**: 캐시 갱신 실패, 500 에러
+
+| 확인 사항 | 방법 |
+|-----------|------|
+| DB 서버 접속 가능 여부 | `telnet <host> <port>` 또는 프론트엔드 네트워크 테스트 위젯 |
+| JDBC URL 형식 | DB 종류별 형식 확인 (oracle: `jdbc:oracle:thin:@//`, mariadb: `jdbc:mariadb://`) |
+| 계정/비밀번호 | `config.json`의 `connections[].username/password` 확인 |
+| 방화벽 | 백엔드 서버에서 DB 서버 포트 접근 허용 확인 |
+
+**진단 방법**:
+```bash
+# 캐시 상태에서 에러 확인
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:5000/dashboard/cache/status
+```
+
+### 15.4 서버 리소스 모니터링 실패
+
+**증상**: 위젯에 "ERROR" 표시 또는 N/A
+
+| 원인 | 해결 |
+|------|------|
+| paramiko 미설치 | `pip install paramiko` 후 EXE 재빌드 |
+| pywinrm 미설치 | `pip install pywinrm` 후 EXE 재빌드 |
+| SSH 접속 실패 | 호스트/포트/계정 확인, 방화벽 확인 |
+| SSH 포트가 기본(22)이 아닌 경우 | 위젯 설정에서 SSH 포트 지정 |
+| WinRM 접속 실패 | 대상 서버에서 `winrm quickconfig` 실행 확인, 방화벽에서 5985/5986 포트 허용 확인 |
+| WinRM 인증 실패 | 계정/비밀번호/도메인 확인, transport 설정 확인 (기본 NTLM) |
+| 원격 서버에 `top` 명령이 없음 | `procps` 패키지 설치 (`yum install procps`) |
+
+### 15.5 프론트엔드 연결 실패 (CORS)
+
+**증상**: 브라우저 콘솔에 CORS 에러
+
+**해결**:
+1. `.env` 파일에 프론트엔드 URL 추가:
+   ```env
+   CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,http://프론트엔드IP:3000
+   ```
+2. 또는 `monigrid_be.py`의 CORS 설정 확인
+3. EXE 재시작
+
+### 15.6 JWT 토큰 만료
+
+**증상**: 모든 API가 401 반환
+
+**해결**: 프론트엔드에서 다시 로그인 (기본 24시간 유효)
+
+### 15.7 로그 파일이 생성되지 않음
+
+| 확인 사항 | 해결 |
+|-----------|------|
+| `logs/` 디렉토리 존재 여부 | 수동 생성 또는 EXE 재시작 |
+| 디렉토리 쓰기 권한 | 권한 확인 (Windows: 관리자 실행) |
+| `config.json`의 `logging.directory` 경로 | 올바른 상대/절대 경로인지 확인 |
+
+### 15.8 EXE 빌드 실패
+
+| 증상 | 해결 |
+|------|------|
+| `ModuleNotFoundError` | `monigrid_be.spec`의 `hiddenimports`에 누락 모듈 추가 |
+| JAR 파일 누락 | `drivers/` 폴더 확인, `build_backend_exe.bat` 실행 |
+| 빌드 후 실행 시 에러 | `dist/config.json`, `dist/sql/`, `dist/drivers/` 존재 확인 |
+
+### 15.9 캐시가 갱신되지 않음
+
+**해결**:
+1. `GET /dashboard/cache/status`로 마지막 갱신 시각·에러 확인
+2. `POST /dashboard/cache/refresh`로 수동 갱신 시도
+3. 로그 파일에서 `Cache refresh failed` 검색
+4. DB 연결 문제인 경우 `reset_connection: true` 옵션으로 강제 재연결

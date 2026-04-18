@@ -1,0 +1,137 @@
+{
+    "version": "2.0.0",
+    "server": {
+        "host": "127.0.0.1",
+        "port": 5000,
+        "query_timeout_sec": 30,
+        "refresh_interval_sec": 5,
+        "thread_pool_size": 16
+    },
+    "auth": {
+        "password": "admin",
+        "username": "admin"
+    },
+    "rate_limits": {
+        "global_default": "200/minute",
+        "auth_login": "10/minute",
+        "dynamic_endpoint": "120/minute",
+        "health_check": "60/minute",
+        "health_check_batch": "60/minute",
+        "network_test": "60/minute",
+        "network_test_batch": "60/minute",
+        "server_resources": "60/minute",
+        "server_resources_batch": "60/minute"
+    },
+    "logging": {
+        "directory": "logs",
+        "file_prefix": "monigrid_be",
+        "level": "INFO",
+        "retention_days": 7,
+        "slow_query_threshold_sec": 10
+    },
+    "global_jdbc_jars": "drivers/ojdbc11.jar;drivers/mariadb-java-client-3.4.1.jar;drivers/mssql-jdbc-12.8.1.jre11.jar",
+    "sql_validation": {
+        "typo_patterns": {
+            "group_by": [
+                "gorup",
+                "gruop",
+                "gropu",
+                "grup"
+            ],
+            "having": [
+                "havng",
+                "hvaing",
+                "havign",
+                "haivng"
+            ],
+            "join": [
+                "jion",
+                "joim",
+                "jnio",
+                "joni"
+            ],
+            "order_by": [
+                "oder",
+                "odrer",
+                "ordder",
+                "ordr"
+            ],
+            "where": [
+                "whre",
+                "wehre",
+                "wher",
+                "wheer",
+                "wherre",
+                "werhe"
+            ]
+        }
+    },
+    "connections": [
+        {
+            "db_type": "oracle",
+            "id": "oracle-main",
+            "jdbc_driver_class": "oracle.jdbc.OracleDriver",
+            "jdbc_url": "jdbc:oracle:thin:@//localhost:1521/XEPDB1",
+            "password": "monitor",
+            "username": "monitor"
+        },
+        {
+            "db_type": "mariadb",
+            "id": "mariadb-main",
+            "jdbc_driver_class": "org.mariadb.jdbc.Driver",
+            "jdbc_url": "jdbc:mariadb://192.168.0.71:3336/cointrader_db",
+            "password": "tjwns0130!@#",
+            "username": "xcoin"
+        },
+        {
+            "db_type": "mssql",
+            "id": "mssql-main",
+            "jdbc_driver_class": "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+            "jdbc_url": "jdbc:sqlserver://127.0.0.1:1433;databaseName=monitoring_db;encrypt=true;trustServerCertificate=true",
+            "password": "YourStrong!Passw0rd",
+            "username": "sa"
+        },
+        {
+            "db_type": "oracle",
+            "id": "ms-sql-123",
+            "jdbc_driver_class": "oracle.jdbc.OracleDriver",
+            "jdbc_url": "ddddddddd",
+            "password": "ttt",
+            "username": "ttt"
+        }
+    ],
+    "apis": [
+        {
+            "connection_id": "mariadb-main",
+            "enabled": true,
+            "id": "status",
+            "refresh_interval_sec": 5,
+            "rest_api_path": "/api/status",
+            "sql_id": "status"
+        },
+        {
+            "connection_id": "oracle-main",
+            "enabled": false,
+            "id": "alerts",
+            "refresh_interval_sec": 5,
+            "rest_api_path": "/api/alerts",
+            "sql_id": "alerts"
+        },
+        {
+            "connection_id": "oracle-main",
+            "enabled": false,
+            "id": "metrics",
+            "refresh_interval_sec": 5,
+            "rest_api_path": "/api/metrics",
+            "sql_id": "metrics"
+        },
+        {
+            "connection_id": "mssql-main",
+            "enabled": false,
+            "id": "mssql-health",
+            "refresh_interval_sec": 5,
+            "rest_api_path": "/api/mssql-health",
+            "sql_id": "mssql-health"
+        }
+    ]
+}

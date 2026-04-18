@@ -1,0 +1,278 @@
+.dynamic-table-container {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    overflow: hidden;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.table-header {
+    background-color: rgba(255, 255, 255, 0.02);
+    padding: 15px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.table-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.row-count {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background-color: rgba(255, 255, 255, 0.04);
+    padding: 4px 8px;
+    border-radius: 999px;
+}
+
+.table-wrapper {
+    overflow-x: auto;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.dynamic-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    table-layout: fixed;
+}
+
+.dynamic-table thead {
+    position: sticky;
+    top: 0;
+    background: linear-gradient(
+        180deg,
+        rgba(22, 29, 40, 0.98),
+        rgba(22, 29, 40, 0.92)
+    );
+    z-index: 10;
+}
+
+.dynamic-table th {
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    user-select: none;
+    white-space: nowrap;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+}
+
+.dynamic-table th.sortable {
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.dynamic-table th.sortable:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.column-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sort-indicator {
+    font-size: 10px;
+    color: var(--accent-primary);
+}
+
+.dynamic-table tbody tr {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.07);
+    transition: background-color 0.18s ease;
+}
+
+.dynamic-table tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.028);
+}
+
+.dynamic-table tbody tr.clickable {
+    cursor: pointer;
+}
+
+.dynamic-table tbody tr.clickable:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.dynamic-table td {
+    padding: 9px 12px;
+    color: #d8e1ec;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+.dynamic-table td.abnormal-cell {
+    background-color: rgba(255, 107, 129, 0.14);
+    color: #ffd7de;
+    box-shadow: inset 0 0 0 1px rgba(255, 107, 129, 0.25);
+}
+
+.dynamic-table td:hover {
+    white-space: normal;
+    word-break: break-word;
+}
+
+/* Status Styles */
+.status-success {
+    color: #53d58a;
+    font-weight: 500;
+}
+
+.status-error {
+    color: #ff8ea0;
+    font-weight: 500;
+}
+
+.status-warning {
+    color: #ffcc70;
+    font-weight: 500;
+}
+
+.bool-true {
+    color: #53d58a;
+    font-weight: 600;
+}
+
+.bool-false {
+    color: #ff8ea0;
+    font-weight: 600;
+}
+
+.null-value {
+    color: var(--text-tertiary);
+    font-style: italic;
+}
+
+.number-value {
+    font-family: "Courier New", monospace;
+    color: #78bfff;
+}
+
+.expand-btn {
+    background: none;
+    border: none;
+    color: #78bfff;
+    cursor: pointer;
+    padding: 0;
+    font-size: inherit;
+    text-decoration: underline;
+    transition: color 0.2s;
+}
+
+.expand-btn:hover {
+    color: #b7dbff;
+}
+
+.table-footer {
+    background-color: rgba(255, 255, 255, 0.02);
+    padding: 8px 12px;
+    border-top: 1px solid rgba(148, 163, 184, 0.08);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-align: right;
+}
+
+.empty-state,
+.error-state,
+.loading-state {
+    padding: 40px;
+    text-align: center;
+    color: #999;
+}
+
+.error-state {
+    color: #ff8ea0;
+}
+
+.loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+}
+
+.spinner {
+    border: 3px solid rgba(148, 163, 184, 0.12);
+    border-top: 3px solid var(--accent-primary);
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .dynamic-table {
+        font-size: 12px;
+    }
+
+    .dynamic-table th,
+    .dynamic-table td {
+        padding: 8px;
+    }
+
+    .table-header {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .table-header h3 {
+        font-size: 14px;
+    }
+}
+
+/* Container-query responsive */
+@container (max-width: 359px) {
+    .dynamic-table {
+        font-size: 11px;
+    }
+
+    .dynamic-table th {
+        padding: 6px 8px;
+        font-size: 10px;
+    }
+
+    .dynamic-table td {
+        padding: 5px 8px;
+        font-size: 11px;
+    }
+}
+
+@container (max-width: 259px) {
+    .dynamic-table {
+        font-size: 10px;
+    }
+
+    .dynamic-table th {
+        padding: 4px 6px;
+        font-size: 9px;
+    }
+
+    .dynamic-table td {
+        padding: 4px 6px;
+        font-size: 10px;
+    }
+}

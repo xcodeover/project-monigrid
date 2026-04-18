@@ -1,0 +1,79 @@
+/* ── Alarm banner ────────────────────────────────────────────────────────── */
+
+.alarm-banner {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    background: linear-gradient(90deg, #b91c1c, #dc2626);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 -2px 12px rgba(185, 28, 28, 0.5);
+    animation: alarm-slide-in 0.25s ease-out;
+}
+
+@keyframes alarm-slide-in {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+}
+
+.alarm-banner.muted {
+    background: linear-gradient(90deg, #92400e, #b45309);
+}
+
+.alarm-icon {
+    font-size: 18px;
+    animation: alarm-pulse 0.8s ease-in-out infinite alternate;
+}
+
+.alarm-banner.muted .alarm-icon {
+    animation: none;
+}
+
+@keyframes alarm-pulse {
+    from { opacity: 1; transform: scale(1); }
+    to   { opacity: 0.5; transform: scale(1.15); }
+}
+
+.alarm-message {
+    flex: 1;
+}
+
+.alarm-widgets {
+    font-weight: 400;
+    opacity: 0.85;
+    font-size: 11px;
+    margin-left: 6px;
+}
+
+.alarm-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.5);
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.alarm-btn:hover {
+    background: rgba(255,255,255,0.3);
+}
+
+.alarm-btn.sound-toggle {
+    background: transparent;
+    border-color: rgba(255,255,255,0.3);
+    min-width: 36px;
+    justify-content: center;
+}

@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    color-scheme: dark;
+    --bg-base: #0b0f14;
+    --bg-elevated: #111722;
+    --bg-surface: #151c28;
+    --bg-surface-strong: #1a2331;
+    --bg-soft: #0f141d;
+    --border-subtle: rgba(148, 163, 184, 0.14);
+    --border-strong: rgba(148, 163, 184, 0.22);
+    --text-primary: #eef4ff;
+    --text-secondary: #a6b3c4;
+    --text-tertiary: #728198;
+    --accent-primary: #19a0ff;
+    --accent-secondary: #00d1b2;
+    --accent-soft: rgba(25, 160, 255, 0.16);
+    --danger-soft: rgba(255, 107, 129, 0.14);
+    --success-soft: rgba(46, 204, 113, 0.14);
+    --warning-soft: rgba(255, 190, 61, 0.14);
+    --shadow-xl: 0 24px 80px rgba(3, 8, 20, 0.42);
+    --shadow-card: 0 10px 30px rgba(6, 10, 18, 0.28);
+    --radius-lg: 18px;
+    --radius-md: 14px;
+    --radius-sm: 10px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+    background:
+        radial-gradient(
+            circle at top left,
+            rgba(25, 160, 255, 0.08),
+            transparent 28%
+        ),
+        radial-gradient(
+            circle at 85% 15%,
+            rgba(0, 209, 178, 0.06),
+            transparent 24%
+        ),
+        var(--bg-base);
+}
+
+body {
+    background:
+        linear-gradient(
+            180deg,
+            rgba(255, 255, 255, 0.015),
+            rgba(255, 255, 255, 0)
+        ),
+        var(--bg-base);
+    color: var(--text-primary);
+    font-family:
+        "SUIT Variable", "Pretendard Variable", "Manrope", "Inter", "Segoe UI",
+        sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.01em;
+}
+
+.dark {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+}
+
+a,
+button,
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+#root {
+    min-height: 100vh;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(166, 179, 196, 0.22);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(166, 179, 196, 0.36);
+    background-clip: padding-box;
+}
+
+::selection {
+    background: rgba(25, 160, 255, 0.24);
+    color: var(--text-primary);
+}
+
+/* Utility Classes */
+.fade-in {
+    animation: fadeIn 0.28s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.slide-in {
+    animation: slideIn 0.32s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(-10px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}

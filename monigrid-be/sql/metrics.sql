@@ -1,0 +1,1 @@
+SELECT METRIC_ID AS metric_id, NAME AS name, UNIT AS unit, VALUE AS value, THRESHOLD AS threshold, STATUS AS status FROM SYSTEM_METRICS

@@ -1,0 +1,154 @@
+.widget-meta-editor {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: end;
+}
+
+.widget-meta-editor label,
+.widget-size-editor label,
+.refresh-interval-input-label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: #d9e5ec;
+    font-size: 0.85rem;
+}
+
+.widget-meta-editor input,
+.widget-size-editor input,
+.refresh-interval-input-label input,
+.status-list-textarea {
+    width: 100%;
+    border: 1px solid rgba(124, 151, 171, 0.35);
+    border-radius: 10px;
+    background: rgba(11, 22, 33, 0.9);
+    color: #f2f7fa;
+    padding: 10px 12px;
+}
+
+.settings-inline-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.status-list-textarea {
+    min-height: 140px;
+    resize: vertical;
+    font-family: Consolas, "Courier New", monospace;
+    line-height: 1.5;
+}
+
+.status-list-count {
+    margin-left: 8px;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: #7a96a8;
+}
+
+.status-list-count.over-limit {
+    color: #ef4444;
+    font-weight: 600;
+}
+
+.status-list-limit-warn {
+    margin: 6px 0 0;
+    font-size: 0.78rem;
+    color: #ef4444;
+}
+
+.status-list-apply-btn.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.status-list-apply-btn,
+.status-list-reconnect-btn {
+    margin-top: 10px;
+}
+
+.status-list-summary {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+/* chips removed — reuses .status-pill from ApiCard.css */
+
+.status-list-items {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 100%;
+    overflow: auto;
+}
+
+.status-list-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(15, 29, 43, 0.78);
+    border: 1px solid rgba(124, 151, 171, 0.15);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.status-list-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #f1f7fb;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+    max-width: 28%;
+}
+
+.status-list-url {
+    flex: 1;
+    min-width: 0;
+    color: #7a96a8;
+    font-size: 0.71rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+}
+
+.status-list-latency {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #9ab0bf;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.status-list-empty,
+.status-list-error {
+    padding: 14px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+}
+
+.status-list-empty {
+    background: rgba(15, 29, 43, 0.62);
+    color: #9ab0bf;
+}
+
+.status-list-error {
+    margin-bottom: 12px;
+    background: rgba(120, 20, 30, 0.24);
+    color: #ffb4b4;
+    border: 1px solid rgba(255, 120, 120, 0.25);
+}
+
+@media (max-width: 900px) {
+    .settings-inline-row {
+        grid-template-columns: 1fr;
+    }
+
+    .status-list-item {
+        gap: 5px;
+    }
+}
