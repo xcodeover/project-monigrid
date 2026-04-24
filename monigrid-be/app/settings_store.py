@@ -12,6 +12,12 @@ Schema (all tables prefixed `monigrid_`):
   monigrid_connections         (id PK, ...)         — JDBC connections
   monigrid_apis                (id PK, ...)         — REST API endpoints
   monigrid_sql_queries         (sql_id PK, content, updated_at)
+  monigrid_monitor_targets     (id PK, type, label, spec, interval_sec, enabled, updated_at)
+                               — server-resource / network probes collected by the BE in the background
+  monigrid_user_preferences    (username PK, value, updated_at)
+                               — per-user UI state (layouts, thresholds, column order)
+  monigrid_users               (username PK, password_hash, role, display_name, enabled, ...)
+                               — admin-managed account directory (bcrypt hashes)
 
 Cross-DB support: DDL is dialect-specific; DML is kept ANSI where
 practical. Only Oracle / MariaDB / MS-SQL are supported.
@@ -137,6 +143,35 @@ def _ddl_statements(db_type: str) -> list[str]:
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_monitor_targets (
+                id VARCHAR(128) PRIMARY KEY,
+                type VARCHAR(32) NOT NULL,
+                label VARCHAR(255),
+                spec LONGTEXT NOT NULL,
+                interval_sec INT NOT NULL DEFAULT 30,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_user_preferences (
+                username VARCHAR(128) PRIMARY KEY,
+                value LONGTEXT NOT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_users (
+                username VARCHAR(128) PRIMARY KEY,
+                password_hash VARCHAR(255) NOT NULL,
+                role VARCHAR(32) NOT NULL DEFAULT 'user',
+                display_name VARCHAR(255),
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
         ]
     if db_type == "mssql":
         return [
@@ -188,6 +223,38 @@ def _ddl_statements(db_type: str) -> list[str]:
                 updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
             )
             """,
+            """
+            IF OBJECT_ID('monigrid_monitor_targets', 'U') IS NULL
+            CREATE TABLE monigrid_monitor_targets (
+                id NVARCHAR(128) PRIMARY KEY,
+                type NVARCHAR(32) NOT NULL,
+                label NVARCHAR(255),
+                spec NVARCHAR(MAX) NOT NULL,
+                interval_sec INT NOT NULL DEFAULT 30,
+                enabled BIT NOT NULL DEFAULT 1,
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+            """,
+            """
+            IF OBJECT_ID('monigrid_user_preferences', 'U') IS NULL
+            CREATE TABLE monigrid_user_preferences (
+                username NVARCHAR(128) PRIMARY KEY,
+                value NVARCHAR(MAX) NOT NULL,
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+            """,
+            """
+            IF OBJECT_ID('monigrid_users', 'U') IS NULL
+            CREATE TABLE monigrid_users (
+                username NVARCHAR(128) PRIMARY KEY,
+                password_hash NVARCHAR(255) NOT NULL,
+                role NVARCHAR(32) NOT NULL DEFAULT 'user',
+                display_name NVARCHAR(255),
+                enabled BIT NOT NULL DEFAULT 1,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+            """,
         ]
     # oracle
     return [
@@ -231,6 +298,35 @@ def _ddl_statements(db_type: str) -> list[str]:
         CREATE TABLE monigrid_sql_queries (
             sql_id VARCHAR2(128) PRIMARY KEY,
             content CLOB NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE monigrid_monitor_targets (
+            id VARCHAR2(128) PRIMARY KEY,
+            type VARCHAR2(32) NOT NULL,
+            label VARCHAR2(255),
+            spec CLOB NOT NULL,
+            interval_sec NUMBER(10) DEFAULT 30 NOT NULL,
+            enabled NUMBER(1) DEFAULT 1 NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE monigrid_user_preferences (
+            username VARCHAR2(128) PRIMARY KEY,
+            value CLOB NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE monigrid_users (
+            username VARCHAR2(128) PRIMARY KEY,
+            password_hash VARCHAR2(255) NOT NULL,
+            role VARCHAR2(32) DEFAULT 'user' NOT NULL,
+            display_name VARCHAR2(255),
+            enabled NUMBER(1) DEFAULT 1 NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
         )
         """,
@@ -645,6 +741,355 @@ class SettingsStore:
                 pass
         self._conn.commit()
 
+    # ── monitor targets (server-resource / network probes) ───────────────
+    #
+    # Rows here describe *what* the BE should poll, not per-user widget
+    # layout. Each A-A node collects the same target independently and
+    # exposes the latest snapshot via the monitor routes. Operators
+    # maintain this list from the admin UI.
+    _MONITOR_TARGET_TYPES = ("server_resource", "network")
+
+    def list_monitor_targets(self) -> list[dict[str, Any]]:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT id, type, label, spec, interval_sec, enabled "
+                "FROM monigrid_monitor_targets"
+            )
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return [_row_to_monitor_target(row) for row in rows]
+
+    def get_monitor_target(self, target_id: str) -> dict[str, Any] | None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT id, type, label, spec, interval_sec, enabled "
+                "FROM monigrid_monitor_targets WHERE id = ?",
+                [target_id],
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return _row_to_monitor_target(row) if row else None
+
+    def upsert_monitor_target(self, item: dict[str, Any]) -> dict[str, Any]:
+        target_id = str(item.get("id") or "").strip()
+        if not target_id:
+            raise ValueError("monitor target id is required")
+        target_type = str(item.get("type") or "").strip().lower()
+        if target_type not in self._MONITOR_TARGET_TYPES:
+            raise ValueError(
+                f"monitor target type must be one of {self._MONITOR_TARGET_TYPES}, got {target_type!r}"
+            )
+        spec = item.get("spec")
+        if not isinstance(spec, dict):
+            raise ValueError("monitor target spec must be an object")
+        label = str(item.get("label") or "").strip() or None
+        interval_sec = max(1, int(item.get("interval_sec") or 30))
+        enabled = 1 if item.get("enabled", True) else 0
+
+        spec_json = json.dumps(spec, ensure_ascii=False)
+
+        self._upsert(
+            table="monigrid_monitor_targets",
+            key_col="id",
+            key_value=target_id,
+            values={
+                "type": target_type,
+                "label": label,
+                "spec": spec_json,
+                "interval_sec": interval_sec,
+                "enabled": enabled,
+            },
+            also_set_updated_at=True,
+        )
+        self._conn.commit()
+        stored = self.get_monitor_target(target_id)
+        assert stored is not None
+        return stored
+
+    def delete_monitor_target(self, target_id: str) -> None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "DELETE FROM monigrid_monitor_targets WHERE id = ?",
+                [target_id],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    # ── user preferences (per-user UI state) ─────────────────────────────
+    #
+    # One row per user; `value` is an opaque JSON blob the FE round-trips.
+    # Keyed by username (lowercased) — matches the JWT `username` claim. We
+    # deliberately don't enforce a schema here: widget layouts, criteria
+    # overrides, column order are all FE concerns, and forcing migrations
+    # on each UI change would be painful. If the stored JSON can't parse
+    # we return it as-is under a `raw` key so the FE can recover.
+
+    def get_user_preferences(self, username: str) -> dict[str, Any] | None:
+        key = _normalize_username(username)
+        if not key:
+            return None
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT value FROM monigrid_user_preferences WHERE username = ?",
+                [key],
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if not row:
+            return None
+        text = _read_clob(row[0])
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {"value": parsed}
+        except json.JSONDecodeError:
+            return {"raw": text}
+
+    def save_user_preferences(self, username: str, value: dict[str, Any]) -> dict[str, Any]:
+        key = _normalize_username(username)
+        if not key:
+            raise ValueError("username is required")
+        if not isinstance(value, dict):
+            raise ValueError("preferences payload must be an object")
+        value_json = json.dumps(value, ensure_ascii=False)
+        self._upsert(
+            table="monigrid_user_preferences",
+            key_col="username",
+            key_value=key,
+            values={"value": value_json},
+            also_set_updated_at=True,
+        )
+        self._conn.commit()
+        return value
+
+    def delete_user_preferences(self, username: str) -> None:
+        key = _normalize_username(username)
+        if not key:
+            return
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "DELETE FROM monigrid_user_preferences WHERE username = ?",
+                [key],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    # ── users (admin-managed account directory) ──────────────────────────
+    #
+    # bcrypt hashes are stored verbatim. `role` is 'admin' or 'user' — the
+    # JWT role claim comes from this column. While the table is empty the
+    # login flow falls back to the env/config admin (bootstrap mode); once
+    # an admin row exists the env fallback is refused so someone with the
+    # env creds can't bypass DB-managed accounts.
+    _USER_ROLES = ("admin", "user")
+
+    def count_admin_users(self) -> int:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT COUNT(*) FROM monigrid_users WHERE role = ? AND enabled = 1",
+                ["admin"],
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+        except Exception:
+            return 0
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+    def list_users(self) -> list[dict[str, Any]]:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT username, role, display_name, enabled, created_at, updated_at "
+                "FROM monigrid_users ORDER BY username"
+            )
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return [_row_to_user(row) for row in rows]
+
+    def get_user(self, username: str) -> dict[str, Any] | None:
+        key = _normalize_username(username)
+        if not key:
+            return None
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT username, role, display_name, enabled, created_at, updated_at "
+                "FROM monigrid_users WHERE username = ?",
+                [key],
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return _row_to_user(row) if row else None
+
+    def _get_user_hash(self, username: str) -> tuple[str, str, bool] | None:
+        """Return (password_hash, role, enabled) for the username, or None."""
+        key = _normalize_username(username)
+        if not key:
+            return None
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT password_hash, role, enabled FROM monigrid_users WHERE username = ?",
+                [key],
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if not row:
+            return None
+        hash_text = _read_clob(row[0])
+        return hash_text, str(row[1] or "user"), bool(row[2])
+
+    def create_user(
+        self,
+        *,
+        username: str,
+        password_hash: str,
+        role: str = "user",
+        display_name: str | None = None,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        key = _normalize_username(username)
+        if not key:
+            raise ValueError("username is required")
+        role_value = (role or "user").strip().lower()
+        if role_value not in self._USER_ROLES:
+            raise ValueError(f"role must be one of {self._USER_ROLES}, got {role!r}")
+        if not password_hash:
+            raise ValueError("password_hash is required")
+        if self.get_user(key) is not None:
+            raise ValueError(f"user already exists: {key}")
+        cur = self._cursor()
+        try:
+            cur.execute(
+                f"INSERT INTO monigrid_users "
+                f"(username, password_hash, role, display_name, enabled, created_at, updated_at) "
+                f"VALUES (?, ?, ?, ?, ?, {self._now_literal()}, {self._now_literal()})",
+                [
+                    key,
+                    password_hash,
+                    role_value,
+                    (display_name or "").strip() or None,
+                    1 if enabled else 0,
+                ],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        stored = self.get_user(key)
+        assert stored is not None
+        return stored
+
+    def update_user(
+        self,
+        username: str,
+        *,
+        password_hash: str | None = None,
+        role: str | None = None,
+        display_name: str | None = None,
+        enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        key = _normalize_username(username)
+        if not key or self.get_user(key) is None:
+            raise ValueError(f"user not found: {key}")
+        sets: list[str] = []
+        params: list[Any] = []
+        if password_hash is not None:
+            sets.append("password_hash = ?")
+            params.append(password_hash)
+        if role is not None:
+            role_value = role.strip().lower()
+            if role_value not in self._USER_ROLES:
+                raise ValueError(f"role must be one of {self._USER_ROLES}, got {role!r}")
+            sets.append("role = ?")
+            params.append(role_value)
+        if display_name is not None:
+            sets.append("display_name = ?")
+            params.append((display_name or "").strip() or None)
+        if enabled is not None:
+            sets.append("enabled = ?")
+            params.append(1 if enabled else 0)
+        if not sets:
+            stored = self.get_user(key)
+            assert stored is not None
+            return stored
+        sets.append(self._current_ts_expr("updated_at"))
+        params.append(key)
+        cur = self._cursor()
+        try:
+            cur.execute(
+                f"UPDATE monigrid_users SET {', '.join(sets)} WHERE username = ?",
+                params,
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        stored = self.get_user(key)
+        assert stored is not None
+        return stored
+
+    def delete_user(self, username: str) -> None:
+        key = _normalize_username(username)
+        if not key:
+            return
+        cur = self._cursor()
+        try:
+            cur.execute("DELETE FROM monigrid_users WHERE username = ?", [key])
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
     # ── full config dict (the shape FE/config.py expects) ─────────────────
 
     def load_config_dict(self) -> dict[str, Any]:
@@ -761,6 +1206,45 @@ def _read_clob(value: Any) -> str:
         return value.getSubString(1, int(length))
     except Exception:
         return str(value)
+
+
+def _normalize_username(value: Any) -> str:
+    """Return a canonical form (trimmed + lowercased) for the user key.
+
+    Usernames flow in from JWT claims which preserve case on login; using
+    a case-insensitive key prevents duplicate pref rows for "Admin" vs
+    "admin".
+    """
+    return str(value or "").strip().lower()
+
+
+def _row_to_user(row: Any) -> dict[str, Any]:
+    created = row[4]
+    updated = row[5]
+    return {
+        "username":     str(row[0]),
+        "role":         str(row[1] or "user"),
+        "display_name": row[2],
+        "enabled":      bool(row[3]),
+        "created_at":   created.isoformat() if hasattr(created, "isoformat") else (str(created) if created is not None else None),
+        "updated_at":   updated.isoformat() if hasattr(updated, "isoformat") else (str(updated) if updated is not None else None),
+    }
+
+
+def _row_to_monitor_target(row: Any) -> dict[str, Any]:
+    spec_text = _read_clob(row[3]) if row[3] is not None else ""
+    try:
+        spec = json.loads(spec_text) if spec_text else {}
+    except json.JSONDecodeError:
+        spec = {}
+    return {
+        "id":           str(row[0]),
+        "type":         str(row[1]),
+        "label":        row[2],
+        "spec":         spec,
+        "interval_sec": int(row[4]),
+        "enabled":      bool(row[5]),
+    }
 
 
 def _extract_table_name(ddl: str) -> str | None:

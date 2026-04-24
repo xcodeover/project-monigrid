@@ -6,6 +6,7 @@ import {
     useMemo,
 } from "react";
 import apiClient from "../services/http.js";
+import { monitorService } from "../services/dashboardService.js";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import {
     DEFAULT_CRITERIA,
@@ -50,8 +51,20 @@ const ServerResourceCard = ({
     onWidgetConfigChange,
     onAlarmChange,
 }) => {
-    /* ── derived: servers list (migrate old format) ──────────────── */
-    const servers = useMemo(() => migrateServers(widgetConfig), [widgetConfig]);
+    /* ── mode: snapshot (BE-centralized) vs legacy (credentials in widget) */
+    const targetIds = useMemo(
+        () => (Array.isArray(widgetConfig?.targetIds) ? widgetConfig.targetIds : []),
+        [widgetConfig],
+    );
+    const useSnapshot = targetIds.length > 0;
+
+    /* ── derived: servers list ────────────────────────────────────
+     * snapshot mode → built from the latest /monitor-snapshot response
+     * legacy mode   → migrateServers(widgetConfig.servers)
+     */
+    const [snapshotServers, setSnapshotServers] = useState([]);
+    const legacyServers = useMemo(() => migrateServers(widgetConfig), [widgetConfig]);
+    const servers = useSnapshot ? snapshotServers : legacyServers;
 
     /* ── display mode based on grid width ────────────────────────── */
     const widgetW = currentSize?.w ?? 4;
@@ -94,6 +107,58 @@ const ServerResourceCard = ({
     }, [servers]);
 
     const fetchAllServers = useCallback(async () => {
+        if (useSnapshot) {
+            if (targetIds.length === 0) return;
+            setDiskCycleIdx((prev) => prev + 1);
+            try {
+                const res = await monitorService.getSnapshot(targetIds);
+                const items = Array.isArray(res?.items) ? res.items : [];
+                const criteriaOverrides = widgetConfig?.criteriaByTarget || {};
+                const now = new Date();
+                const derivedServers = items.map((it) => ({
+                    id: it.targetId,
+                    label: it.label || it.spec?.host || it.targetId,
+                    osType: it.spec?.os_type || it.spec?.osType || "linux-generic",
+                    host: it.spec?.host || "",
+                    criteria: {
+                        ...DEFAULT_CRITERIA,
+                        ...(it.spec?.criteria || {}),
+                        ...(criteriaOverrides[it.targetId] || {}),
+                    },
+                }));
+                setSnapshotServers(derivedServers);
+                setServerStates(() => {
+                    const next = {};
+                    items.forEach((it) => {
+                        next[it.targetId] = {
+                            data: it.data,
+                            error: it.errorMessage || null,
+                            loading: false,
+                            lastUpdated: it.updatedAt ? new Date(it.updatedAt) : null,
+                            lastAttempted: now,
+                        };
+                    });
+                    return next;
+                });
+            } catch (err) {
+                const errorMsg = err?.response?.data?.message || err?.message || "스냅샷 조회 실패";
+                setServerStates((prev) => {
+                    const next = { ...prev };
+                    targetIds.forEach((tid) => {
+                        next[tid] = {
+                            data: prev[tid]?.data ?? null,
+                            error: errorMsg,
+                            loading: false,
+                            lastUpdated: prev[tid]?.lastUpdated ?? null,
+                            lastAttempted: new Date(),
+                        };
+                    });
+                    return next;
+                });
+            }
+            return;
+        }
+
         const list = serversRef.current;
         if (list.length === 0) return;
         setDiskCycleIdx((prev) => prev + 1);
@@ -177,24 +242,29 @@ const ServerResourceCard = ({
                 return next;
             });
         }
-    }, []);
+    }, [useSnapshot, targetIds, widgetConfig]);
 
-    // stable key for detecting server list changes
-    const serversKey = useMemo(
-        () => servers.map((s) => `${s.id}|${s.host}|${s.osType}`).join(","),
-        [servers],
-    );
+    // stable key for detecting server list changes.
+    // snapshot mode: tracks the target id set.
+    // legacy mode: tracks each server's identity (host/os may change).
+    const pollKey = useMemo(() => (
+        useSnapshot
+            ? `s:${targetIds.join(",")}`
+            : `l:${legacyServers.map((s) => `${s.id}|${s.host}|${s.osType}`).join(",")}`
+    ), [useSnapshot, targetIds, legacyServers]);
+
+    const hasItems = useSnapshot ? targetIds.length > 0 : legacyServers.length > 0;
 
     useEffect(() => {
-        if (servers.length > 0) fetchAllServers();
-    }, [serversKey, fetchAllServers]);
+        if (hasItems) fetchAllServers();
+    }, [pollKey, hasItems, fetchAllServers]);
 
     useEffect(() => {
-        if (servers.length === 0) return;
+        if (!hasItems) return;
         const ms = (refreshIntervalSec ?? 30) * 1000;
         timerRef.current = setInterval(fetchAllServers, ms);
         return () => clearInterval(timerRef.current);
-    }, [serversKey, refreshIntervalSec, fetchAllServers]);
+    }, [pollKey, hasItems, refreshIntervalSec, fetchAllServers]);
 
     /* ── accumulate history for charts ─────────────────────────── */
     useEffect(() => {
@@ -328,7 +398,9 @@ const ServerResourceCard = ({
     const hasAutoOpened = useRef(false);
 
     useEffect(() => {
-        if (!hasAutoOpened.current && servers.length === 0) {
+        // Snapshot mode uses admin-managed targets — the local server-setup
+        // modal would be misleading, so only auto-open in legacy mode.
+        if (!hasAutoOpened.current && !useSnapshot && legacyServers.length === 0) {
             setShowSettings(true);
             hasAutoOpened.current = true;
         }

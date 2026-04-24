@@ -18,6 +18,10 @@
 13. [백엔드 환경 변수](#13-백엔드-환경-변수)
 14. [운영 가이드](#14-운영-가이드)
 15. [문제 해결](#15-문제-해결)
+16. [사용자 계정 관리](#16-사용자-계정-관리)
+17. [사용자 환경설정](#17-사용자-환경설정)
+18. [모니터 타겟 (중앙 수집)](#18-모니터-타겟-중앙-수집)
+19. [설정 DB 이관](#19-설정-db-이관)
 
 ---
 
@@ -31,8 +35,11 @@
 |-------------|--------------|
 | `config.json` (파일) | `monigrid_settings_kv` / `monigrid_connections` / `monigrid_apis` (테이블) |
 | `sql/*.sql` (파일) | `monigrid_sql_queries` (테이블) |
+| 환경변수 로그인 (파일) | `monigrid_users` (테이블, bcrypt 해시) — 환경변수는 부트스트랩 폴백으로만 동작 |
+| 브라우저 로컬 스토리지 (UI) | `monigrid_user_preferences` (테이블, 사용자별 JSON) |
+| (신규) | `monigrid_monitor_targets` (테이블, 중앙 수집기 타겟 카탈로그) |
 
-`config.json` 과 `sql/*.sql` 파일은 **최초 기동 시 1회만** 설정 DB로 시드(seed)되며, 이후 `.bak` 으로 이름이 바뀌고 더 이상 읽히지 않습니다.
+`config.json` 과 `sql/*.sql` 파일은 **최초 기동 시 1회만** 설정 DB로 시드(seed)되며, 이후 `.bak` 으로 이름이 바뀌고 더 이상 읽히지 않습니다. v2.1+ 에서 추가된 `monigrid_users` / `monigrid_user_preferences` / `monigrid_monitor_targets` 테이블도 동일 DB 에 자동 생성됩니다.
 
 ### 0.2 설정 DB 접속 정보 — `initsetting.json`
 
@@ -302,22 +309,37 @@ SQL 편집기에서 오타를 감지하기 위한 패턴입니다. 조직에 맞
 | `JWT_ALGORITHM` | `HS256` | JWT 알고리즘 |
 | `JWT_EXPIRATION_HOURS` | `24` | 토큰 유효 시간 |
 
-### 4.2 관리자 역할
+### 4.2 로그인 처리 순서 (DB-first)
+
+로그인 요청은 다음 순서로 검증됩니다:
+
+1. **`monigrid_users` 테이블 조회** — 해당 username 이 존재하면 `bcrypt.checkpw` 로 저장된 해시와 비교
+2. **DB 계정이 일치하지 않을 때**, 그리고 **DB 에 admin 역할의 계정이 하나도 없을 때만** 환경변수(`AUTH_USERNAME` / `AUTH_PASSWORD`) 기반 부트스트랩 로그인이 허용됩니다
+3. DB 에 admin 이 한 명이라도 생기는 순간 부트스트랩 로그인은 자동으로 비활성화됩니다 — 이는 신규 환경의 "최초 로그인 수단 확보" 와 운영 환경의 "환경변수 탈취만으로 관리자 권한 획득" 방지 양쪽을 동시에 달성하기 위한 규칙입니다.
+
+> **운영 절차**: 최초 기동 직후 `POST /admin/users` 로 실제 관리자 계정을 생성하세요. 이후 환경변수 `AUTH_PASSWORD` 는 비워 두거나 랜덤 토큰으로 돌려 두셔도 문제 없습니다.
+
+### 4.3 관리자 역할
 
 | 환경변수 | 기본값 | 설명 |
 |---------|--------|------|
-| `ADMIN_USERNAME` | `admin` | 이 사용자명으로 로그인하면 관리자 역할 부여 |
+| `ADMIN_USERNAME` | `admin` | 환경변수 부트스트랩 로그인이 허용된 경우, 이 이름으로 로그인하면 admin 역할 부여 |
+
+DB 기반 계정의 경우 `monigrid_users.role` 이 `admin` 이면 관리자 권한이 부여됩니다.
 
 관리자 전용 기능:
 - SQL 편집기 (`monigrid_sql_queries` 조회/수정)
 - 설정 편집기 (설정 DB 테이블 — 연결/API/보안/로깅 등)
+- 사용자 계정 관리 (`/admin/users`) — 섹션 16 참조
+- 모니터 타겟 생성/수정/삭제 (`/dashboard/monitor-targets`) — 섹션 18 참조
 - 설정 핫 리로드
 - 캐시 수동 갱신
 
-### 4.3 보안 체크리스트
+### 4.4 보안 체크리스트
 
 - [ ] `JWT_SECRET_KEY`를 랜덤 문자열로 변경
-- [ ] `auth.password`를 기본값(`admin`)에서 변경
+- [ ] 기본 admin 계정 (`admin` / `admin`) 부트스트랩으로 최초 로그인 → 즉시 `/admin/users` 에서 실제 관리자 계정 생성
+- [ ] 운영 환경에서 `AUTH_PASSWORD` 를 랜덤값으로 바꾸거나 비움 (DB admin 생성 후 부트스트랩은 자동 잠금)
 - [ ] IIS에서 HTTPS 적용
 - [ ] `CORS_ORIGINS`를 실제 프론트엔드 도메인으로 제한
 - [ ] 방화벽에서 백엔드 포트(5000) 외부 직접 접근 차단
@@ -836,3 +858,137 @@ GET /logs?start_date=2026-04-16&end_date=2026-04-16&max_lines=1000
 | CORS 오류 | 백엔드 CORS 설정 미포함 | CORS_ORIGINS에 프론트엔드 도메인 추가 |
 | 대시보드 레이아웃 초기화 | 브라우저 데이터 삭제 | 내보내기 기능으로 사전 백업 권장 |
 | 빈 화면 (White screen) | JavaScript 오류 | 브라우저 개발자도구(F12) 콘솔 확인 |
+
+---
+
+## 16. 사용자 계정 관리
+
+`monigrid_users` 테이블의 계정은 **대시보드 → 사용자 계정 관리** 화면(admin 전용) 또는 `/admin/users` API 로 관리합니다.
+
+### 16.1 스키마
+
+| 컬럼 | 설명 |
+|------|------|
+| `username` | PK, 소문자로 정규화하여 저장 |
+| `password_hash` | bcrypt 해시 (비용 12) — 평문 비밀번호는 저장되지 않습니다 |
+| `role` | `admin` 또는 `user` |
+| `display_name` | UI 표기용 이름 (선택) |
+| `enabled` | `true` / `false`. `false` 계정은 로그인 차단 |
+| `created_at` / `updated_at` | 타임스탬프 (DB 기본값) |
+
+### 16.2 API
+
+| 메서드 | 경로 | 설명 |
+|-------|------|------|
+| GET    | `/admin/users` | 전체 사용자 목록 (password_hash 비노출) |
+| POST   | `/admin/users` | 사용자 생성 — `{username, password, role, display_name?, enabled?}` |
+| PUT    | `/admin/users/<username>` | 부분 수정 — 전달된 필드만 반영 |
+| DELETE | `/admin/users/<username>` | 사용자 삭제 |
+
+### 16.3 admin 자기보호 규칙
+
+admin 이 자기 자신에게 적용할 수 없는 작업:
+
+| 요청 | 응답 |
+|------|------|
+| `DELETE /admin/users/<본인>` | 400 — 자기 자신 삭제 금지 |
+| `PUT /admin/users/<본인>` with `role != admin` | 400 — 자기 강등 금지 |
+| `PUT /admin/users/<본인>` with `enabled: false` | 400 — 자기 비활성 금지 |
+
+이 규칙은 "관리자가 1명 남은 상태에서 실수로 자기를 잘라 마스터 잠금이 되는" 상황을 막습니다. 다른 admin 을 먼저 만든 뒤, 그 계정으로 로그인해 기존 admin 을 내리세요.
+
+### 16.4 초기 관리자 생성 절차
+
+1. 최초 기동 시 `AUTH_USERNAME` / `AUTH_PASSWORD` 환경변수(기본값 `admin`/`admin`) 로 로그인
+2. **사용자 계정 관리** 화면에서 실제 운영용 admin 계정 생성 (예: `alice` / 강력한 임시 비밀번호)
+3. 로그아웃 후 신규 계정으로 재로그인 — 이 시점부터 환경변수 부트스트랩 로그인은 자동으로 잠깁니다
+4. (선택) `.env` 에서 `AUTH_PASSWORD` 를 랜덤값으로 덮어써서 사고를 방지
+
+---
+
+## 17. 사용자 환경설정
+
+사용자별 UI 선호값(위젯 레이아웃, 임계값, 알람 소리 등) 은 `monigrid_user_preferences` 테이블에 JSON 으로 저장됩니다.
+
+### 17.1 스키마
+
+| 컬럼 | 설명 |
+|------|------|
+| `username` | PK — 소유자의 username |
+| `value` | JSON 문자열 (CLOB / LONGTEXT / NVARCHAR(MAX) — 방언별) |
+| `updated_at` | 마지막 저장 시각 |
+
+### 17.2 API (본인 전용)
+
+| 메서드 | 경로 | 설명 |
+|-------|------|------|
+| GET | `/dashboard/me/preferences` | 본인 환경설정 조회 — 없으면 `{}` 반환 |
+| PUT | `/dashboard/me/preferences` | 환경설정 저장 — body: `{preferences: {...}}` 혹은 raw object |
+
+다른 사용자의 환경설정은 읽을 수도, 덮어쓸 수도 없습니다 (request path 에 username 이 없고 JWT 의 username 만 사용).
+
+### 17.3 운영 고려사항
+
+- 같은 사용자가 다른 브라우저 / 다른 PC 에서 로그인해도 **동일한 레이아웃** 으로 복원됩니다.
+- 사용자를 **삭제** 하면 해당 row 도 함께 사라집니다. 복원이 필요하면 DB 백업에서 복구해야 합니다.
+- 대용량(수 MB 이상) 값을 저장하지 않는 것이 바람직합니다. JSON 은 전체가 통째로 저장/전송됩니다.
+
+---
+
+## 18. 모니터 타겟 (중앙 수집)
+
+과거에는 브라우저가 각 서버 리소스 / 네트워크 위젯마다 `POST /dashboard/server-resources` / `POST /dashboard/network-test` 를 주기적으로 호출했습니다. v2.1+ 에서는 **BE 의 단일 수집기**가 `monigrid_monitor_targets` 에 등록된 타겟을 실행하여 메모리 스냅샷을 갱신하고, 모든 브라우저는 `/dashboard/monitor-snapshot` 한 번의 호출로 전체 상태를 조회합니다.
+
+### 18.1 스키마
+
+| 컬럼 | 설명 |
+|------|------|
+| `id` | PK — 타겟 식별자 (예: `srv-db01`, `net-api-gw`) |
+| `type` | `server_resource` 또는 `network` |
+| `label` | UI 표시 이름 |
+| `spec` | 수집기에 전달할 JSON 파라미터 (host / username / password / port 등) |
+| `interval_sec` | 수집 주기(초) |
+| `enabled` | true/false |
+| `updated_at` | 최종 수정 시각 |
+
+### 18.2 API
+
+| 메서드 | 경로 | 권한 | 설명 |
+|-------|------|------|------|
+| GET    | `/dashboard/monitor-targets` | auth | 타겟 목록 (비관리자에게는 `spec` 내 `password`/`secret`/`token` 이 마스킹됨) |
+| POST   | `/dashboard/monitor-targets` | admin | 타겟 생성 |
+| PUT    | `/dashboard/monitor-targets/<id>` | admin | 타겟 수정 |
+| DELETE | `/dashboard/monitor-targets/<id>` | admin | 타겟 삭제 |
+| GET    | `/dashboard/monitor-snapshot` | auth | 최신 스냅샷 (쿼리 `ids=a,b` 로 필터) |
+| POST   | `/dashboard/monitor-snapshot/<id>/refresh` | auth | 해당 타겟 즉시 재수집 |
+
+### 18.3 운영 팁
+
+- 위젯별 독립 폴링을 모두 없애지 않아도 됩니다 — 단계적 마이그레이션 가능 (`/dashboard/server-resources*` 는 그대로 유효).
+- 타겟 수가 많아지면 `interval_sec` 을 늘려 부하를 분산시키세요 (단일 BE 수집기).
+- 비관리자 사용자 세션이 다수일 때도 DB / 외부 장비 쪽 부하는 일정합니다. 폴링이 BE 에 한 번 집중되기 때문입니다.
+
+---
+
+## 19. 설정 DB 이관
+
+Oracle / MariaDB / MSSQL 사이에서 설정 DB 내용을 통째로 옮길 때는 `monigrid-be/migrate_settings_db.py` 를 사용합니다.
+
+### 19.1 사용법
+
+```bash
+cd monigrid-be
+python migrate_settings_db.py --from initsetting.json --to initsetting.oracle.json
+```
+
+- `--from` 과 `--to` 에는 각각 원본·대상의 `initsetting.*.json` 파일 경로를 전달합니다.
+- 대상 DB 에 `monigrid_*` 스키마가 없으면 자동 생성됩니다 (`SettingsStore.create_schema()`).
+- 대상의 모든 `monigrid_*` 테이블은 **복사 전 삭제**되므로 원본이 곧 스냅샷 기준이 됩니다.
+- `created_at` / `updated_at` 은 원본 값이 그대로 복사됩니다.
+- 양쪽 JAR 가 한 JVM 에 올라가므로 양쪽 드라이버를 모두 `drivers/` 에 배치하고 `jdbc_jars` 에 나열하십시오.
+
+### 19.2 주의사항
+
+- `initsetting.json` / `initsetting.*.json` 에는 DB 자격 증명이 들어가므로 `.gitignore` 로 저장소 커밋이 차단됩니다. 로컬에서만 관리하세요.
+- 이관 직후 신규 DB 로 기동할 때도 기존 환경변수(`JWT_SECRET_KEY` 등) 를 동일하게 유지하세요 — 기존 토큰의 무효화를 막고 싶을 때 중요합니다.
+- Oracle → MSSQL 과 같이 방언을 바꿀 때는 MSSQL 의 `databaseName=master` 등 대상 파라미터가 실제 운영 DB 로 바뀌었는지 반드시 확인하세요. 테스트 완료 후 운영 DB 명으로 `initsetting.json` 을 교체합니다.

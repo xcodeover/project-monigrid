@@ -27,6 +27,7 @@ from .endpoint_cache_manager import EndpointCacheManager
 from .jdbc_executor import JdbcQueryExecutor
 from .log_reader import LogReader
 from .logging_setup import _startup_log, configure_logging
+from .monitor_collector_manager import MonitorCollectorManager, MonitorSnapshot
 from .settings_store import SettingsStore, SqlRepository
 from .sql_editor_service import SqlEditorService
 from .utils import get_env
@@ -97,6 +98,11 @@ class MonitoringBackend:
             logger=self.logger,
         )
         self._log_reader = LogReader(self.config.logging, self.logger)
+        self._monitor_collector = MonitorCollectorManager(
+            target_loader=self.settings_store.list_monitor_targets,
+            executor_provider=lambda: self.executor,
+            logger=self.logger,
+        )
 
         # Pre-start JVM once before any JDBC work begins, with all JDBC jars on classpath
         if self.config.connections:
@@ -110,6 +116,7 @@ class MonitoringBackend:
             except Exception as exc:
                 self.logger.error("JVM pre-start failed (will retry on first query): %s", exc)
         self._cache_manager.start()
+        self._monitor_collector.start()
         enabled_apis = [ep for ep in self.config.apis.values() if ep.enabled]
         _startup_log(
             self.logger,
@@ -127,6 +134,70 @@ class MonitoringBackend:
     def _stop_background_refreshers(self) -> None:
         # Kept for monigrid_be.py shutdown hook (still calls this name).
         self._cache_manager.stop()
+        self._monitor_collector.stop()
+
+    # ── Monitor collector (server-resource / network targets) ─────────────
+
+    def list_monitor_targets(self) -> list[dict[str, Any]]:
+        return self.settings_store.list_monitor_targets()
+
+    def get_monitor_target(self, target_id: str) -> dict[str, Any] | None:
+        return self.settings_store.get_monitor_target(target_id)
+
+    def upsert_monitor_target(self, item: dict[str, Any]) -> dict[str, Any]:
+        stored = self.settings_store.upsert_monitor_target(item)
+        # New / updated targets need the collector to re-schedule.
+        self._monitor_collector.reload()
+        return stored
+
+    def delete_monitor_target(self, target_id: str) -> None:
+        self.settings_store.delete_monitor_target(target_id)
+        self._monitor_collector.reload()
+
+    def get_monitor_snapshot(self, target_id: str) -> MonitorSnapshot | None:
+        return self._monitor_collector.get_snapshot(target_id)
+
+    def snapshot_monitor_entries(self) -> dict[str, MonitorSnapshot]:
+        return self._monitor_collector.snapshot_entries()
+
+    def refresh_monitor_target(self, target_id: str) -> MonitorSnapshot | None:
+        return self._monitor_collector.refresh_target(target_id)
+
+    # ── Per-user preferences (widget layouts, thresholds, column order) ───
+
+    def get_user_preferences(self, username: str) -> dict[str, Any]:
+        return self.settings_store.get_user_preferences(username) or {}
+
+    def save_user_preferences(
+        self, username: str, value: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.settings_store.save_user_preferences(username, value)
+
+    # ── Users (admin-managed directory) ──────────────────────────────────
+
+    def list_users(self) -> list[dict[str, Any]]:
+        return self.settings_store.list_users()
+
+    def get_user(self, username: str) -> dict[str, Any] | None:
+        return self.settings_store.get_user(username)
+
+    def create_user(self, **kwargs: Any) -> dict[str, Any]:
+        return self.settings_store.create_user(**kwargs)
+
+    def update_user(self, username: str, **kwargs: Any) -> dict[str, Any]:
+        return self.settings_store.update_user(username, **kwargs)
+
+    def delete_user(self, username: str) -> None:
+        self.settings_store.delete_user(username)
+        # Drop that user's saved UI prefs too so a recreated account starts clean.
+        self.settings_store.delete_user_preferences(username)
+
+    def has_admin_user(self) -> bool:
+        return self.settings_store.count_admin_users() > 0
+
+    def get_user_credentials(self, username: str) -> tuple[str, str, bool] | None:
+        """Return (password_hash, role, enabled) for the username, or None."""
+        return self.settings_store._get_user_hash(username)
 
     def get_cached_endpoint_entry(self, api_id: str) -> EndpointCacheEntry | None:
         return self._cache_manager.get_cached_endpoint_entry(api_id)
@@ -300,6 +371,11 @@ class MonitoringBackend:
         # config/executor/pools via providers so they need no refresh.
         self._log_reader.update_logging_config(new_config.logging)
         self._cache_manager.start()
+        # Monitor targets are owned by the settings DB, not AppConfig, so
+        # a config reload doesn't change which targets are active — but
+        # the collector threads were stopped by _stop_background_refreshers
+        # above, so we need to restart them.
+        self._monitor_collector.reload()
 
         enabled_apis = [ep for ep in new_config.apis.values() if ep.enabled]
         _startup_log(

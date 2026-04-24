@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import apiClient from "../services/http.js";
+import { monitorService } from "../services/dashboardService.js";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import {
     sortAlertsFirst,
@@ -173,7 +174,16 @@ const NetworkTestCard = ({
     onWidgetConfigChange,
     onAlarmChange,
 }) => {
-    const targets = useMemo(() => migrateTargets(networkConfig), [networkConfig]);
+    /* ── mode: snapshot (BE-centralized) vs legacy (probe-from-browser) */
+    const targetIds = useMemo(
+        () => (Array.isArray(networkConfig?.targetIds) ? networkConfig.targetIds : []),
+        [networkConfig],
+    );
+    const useSnapshot = targetIds.length > 0;
+
+    const legacyTargets = useMemo(() => migrateTargets(networkConfig), [networkConfig]);
+    const [snapshotTargets, setSnapshotTargets] = useState([]);
+    const targets = useSnapshot ? snapshotTargets : legacyTargets;
 
     const widgetW = currentSize?.w ?? 4;
     const displayMode = widgetW <= 3 ? "compact" : widgetW <= 6 ? "normal" : "wide";
@@ -185,6 +195,58 @@ const NetworkTestCard = ({
     useEffect(() => { targetsRef.current = targets; }, [targets]);
 
     const checkAllTargets = useCallback(async () => {
+        if (useSnapshot) {
+            if (targetIds.length === 0) return;
+            try {
+                const res = await monitorService.getSnapshot(targetIds);
+                const items = Array.isArray(res?.items) ? res.items : [];
+                const derived = items.map((it) => {
+                    const spec = it.spec || {};
+                    return {
+                        id: it.targetId,
+                        label: it.label || spec.host || it.targetId,
+                        type: spec.type || "ping",
+                        host: spec.host || "",
+                        port: spec.port != null ? String(spec.port) : "",
+                        timeout: spec.timeout != null ? String(spec.timeout) : "5",
+                    };
+                });
+                setSnapshotTargets(derived);
+                setTargetStates(() => {
+                    const next = {};
+                    items.forEach((it) => {
+                        const d = it.data || {};
+                        const hasError = !!it.errorMessage;
+                        const success = !hasError && (d.success === true);
+                        next[it.targetId] = {
+                            success,
+                            responseTimeMs: d.responseTimeMs ?? null,
+                            error: hasError ? it.errorMessage : (success ? null : (d.message || "Fail")),
+                            loading: false,
+                            lastChecked: it.updatedAt ? new Date(it.updatedAt) : new Date(),
+                        };
+                    });
+                    return next;
+                });
+            } catch (err) {
+                const errorMsg = err?.response?.data?.message || err?.message || "스냅샷 조회 실패";
+                setTargetStates((prev) => {
+                    const next = { ...prev };
+                    targetIds.forEach((tid) => {
+                        next[tid] = {
+                            success: false,
+                            responseTimeMs: null,
+                            error: errorMsg,
+                            loading: false,
+                            lastChecked: new Date(),
+                        };
+                    });
+                    return next;
+                });
+            }
+            return;
+        }
+
         const list = targetsRef.current;
         if (list.length === 0) return;
 
@@ -251,24 +313,27 @@ const NetworkTestCard = ({
                 return next;
             });
         }
-    }, []);
+    }, [useSnapshot, targetIds]);
 
-    const targetsKey = useMemo(
-        () => targets.map((t) => `${t.id}|${t.host}|${t.type}|${t.port}`).join(","),
-        [targets],
-    );
+    const pollKey = useMemo(() => (
+        useSnapshot
+            ? `s:${targetIds.join(",")}`
+            : `l:${legacyTargets.map((t) => `${t.id}|${t.host}|${t.type}|${t.port}`).join(",")}`
+    ), [useSnapshot, targetIds, legacyTargets]);
+
+    const hasItems = useSnapshot ? targetIds.length > 0 : legacyTargets.length > 0;
 
     useEffect(() => {
-        if (targets.length > 0) checkAllTargets();
-    }, [targetsKey, checkAllTargets]);
+        if (hasItems) checkAllTargets();
+    }, [pollKey, hasItems, checkAllTargets]);
 
     useEffect(() => {
-        if (targets.length === 0) return undefined;
+        if (!hasItems) return undefined;
         // refreshIntervalSec이 string("30")으로 들어와도 안전하게 처리한다.
         const sec = Math.max(MIN_REFRESH_INTERVAL_SEC, Number(refreshIntervalSec) || 10);
         const id = setInterval(checkAllTargets, sec * 1000);
         return () => clearInterval(id);
-    }, [targetsKey, refreshIntervalSec, checkAllTargets]);
+    }, [pollKey, hasItems, refreshIntervalSec, checkAllTargets]);
 
     /* ── alarm reporting ──────────────────────────────────────���─── */
     const statusSummary = useMemo(() => {
@@ -318,7 +383,8 @@ const NetworkTestCard = ({
     const hasAutoOpened = useRef(false);
 
     useEffect(() => {
-        if (!hasAutoOpened.current && targets.length === 0) {
+        // Snapshot mode uses admin-managed targets — skip the legacy auto-open.
+        if (!hasAutoOpened.current && !useSnapshot && legacyTargets.length === 0) {
             setShowSettings(true);
             hasAutoOpened.current = true;
         }

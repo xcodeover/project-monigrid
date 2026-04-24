@@ -18,6 +18,8 @@ const DashboardHeader = ({
     onOpenConfigEditor,
     onOpenAddApi,
     onOpenSqlEditor,
+    onOpenMonitorTargets,
+    onOpenUserManagement,
     onRefreshAll,
     onOpenLogs,
     onLogout,
@@ -108,6 +110,26 @@ const DashboardHeader = ({
                             title='API SQL 편집'
                         >
                             <span className='toolbar-btn-icon'>⌘</span>
+                        </button>
+                    )}
+
+                    {isAdmin && (
+                        <button
+                            className='toolbar-btn toolbar-btn-secondary'
+                            onClick={onOpenMonitorTargets}
+                            title='모니터 대상 관리'
+                        >
+                            <span className='toolbar-btn-icon'>🛰</span>
+                        </button>
+                    )}
+
+                    {isAdmin && (
+                        <button
+                            className='toolbar-btn toolbar-btn-secondary'
+                            onClick={onOpenUserManagement}
+                            title='사용자 계정 관리'
+                        >
+                            <span className='toolbar-btn-icon'>👥</span>
                         </button>
                     )}
 

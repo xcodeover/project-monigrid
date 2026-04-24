@@ -76,6 +76,9 @@ Electron으로 패키징하여 Windows 데스크탑 앱(EXE 설치 파일)으로
 
 - JWT 기반 로그인·세션 관리
 - 401 응답 시 자동 로그아웃
+- **사용자 계정 관리 페이지** (관리자 전용) — `/admin/users` API 연동, 헤더의 **👥** 버튼 → `UserManagementPage`
+- **모니터 타겟 관리 페이지** (관리자 전용) — BE 중앙 수집기 타겟 카탈로그 편집, 헤더의 **🛰** 버튼 → `MonitorTargetsPage`
+- **사용자별 대시보드 상태** — 위젯 레이아웃·임계값·알람 소리를 `monigrid_user_preferences` 에 저장하여 계정 단위로 복원 (다른 브라우저에서도 동일 화면)
 
 ---
 
@@ -125,11 +128,16 @@ monigrid-fe/
 │   ├── pages/
 │   │   ├── DashboardPage.jsx        # 메인 대시보드
 │   │   ├── DashboardPage.css        # 대시보드 스타일
+│   │   ├── DashboardHeader.jsx      # 헤더 바 (toolbar, 사용자 메뉴)
 │   │   ├── LoginPage.jsx            # 로그인 페이지
 │   │   ├── LoginPage.css            # 로그인 스타일
 │   │   ├── AlertHistoryPage.jsx     # 알람 이력 페이지
 │   │   ├── LogViewerPage.jsx        # 서버 로그 뷰어
-│   │   └── LogViewerPage.css        # 로그 뷰어 스타일
+│   │   ├── LogViewerPage.css        # 로그 뷰어 스타일
+│   │   ├── MonitorTargetsPage.jsx   # 모니터 타겟 관리 (admin) ★
+│   │   ├── MonitorTargetsPage.css
+│   │   ├── UserManagementPage.jsx   # 사용자 계정 관리 (admin) ★
+│   │   └── UserManagementPage.css
 │   ├── services/
 │   │   ├── http.js                  # Axios 인스턴스 (인터셉터 포함)
 │   │   ├── api.js                   # API URL 헬퍼

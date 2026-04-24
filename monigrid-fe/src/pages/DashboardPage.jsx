@@ -88,6 +88,12 @@ const DashboardPage = () => {
     const importDashboardConfig = useDashboardStore(
         (state) => state.importDashboardConfig,
     );
+    const syncPreferencesFromServer = useDashboardStore(
+        (state) => state.syncPreferencesFromServer,
+    );
+    const disableServerSync = useDashboardStore(
+        (state) => state.disableServerSync,
+    );
 
     // 빌드 시점 기본값 해석은 services/http.js에 일원화 (same-origin 모드 포함)
     const rememberedApiBaseUrl =
@@ -157,6 +163,13 @@ const DashboardPage = () => {
             dashboardSettings?.widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE,
         );
     }, [dashboardSettings?.widgetFontSize]);
+
+    // Hydrate the store with server-side preferences once per session
+    // (keyed by username so switching users re-fetches).
+    useEffect(() => {
+        if (!user?.username) return;
+        syncPreferencesFromServer();
+    }, [user?.username, syncPreferencesFromServer]);
 
     useEffect(() => {
         if (widgets !== null) {
@@ -263,6 +276,7 @@ const DashboardPage = () => {
     );
 
     const handleLogout = () => {
+        disableServerSync();
         logout();
         navigate("/login");
     };
@@ -574,6 +588,8 @@ const DashboardPage = () => {
                 onOpenConfigEditor={() => setShowConfigEditor(true)}
                 onOpenAddApi={() => setShowAddApi(true)}
                 onOpenSqlEditor={() => setShowSqlEditor(true)}
+                onOpenMonitorTargets={() => navigate("/monitor-targets")}
+                onOpenUserManagement={() => navigate("/users")}
                 onRefreshAll={() => refetchAll()}
                 onOpenLogs={() => navigate("/logs")}
                 onLogout={handleLogout}
