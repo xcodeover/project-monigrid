@@ -7,26 +7,17 @@ import {
     sortAlertsFirst,
     useAutoScrollTopOnDataChange,
 } from "../utils/widgetListHelpers";
+import MonitorTargetPicker from "./MonitorTargetPicker";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
 import "./ApiCard.css";
 import "./NetworkTestCard.css";
 
 /* ── helpers ─────────────────────────────────────────────────────── */
 
-const MAX_TARGETS = 50;
-
 const clamp = (value, min, max, fallback) => {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
     return Math.min(max, Math.max(min, Math.floor(n)));
-};
-
-const generateId = () =>
-    `net-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-const incrementLabel = (label) => {
-    const m = label.match(/^(.*?)(\d+)$/);
-    if (m) return m[1] + (parseInt(m[2], 10) + 1);
-    return label ? `${label}-2` : "";
 };
 
 const migrateTargets = (cfg) => {
@@ -91,68 +82,6 @@ const TargetRow = ({ target, state, displayMode }) => {
                 )}
                 {loading && <span className="net-row-spinner" />}
             </div>
-        </div>
-    );
-};
-
-/* ── Settings: single target row (collapsible) ─────────────────── */
-
-const TargetSettingRow = ({
-    target,
-    expanded,
-    onToggle,
-    onChange,
-    onDuplicate,
-    onRemove,
-}) => {
-    const update = (field, value) => onChange(target.id, field, value);
-    const summary = `${target.label || "(이름없음)"} — ${target.type}://${target.host || "(호스트없음)"}${target.type === "telnet" ? `:${target.port || "?"}` : ""}`;
-
-    return (
-        <div className={`srv-setting-row${expanded ? " expanded" : ""}`}>
-            <div className="srv-setting-summary" onClick={onToggle}>
-                <span className="srv-setting-chevron">{expanded ? "▾" : "▸"}</span>
-                <span className="srv-setting-summary-text">{summary}</span>
-                <span className="srv-setting-os-badge">{target.type.toUpperCase()}</span>
-                <div className="srv-setting-actions">
-                    <button type="button" className="srv-action-btn" onClick={(e) => { e.stopPropagation(); onDuplicate(); }} title="복제">⧉</button>
-                    <button type="button" className="srv-action-btn danger" onClick={(e) => { e.stopPropagation(); onRemove(); }} title="삭제">✕</button>
-                </div>
-            </div>
-
-            {expanded && (
-                <div className="srv-setting-detail">
-                    <div className="srv-setting-grid-2">
-                        <label>
-                            <span>대상 이름</span>
-                            <input type="text" value={target.label} onChange={(e) => update("label", e.target.value)} placeholder="예: Web-01" />
-                        </label>
-                        <label>
-                            <span>테스트 유형</span>
-                            <select value={target.type} onChange={(e) => update("type", e.target.value)}>
-                                <option value="ping">Ping</option>
-                                <option value="telnet">Telnet</option>
-                            </select>
-                        </label>
-                    </div>
-                    <div className="srv-setting-grid-2">
-                        <label>
-                            <span>호스트</span>
-                            <input type="text" value={target.host} onChange={(e) => update("host", e.target.value)} placeholder="192.168.0.1" />
-                        </label>
-                        {target.type === "telnet" && (
-                            <label>
-                                <span>포트</span>
-                                <input type="number" value={target.port} onChange={(e) => update("port", e.target.value)} placeholder="80" min="1" max="65535" />
-                            </label>
-                        )}
-                    </div>
-                    <label>
-                        <span>타임아웃 (초)</span>
-                        <input type="number" value={target.timeout} onChange={(e) => update("timeout", e.target.value)} placeholder="5" min="1" max="30" />
-                    </label>
-                </div>
-            )}
         </div>
     );
 };
@@ -383,8 +312,12 @@ const NetworkTestCard = ({
     const hasAutoOpened = useRef(false);
 
     useEffect(() => {
-        // Snapshot mode uses admin-managed targets — skip the legacy auto-open.
-        if (!hasAutoOpened.current && !useSnapshot && legacyTargets.length === 0) {
+        // 새로 추가된 위젯에 대상이 비어있으면 settings 모달을 자동으로 한 번 열어준다.
+        if (
+            !hasAutoOpened.current &&
+            targetIds.length === 0 &&
+            legacyTargets.length === 0
+        ) {
             setShowSettings(true);
             hasAutoOpened.current = true;
         }
@@ -394,18 +327,16 @@ const NetworkTestCard = ({
     const [sizeDraft, setSizeDraft] = useState({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 });
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 10);
     const [titleDraft, setTitleDraft] = useState(title);
-    const [targetsDraft, setTargetsDraft] = useState([]);
-    const [expandedId, setExpandedId] = useState(null);
+    const [selectedTargetIdsDraft, setSelectedTargetIdsDraft] = useState([]);
 
     useEffect(() => { setSizeDraft({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 }); }, [currentSize?.w, currentSize?.h]);
     useEffect(() => { setIntervalDraft(refreshIntervalSec ?? 10); }, [refreshIntervalSec]);
     useEffect(() => { setTitleDraft(title); }, [title]);
 
     const openSettings = useCallback(() => {
-        setTargetsDraft(targets.map((t) => ({ ...t })));
-        setExpandedId(null);
+        setSelectedTargetIdsDraft([...targetIds]);
         setShowSettings(true);
-    }, [targets]);
+    }, [targetIds]);
 
     const handleSizeApply = () => {
         const w = clamp(sizeDraft.w, sizeBounds?.minW ?? 2, sizeBounds?.maxW ?? 12, currentSize?.w ?? 4);
@@ -425,45 +356,8 @@ const NetworkTestCard = ({
         if (t && t !== title) onWidgetMetaChange?.({ title: t });
     };
 
-    const handleAddTarget = () => {
-        if (targetsDraft.length >= MAX_TARGETS) {
-            window.alert(`최대 ${MAX_TARGETS}개까지 등록할 수 있습니다.`);
-            return;
-        }
-        const last = targetsDraft[targetsDraft.length - 1];
-        const newTarget = {
-            id: generateId(),
-            label: "",
-            type: last?.type || "ping",
-            host: "",
-            port: last?.port || "80",
-            timeout: last?.timeout || "5",
-        };
-        setTargetsDraft((p) => [...p, newTarget]);
-        setExpandedId(newTarget.id);
-    };
-
-    const handleDuplicateTarget = (t) => {
-        if (targetsDraft.length >= MAX_TARGETS) {
-            window.alert(`최대 ${MAX_TARGETS}개까지 등록할 수 있습니다.`);
-            return;
-        }
-        const dup = { ...t, id: generateId(), label: incrementLabel(t.label) };
-        setTargetsDraft((p) => [...p, dup]);
-        setExpandedId(dup.id);
-    };
-
-    const handleRemoveTarget = (id) => {
-        setTargetsDraft((p) => p.filter((t) => t.id !== id));
-        if (expandedId === id) setExpandedId(null);
-    };
-
-    const handleUpdateTargetField = (id, field, value) => {
-        setTargetsDraft((p) => p.map((t) => (t.id === id ? { ...t, [field]: value } : t)));
-    };
-
     const handleSaveTargets = () => {
-        onWidgetConfigChange?.({ targets: targetsDraft });
+        onWidgetConfigChange?.({ targetIds: selectedTargetIdsDraft });
         setShowSettings(false);
     };
 
@@ -494,7 +388,7 @@ const NetworkTestCard = ({
                         <h5>네트워크 테스트 위젯 설정</h5>
                         <p>{title}</p>
                     </div>
-                    <button type="button" className="close-settings-btn" onClick={() => setShowSettings(false)}>✕</button>
+                    <button type="button" className="close-settings-btn" onClick={() => setShowSettings(false)} aria-label="닫기"><IconClose size={14} /></button>
                 </div>
                 <div className="settings-popup-body">
                     <div className="settings-section">
@@ -526,34 +420,18 @@ const NetworkTestCard = ({
                     </div>
                     <div className="settings-section srv-list-section">
                         <div className="srv-list-header">
-                            <h6>대상 목록 ({targetsDraft.length} / {MAX_TARGETS})</h6>
-                            <button type="button" className="size-preset-btn srv-add-btn" onClick={handleAddTarget} disabled={targetsDraft.length >= MAX_TARGETS}>＋ 대상 추가</button>
+                            <h6>대상 선택 ({selectedTargetIdsDraft.length}개)</h6>
                         </div>
-                        {targetsDraft.length === 0 ? (
-                            <div className="srv-list-empty">
-                                <p>등록된 대상이 없습니다.</p>
-                                <button type="button" className="size-preset-btn" onClick={handleAddTarget}>첫 대상 추가</button>
-                            </div>
-                        ) : (
-                            <div className="srv-list-items">
-                                {targetsDraft.map((t) => (
-                                    <TargetSettingRow
-                                        key={t.id}
-                                        target={t}
-                                        expanded={expandedId === t.id}
-                                        onToggle={() => setExpandedId(expandedId === t.id ? null : t.id)}
-                                        onChange={handleUpdateTargetField}
-                                        onDuplicate={() => handleDuplicateTarget(t)}
-                                        onRemove={() => handleRemoveTarget(t.id)}
-                                    />
-                                ))}
-                            </div>
-                        )}
+                        <MonitorTargetPicker
+                            targetType="network"
+                            selectedIds={selectedTargetIdsDraft}
+                            onChange={setSelectedTargetIdsDraft}
+                        />
                     </div>
                 </div>
                 <div className="srv-settings-footer">
                     <button type="button" className="size-preset-btn" onClick={() => setShowSettings(false)}>취소</button>
-                    <button type="button" className="size-preset-btn srv-save-btn" onClick={handleSaveTargets}>저장 ({targetsDraft.length}개)</button>
+                    <button type="button" className="size-preset-btn srv-save-btn" onClick={handleSaveTargets}>저장 ({selectedTargetIdsDraft.length}개)</button>
                 </div>
             </div>
         </div>
@@ -573,9 +451,9 @@ const NetworkTestCard = ({
                             </span>
                         )}
                         <div className="title-actions">
-                            <button type="button" className="compact-icon-btn" onClick={checkAllTargets} title="새로고침">⟳</button>
-                            <button type="button" className="compact-icon-btn" onClick={openSettings} title="설정">⚙</button>
-                            <button type="button" className="compact-icon-btn remove" onClick={onRemove} title="제거">✕</button>
+                            <button type="button" className="compact-icon-btn" onClick={checkAllTargets} title="새로고침" aria-label="새로고침"><IconRefresh size={14} /></button>
+                            <button type="button" className="compact-icon-btn" onClick={openSettings} title="설정" aria-label="설정"><IconSettings size={14} /></button>
+                            <button type="button" className="compact-icon-btn remove" onClick={onRemove} title="제거" aria-label="제거"><IconClose size={14} /></button>
                         </div>
                     </div>
                     <div className="api-endpoint-row">

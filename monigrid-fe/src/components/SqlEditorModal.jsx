@@ -3,6 +3,7 @@ import Editor from "react-simple-code-editor";
 import Prism from "prismjs";
 import "prismjs/components/prism-sql";
 import { dashboardService } from "../services/api";
+import { IconClose } from "./icons";
 import "./SqlEditorModal.css";
 
 const SELECT_START_PATTERN = /^\s*(select\b|with\b[\s\S]*\bselect\b)/i;
@@ -447,8 +448,8 @@ const SqlEditorModal = ({ open, onClose }) => {
                             즉시 반영합니다.
                         </p>
                     </div>
-                    <button className='close-btn' onClick={onClose}>
-                        ✕
+                    <button className='close-btn' onClick={onClose} aria-label='닫기'>
+                        <IconClose size={16} />
                     </button>
                 </div>
 

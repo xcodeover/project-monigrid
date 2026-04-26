@@ -70,6 +70,10 @@ def _bootstrap_settings_store() -> SettingsStore:
     store = SettingsStore(settings_db=init_cfg, logger=logging.getLogger("monitoring_backend"))
     store.connect()
 
+    # DDL은 idempotent 하므로 매 시작마다 호출해 신규 버전에서 추가된 테이블이
+    # 이미 부트스트랩된 DB 에도 자동 반영되도록 한다.
+    store.create_schema()
+
     if store.is_bootstrapped():
         return store
 

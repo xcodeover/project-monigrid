@@ -2,6 +2,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { getDefaultColumnWidth } from "./apiCardHelpers";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import { IconClose } from "./icons";
 
 /**
  * Widget settings popup extracted from ApiCard (SRP).
@@ -61,7 +62,7 @@ const ApiCardSettingsModal = ({
                         className='close-settings-btn'
                         onClick={onClose}
                     >
-                        ✕
+                        <IconClose size={14} />
                     </button>
                 </div>
 

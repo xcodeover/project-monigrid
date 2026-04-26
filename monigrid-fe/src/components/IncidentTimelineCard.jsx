@@ -1,4 +1,5 @@
 import React from "react";
+import { IconRefresh } from "./icons";
 
 const formatDateTime = (value) => {
     if (!value) return "-";
@@ -39,8 +40,9 @@ export default function IncidentTimelineCard({ incidents = [], loading = false, 
                                 className='compact-icon-btn'
                                 onClick={onRefresh}
                                 title='새로고침'
+                                aria-label='새로고침'
                             >
-                                ⟳
+                                <IconRefresh size={14} />
                             </button>
                         </div>
                     </div>

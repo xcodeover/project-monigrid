@@ -11,7 +11,6 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import LogViewerPage from "./pages/LogViewerPage";
 import AlertHistoryPage from "./pages/AlertHistoryPage";
-import MonitorTargetsPage from "./pages/MonitorTargetsPage";
 import UserManagementPage from "./pages/UserManagementPage";
 
 // Electron serves over file:// — HashRouter avoids 404s on deep links.
@@ -65,14 +64,6 @@ function App() {
                     element={
                         <ProtectedRoute>
                             <AlertHistoryPage />
-                        </ProtectedRoute>
-                    }
-                />
-                <Route
-                    path="/monitor-targets"
-                    element={
-                        <ProtectedRoute>
-                            <MonitorTargetsPage />
                         </ProtectedRoute>
                     }
                 />

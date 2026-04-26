@@ -11,19 +11,17 @@ import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/das
 import {
     DEFAULT_CRITERIA,
     MAX_HISTORY,
-    MAX_SERVERS,
     checkCriteria,
     clamp,
     formatElapsed,
     formatInterval,
     formatTime,
-    generateId,
-    incrementLabel,
     migrateServers,
 } from "./serverResourceHelpers";
 import ServerRow from "./ServerRow";
 import ServerDetailPopup from "./ServerDetailPopup";
 import ServerResourceSettingsModal from "./ServerResourceSettingsModal";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
 import {
     sortAlertsFirst,
     useAutoScrollTopOnDataChange,
@@ -398,9 +396,12 @@ const ServerResourceCard = ({
     const hasAutoOpened = useRef(false);
 
     useEffect(() => {
-        // Snapshot mode uses admin-managed targets — the local server-setup
-        // modal would be misleading, so only auto-open in legacy mode.
-        if (!hasAutoOpened.current && !useSnapshot && legacyServers.length === 0) {
+        // 새로 추가된 위젯에 대상이 비어있으면 settings 모달을 자동으로 한 번 열어준다.
+        if (
+            !hasAutoOpened.current &&
+            targetIds.length === 0 &&
+            legacyServers.length === 0
+        ) {
             setShowSettings(true);
             hasAutoOpened.current = true;
         }
@@ -413,8 +414,7 @@ const ServerResourceCard = ({
     });
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 30);
     const [titleDraft, setTitleDraft] = useState(title);
-    const [serversDraft, setServersDraft] = useState([]);
-    const [expandedId, setExpandedId] = useState(null);
+    const [selectedTargetIdsDraft, setSelectedTargetIdsDraft] = useState([]);
 
     useEffect(() => {
         setSizeDraft({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 });
@@ -427,15 +427,9 @@ const ServerResourceCard = ({
     }, [title]);
 
     const openSettings = useCallback(() => {
-        setServersDraft(
-            servers.map((s) => ({
-                ...s,
-                criteria: { ...DEFAULT_CRITERIA, ...s.criteria },
-            })),
-        );
-        setExpandedId(null);
+        setSelectedTargetIdsDraft([...targetIds]);
         setShowSettings(true);
-    }, [servers]);
+    }, [targetIds]);
 
     /* ── settings handlers ───────────────────────────────────────── */
     const handleSizeApply = () => {
@@ -466,64 +460,9 @@ const ServerResourceCard = ({
         if (t && t !== title) onWidgetMetaChange?.({ title: t });
     };
 
-    const handleAddServer = () => {
-        if (serversDraft.length >= MAX_SERVERS) {
-            window.alert(`최대 ${MAX_SERVERS}개까지 등록할 수 있습니다.`);
-            return;
-        }
-        const last = serversDraft[serversDraft.length - 1];
-        const defaultOsType = last?.osType || "linux-rhel8";
-        const defaultPort = defaultOsType === "windows-winrm" ? "5985" : "22";
-        const newSrv = {
-            id: generateId(),
-            label: "",
-            osType: defaultOsType,
-            host: "",
-            username: last?.username || "",
-            password: last?.password || "",
-            domain: last?.domain || "",
-            port: last?.port || defaultPort,
-            transport: last?.transport || "",
-            criteria: { ...DEFAULT_CRITERIA },
-        };
-        setServersDraft((p) => [...p, newSrv]);
-        setExpandedId(newSrv.id);
-    };
-
-    const handleDuplicateServer = (srv) => {
-        if (serversDraft.length >= MAX_SERVERS) {
-            window.alert(`최대 ${MAX_SERVERS}개까지 등록할 수 있습니다.`);
-            return;
-        }
-        const dup = {
-            ...srv,
-            id: generateId(),
-            label: incrementLabel(srv.label),
-            criteria: { ...srv.criteria },
-            domain: srv.domain || "",
-        };
-        setServersDraft((p) => [...p, dup]);
-        setExpandedId(dup.id);
-    };
-
-    const handleRemoveServer = (id) => {
-        setServersDraft((p) => p.filter((s) => s.id !== id));
-        if (expandedId === id) setExpandedId(null);
-    };
-
-    const handleUpdateServerField = (id, field, value) => {
-        setServersDraft((p) =>
-            p.map((s) => (s.id === id ? { ...s, [field]: value } : s)),
-        );
-    };
-
-    const handleSaveServers = () => {
-        onWidgetConfigChange?.({ servers: serversDraft });
+    const handleSaveTargets = () => {
+        onWidgetConfigChange?.({ targetIds: selectedTargetIdsDraft });
         setShowSettings(false);
-    };
-
-    const handleToggleExpanded = (id) => {
-        setExpandedId(expandedId === id ? null : id);
     };
 
     /* ── summary info ────────────────────────────────────────────── */
@@ -570,7 +509,7 @@ const ServerResourceCard = ({
                                 onClick={fetchAllServers}
                                 title='새로고침'
                             >
-                                ⟳
+                                <IconRefresh size={14} />
                             </button>
                             <button
                                 type='button'
@@ -578,7 +517,7 @@ const ServerResourceCard = ({
                                 onClick={openSettings}
                                 title='설정'
                             >
-                                ⚙
+                                <IconSettings size={14} />
                             </button>
                             <button
                                 type='button'
@@ -586,7 +525,7 @@ const ServerResourceCard = ({
                                 onClick={onRemove}
                                 title='제거'
                             >
-                                ✕
+                                <IconClose size={14} />
                             </button>
                         </div>
                     </div>
@@ -646,14 +585,9 @@ const ServerResourceCard = ({
                     intervalDraft={intervalDraft}
                     onIntervalDraftChange={setIntervalDraft}
                     onIntervalApply={handleIntervalApply}
-                    serversDraft={serversDraft}
-                    expandedId={expandedId}
-                    onToggleExpanded={handleToggleExpanded}
-                    onAddServer={handleAddServer}
-                    onDuplicateServer={handleDuplicateServer}
-                    onRemoveServer={handleRemoveServer}
-                    onUpdateServerField={handleUpdateServerField}
-                    onSave={handleSaveServers}
+                    selectedTargetIds={selectedTargetIdsDraft}
+                    onSelectedTargetIdsChange={setSelectedTargetIdsDraft}
+                    onSave={handleSaveTargets}
                 />
             )}
             {detailServer && (

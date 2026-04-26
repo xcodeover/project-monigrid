@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import { useAutoScrollTopOnDataChange } from "../utils/widgetListHelpers";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
 import "./ApiCard.css";
 import "./StatusListCard.css";
 
@@ -195,7 +196,7 @@ const StatusListCard = ({
                         className='close-settings-btn'
                         onClick={() => setShowSettings(false)}
                     >
-                        ✕
+                        <IconClose size={14} />
                     </button>
                 </div>
 
@@ -363,7 +364,7 @@ const StatusListCard = ({
                                 }}
                                 title='새로고침'
                             >
-                                ⟳
+                                <IconRefresh size={14} />
                             </button>
                             <button
                                 type='button'
@@ -374,7 +375,7 @@ const StatusListCard = ({
                                 }}
                                 title='설정'
                             >
-                                ⚙
+                                <IconSettings size={14} />
                             </button>
                             <button
                                 type='button'
@@ -387,7 +388,7 @@ const StatusListCard = ({
                                 }}
                                 title='제거'
                             >
-                                ✕
+                                <IconClose size={14} />
                             </button>
                         </div>
                     </div>

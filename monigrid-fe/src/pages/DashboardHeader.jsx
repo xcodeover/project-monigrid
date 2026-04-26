@@ -1,4 +1,17 @@
 import AppLogo from "../components/AppLogo.jsx";
+import {
+    IconCode,
+    IconCollapse,
+    IconExpand,
+    IconFileText,
+    IconLayoutGrid,
+    IconLogout,
+    IconPlus,
+    IconRefresh,
+    IconSettings,
+    IconSliders,
+    IconUsers,
+} from "../components/icons.jsx";
 
 const APP_TITLE = import.meta.env.VITE_APP_TITLE || "Monitoring Dashboard";
 
@@ -18,7 +31,6 @@ const DashboardHeader = ({
     onOpenConfigEditor,
     onOpenAddApi,
     onOpenSqlEditor,
-    onOpenMonitorTargets,
     onOpenUserManagement,
     onRefreshAll,
     onOpenLogs,
@@ -54,16 +66,22 @@ const DashboardHeader = ({
                         className='logout-btn icon'
                         onClick={onLogout}
                         title='로그아웃'
+                        aria-label='로그아웃'
                     >
-                        ⎋
+                        <IconLogout size={16} />
                     </button>
                     <button
                         className={`fullscreen-btn icon${isFullscreen ? " active" : ""}`}
                         onClick={onToggleFullscreen}
                         title={isFullscreen ? "전체 화면 종료" : "전체 화면"}
                         aria-pressed={isFullscreen ? "true" : "false"}
+                        aria-label={isFullscreen ? "전체 화면 종료" : "전체 화면"}
                     >
-                        ⛶
+                        {isFullscreen ? (
+                            <IconCollapse size={16} />
+                        ) : (
+                            <IconExpand size={16} />
+                        )}
                     </button>
                 </div>
 
@@ -72,54 +90,37 @@ const DashboardHeader = ({
                         className='toolbar-btn toolbar-btn-secondary'
                         onClick={onOpenSettings}
                         title='대시보드 설정'
+                        aria-label='대시보드 설정'
                     >
-                        <svg
-                            className='toolbar-btn-icon'
-                            width='14'
-                            height='14'
-                            viewBox='0 0 14 14'
-                            fill='currentColor'
-                        >
-                            <rect x='0' y='0' width='6' height='6' rx='1.2' />
-                            <rect x='8' y='0' width='6' height='6' rx='1.2' />
-                            <rect x='0' y='8' width='6' height='6' rx='1.2' />
-                            <rect x='8' y='8' width='6' height='6' rx='1.2' />
-                        </svg>
+                        <IconLayoutGrid size={16} />
                     </button>
                     {isAdmin && (
                         <button
                             className='toolbar-btn toolbar-btn-secondary toolbar-btn-backend'
                             onClick={onOpenConfigEditor}
                             title='백엔드 설정'
+                            aria-label='백엔드 설정'
                         >
-                            <span className='toolbar-btn-icon'>⚙</span>
+                            <IconSliders size={16} />
                         </button>
                     )}
                     <button
                         className='toolbar-btn toolbar-btn-primary'
                         onClick={onOpenAddApi}
-                        title='API 추가'
+                        title='위젯 추가'
+                        aria-label='위젯 추가'
                     >
-                        <span className='toolbar-btn-icon'>＋</span>
+                        <IconPlus size={16} />
                     </button>
 
                     {isAdmin && (
                         <button
                             className='toolbar-btn toolbar-btn-secondary'
                             onClick={onOpenSqlEditor}
-                            title='API SQL 편집'
+                            title='데이터 API SQL 편집'
+                            aria-label='데이터 API SQL 편집'
                         >
-                            <span className='toolbar-btn-icon'>⌘</span>
-                        </button>
-                    )}
-
-                    {isAdmin && (
-                        <button
-                            className='toolbar-btn toolbar-btn-secondary'
-                            onClick={onOpenMonitorTargets}
-                            title='모니터 대상 관리'
-                        >
-                            <span className='toolbar-btn-icon'>🛰</span>
+                            <IconCode size={16} />
                         </button>
                     )}
 
@@ -128,8 +129,9 @@ const DashboardHeader = ({
                             className='toolbar-btn toolbar-btn-secondary'
                             onClick={onOpenUserManagement}
                             title='사용자 계정 관리'
+                            aria-label='사용자 계정 관리'
                         >
-                            <span className='toolbar-btn-icon'>👥</span>
+                            <IconUsers size={16} />
                         </button>
                     )}
 
@@ -137,16 +139,18 @@ const DashboardHeader = ({
                         className='toolbar-btn toolbar-btn-secondary'
                         onClick={onRefreshAll}
                         title='전체 새로고침'
+                        aria-label='전체 새로고침'
                     >
-                        <span className='toolbar-btn-icon'>⟳</span>
+                        <IconRefresh size={16} />
                     </button>
 
                     <button
                         className='toolbar-btn toolbar-btn-secondary'
                         onClick={onOpenLogs}
                         title='서버 로그 조회'
+                        aria-label='서버 로그 조회'
                     >
-                        <span className='toolbar-btn-icon'>📋</span>
+                        <IconFileText size={16} />
                     </button>
                 </div>
             </div>

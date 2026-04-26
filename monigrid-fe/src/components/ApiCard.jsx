@@ -16,6 +16,7 @@ import {
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import ApiCardRowDetailModal from "./ApiCardRowDetailModal";
 import ApiCardSettingsModal from "./ApiCardSettingsModal";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
 import "./ApiCard.css";
 
 const ApiCard = ({
@@ -447,8 +448,9 @@ const ApiCard = ({
                                     onRefresh();
                                 }}
                                 title='새로고침'
+                                aria-label='새로고침'
                             >
-                                ⟳
+                                <IconRefresh size={14} />
                             </button>
                             <button
                                 type='button'
@@ -458,8 +460,9 @@ const ApiCard = ({
                                     setShowSettings(true);
                                 }}
                                 title='설정'
+                                aria-label='설정'
                             >
-                                ⚙
+                                <IconSettings size={14} />
                             </button>
                             <button
                                 type='button'
@@ -469,8 +472,9 @@ const ApiCard = ({
                                     onRemove();
                                 }}
                                 title='제거'
+                                aria-label='제거'
                             >
-                                ✕
+                                <IconClose size={14} />
                             </button>
                         </div>
                     </div>

@@ -17,6 +17,7 @@ import {
     normalizeThresholds,
 } from "../utils/chartThresholds.js";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
 import "./ApiCard.css";
 import "./LineChartCard.css";
 
@@ -378,7 +379,7 @@ const LineChartCard = ({
                         className='close-settings-btn'
                         onClick={() => setShowSettings(false)}
                     >
-                        ✕
+                        <IconClose size={14} />
                     </button>
                 </div>
                 <div className='settings-popup-body'>
@@ -607,8 +608,9 @@ const LineChartCard = ({
                                             className='lc-threshold-remove'
                                             onClick={() => removeThreshold(idx)}
                                             title='삭제'
+                                            aria-label='삭제'
                                         >
-                                            ✕
+                                            <IconClose size={12} />
                                         </button>
                                     </div>
                                 ))}
@@ -726,7 +728,7 @@ const LineChartCard = ({
                                 }}
                                 title='새로고침'
                             >
-                                ⟳
+                                <IconRefresh size={14} />
                             </button>
                             <button
                                 type='button'
@@ -737,7 +739,7 @@ const LineChartCard = ({
                                 }}
                                 title='설정'
                             >
-                                ⚙
+                                <IconSettings size={14} />
                             </button>
                             <button
                                 type='button'
@@ -748,7 +750,7 @@ const LineChartCard = ({
                                 }}
                                 title='삭제'
                             >
-                                ✕
+                                <IconClose size={14} />
                             </button>
                         </div>
                     </div>

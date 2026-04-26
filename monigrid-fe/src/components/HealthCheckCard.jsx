@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
 import "./ApiCard.css";
 import "./HealthCheckCard.css";
 
@@ -160,7 +161,7 @@ const HealthCheckCard = ({
                         className='close-settings-btn'
                         onClick={() => setShowSettings(false)}
                     >
-                        ✕
+                        <IconClose size={14} />
                     </button>
                 </div>
 
@@ -292,7 +293,7 @@ const HealthCheckCard = ({
                                 }}
                                 title='새로고침'
                             >
-                                ⟳
+                                <IconRefresh size={14} />
                             </button>
                             <button
                                 type='button'
@@ -303,7 +304,7 @@ const HealthCheckCard = ({
                                 }}
                                 title='설정'
                             >
-                                ⚙
+                                <IconSettings size={14} />
                             </button>
                             <button
                                 type='button'
@@ -314,7 +315,7 @@ const HealthCheckCard = ({
                                 }}
                                 title='제거'
                             >
-                                ✕
+                                <IconClose size={14} />
                             </button>
                         </div>
                     </div>

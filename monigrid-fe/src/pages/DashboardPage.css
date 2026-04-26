@@ -106,9 +106,9 @@
     order: 2;
 }
 
-/* Fullscreen toggle button — always lives at the very top-right of the
- * header, and carries a pressed/active look while fullscreen is on so it
- * reads as a stateful toggle. */
+/* Logout/fullscreen icon-only header buttons — same chrome as toolbar buttons
+ * but slightly smaller chrome footprint and centered SVG content. */
+.logout-btn.icon,
 .fullscreen-btn.icon {
     width: 34px;
     height: 34px;
@@ -126,6 +126,7 @@
     transition: all 0.18s ease;
 }
 
+.logout-btn.icon:hover,
 .fullscreen-btn.icon:hover {
     border-color: rgba(25, 160, 255, 0.28);
     background: rgba(255, 255, 255, 0.06);
@@ -501,6 +502,11 @@
     font-size: 11px;
     color: var(--text-tertiary, #64748b);
     font-style: italic;
+}
+
+.form-hint-error {
+    color: #fca5a5;
+    font-style: normal;
 }
 
 .inline-input-group {

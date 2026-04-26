@@ -9,6 +9,7 @@ import {
     rememberApiBaseUrl,
     resolveEndpointWithBase,
 } from "../services/api";
+import { monitorService } from "../services/dashboardService";
 import { API_BASE_URL as BUILDTIME_API_BASE_URL } from "../services/http";
 import {
     countRowsMatchingCriteria,
@@ -22,6 +23,7 @@ import { useAlarmStore } from "../store/alarmStore";
 import AlarmBanner from "../components/AlarmBanner";
 import SqlEditorModal from "../components/SqlEditorModal";
 import ConfigEditorModal from "../components/ConfigEditorModal";
+import BackendConfigPasswordPrompt from "../components/BackendConfigPasswordPrompt";
 import DashboardHeader from "./DashboardHeader";
 import AddApiModal from "./AddApiModal";
 import DashboardSettingsModal from "./DashboardSettingsModal";
@@ -103,12 +105,16 @@ const DashboardPage = () => {
     const [showDashboardSettings, setShowDashboardSettings] = useState(false);
     const [showSqlEditor, setShowSqlEditor] = useState(false);
     const [showConfigEditor, setShowConfigEditor] = useState(false);
+    const [showConfigPasswordPrompt, setShowConfigPasswordPrompt] = useState(false);
     const [newApiForm, setNewApiForm] = useState({
         title: "",
         endpoint: "",
         type: WIDGET_TYPE_TABLE,
         endpointsText: `${rememberedApiBaseUrl}/health\n${rememberedApiBaseUrl}/dashboard/endpoints`,
+        targetIds: [],
     });
+    const [monitorTargets, setMonitorTargets] = useState([]);
+    const [monitorTargetsError, setMonitorTargetsError] = useState(null);
     const [fontSizeDraft, setFontSizeDraft] = useState(
         dashboardSettings?.widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE,
     );
@@ -133,6 +139,32 @@ const DashboardPage = () => {
             );
         };
     }, []);
+
+    // AddApiModal 이 열릴 때 모니터 대상 목록을 로드해 둔다.
+    // 서버 리소스/네트워크 위젯은 이 목록에서 골라서만 추가할 수 있다.
+    useEffect(() => {
+        if (!showAddApi) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const data = await monitorService.listTargets();
+                if (cancelled) return;
+                setMonitorTargets(Array.isArray(data?.targets) ? data.targets : []);
+                setMonitorTargetsError(null);
+            } catch (err) {
+                if (cancelled) return;
+                setMonitorTargets([]);
+                setMonitorTargetsError(
+                    err?.response?.data?.message ||
+                        err?.message ||
+                        "모니터 대상을 불러올 수 없습니다.",
+                );
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [showAddApi]);
 
     const handleToggleFullscreen = () => {
         if (!document.fullscreenElement) {
@@ -311,6 +343,17 @@ const DashboardPage = () => {
             return;
         }
 
+        // 서버 리소스/네트워크 위젯은 백엔드에 등록된 모니터 대상을 1개 이상 선택해야 한다.
+        const selectedTargetIds = Array.isArray(newApiForm.targetIds)
+            ? newApiForm.targetIds.filter(Boolean)
+            : [];
+        if (
+            (isServerResourceWidget || isNetworkTestWidget) &&
+            selectedTargetIds.length === 0
+        ) {
+            return;
+        }
+
         const widgetId = `api-${Date.now()}`;
         const nextLayout = {
             ...DEFAULT_WIDGET_LAYOUT,
@@ -345,9 +388,11 @@ const DashboardPage = () => {
                   }
                 : undefined,
             serverConfig: isServerResourceWidget
-                ? { servers: [] }
+                ? { targetIds: selectedTargetIds }
                 : undefined,
-            networkConfig: isNetworkTestWidget ? { targets: [] } : undefined,
+            networkConfig: isNetworkTestWidget
+                ? { targetIds: selectedTargetIds }
+                : undefined,
         };
 
         addWidget(newWidget);
@@ -357,6 +402,7 @@ const DashboardPage = () => {
             endpoint: "",
             type: WIDGET_TYPE_TABLE,
             endpointsText: `${rememberedApiBaseUrl}/health\n${rememberedApiBaseUrl}/dashboard/endpoints`,
+            targetIds: [],
         });
         setShowAddApi(false);
     };
@@ -585,10 +631,9 @@ const DashboardPage = () => {
                 isFullscreen={isFullscreen}
                 onToggleFullscreen={handleToggleFullscreen}
                 onOpenSettings={() => setShowDashboardSettings(true)}
-                onOpenConfigEditor={() => setShowConfigEditor(true)}
+                onOpenConfigEditor={() => setShowConfigPasswordPrompt(true)}
                 onOpenAddApi={() => setShowAddApi(true)}
                 onOpenSqlEditor={() => setShowSqlEditor(true)}
-                onOpenMonitorTargets={() => navigate("/monitor-targets")}
                 onOpenUserManagement={() => navigate("/users")}
                 onRefreshAll={() => refetchAll()}
                 onOpenLogs={() => navigate("/logs")}
@@ -601,6 +646,8 @@ const DashboardPage = () => {
                     onChange={setNewApiForm}
                     onSubmit={handleAddApi}
                     onClose={() => setShowAddApi(false)}
+                    monitorTargets={monitorTargets}
+                    monitorTargetsError={monitorTargetsError}
                 />
             )}
 
@@ -634,6 +681,17 @@ const DashboardPage = () => {
                 />
             )}
 
+            {isAdmin && (
+                <BackendConfigPasswordPrompt
+                    open={showConfigPasswordPrompt}
+                    onClose={() => setShowConfigPasswordPrompt(false)}
+                    onSuccess={() => {
+                        setShowConfigPasswordPrompt(false);
+                        setShowConfigEditor(true);
+                    }}
+                />
+            )}
+
             {showConfigEditor && isAdmin && (
                 <ConfigEditorModal
                     open={showConfigEditor}
@@ -646,16 +704,16 @@ const DashboardPage = () => {
                     {dashboardWidgets.length === 0 ? (
                         <div className='empty-state'>
                             <div className='empty-icon'>📭</div>
-                            <h2>API 엔드포인트를 추가하세요</h2>
+                            <h2>위젯을 추가하세요</h2>
                             <p>
-                                모니터링할 REST API 엔드포인트를 추가하여
-                                대시보드를 시작합니다.
+                                모니터링할 데이터 API · 서버 리소스 · 네트워크 체크
+                                위젯을 추가하여 대시보드를 시작합니다.
                             </p>
                             <button
                                 className='primary-btn'
                                 onClick={() => setShowAddApi(true)}
                             >
-                                API 추가
+                                위젯 추가
                             </button>
                         </div>
                     ) : (

@@ -1,4 +1,5 @@
 import { SOUND_TYPES } from "../store/alarmStore";
+import { IconClose } from "../components/icons";
 
 /**
  * "대시보드 설정" modal extracted from DashboardPage (SRP).
@@ -34,8 +35,8 @@ const DashboardSettingsModal = ({
             >
                 <div className='modal-header'>
                     <h3>대시보드 설정</h3>
-                    <button className='close-btn' onClick={onClose}>
-                        ✕
+                    <button className='close-btn' onClick={onClose} aria-label='닫기'>
+                        <IconClose size={16} />
                     </button>
                 </div>
 

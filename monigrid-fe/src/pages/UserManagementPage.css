@@ -54,6 +54,12 @@
 .um-btn:hover { background: #475569; }
 .um-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.um-btn-icon-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
 .um-btn-primary {
     background: #2563eb;
     border-color: #2563eb;

@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { adminUserService } from "../services/dashboardService";
+import PasswordInput from "../components/PasswordInput";
+import { IconClose, IconPlus, IconRefresh } from "../components/icons";
 import "./UserManagementPage.css";
 
 /**
@@ -174,11 +176,11 @@ export default function UserManagementPage() {
                     <button type="button" className="um-btn" onClick={() => navigate("/dashboard")}>
                         대시보드
                     </button>
-                    <button type="button" className="um-btn um-btn-primary" onClick={handleNew}>
-                        ＋ 새 사용자
+                    <button type="button" className="um-btn um-btn-primary um-btn-icon-text" onClick={handleNew}>
+                        <IconPlus size={14} /> 새 사용자
                     </button>
-                    <button type="button" className="um-btn" onClick={loadUsers}>
-                        ⟳ 새로고침
+                    <button type="button" className="um-btn um-btn-icon-text" onClick={loadUsers}>
+                        <IconRefresh size={14} /> 새로고침
                     </button>
                     <button type="button" className="um-btn" onClick={handleLogout}>
                         로그아웃
@@ -292,7 +294,7 @@ function UserEditorModal({ mode, draft, saving, errorMessage, onChange, onCancel
             <div className="um-modal">
                 <div className="um-modal-header">
                     <h3>{isCreate ? "새 사용자 추가" : `사용자 수정: ${draft.username}`}</h3>
-                    <button type="button" className="um-icon-btn" onClick={onCancel}>✕</button>
+                    <button type="button" className="um-icon-btn" onClick={onCancel} aria-label="닫기"><IconClose size={14} /></button>
                 </div>
                 <div className="um-modal-body">
                     <div className="um-grid-2">
@@ -332,8 +334,7 @@ function UserEditorModal({ mode, draft, saving, errorMessage, onChange, onCancel
                         <span>
                             {isCreate ? "Password" : "Password (변경 시에만 입력)"}
                         </span>
-                        <input
-                            type="password"
+                        <PasswordInput
                             value={draft.password}
                             onChange={(e) => update("password", e.target.value)}
                             placeholder={isCreate ? "최초 비밀번호" : "비워 두면 기존 비밀번호 유지"}

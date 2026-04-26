@@ -321,7 +321,7 @@ python exe_api_smoke_test.py
 
 ### 7.0 `monigrid_*` 테이블 요약
 
-모든 테이블은 부트스트랩 시 방언(Oracle / MariaDB / MSSQL) 에 맞는 DDL 로 자동 생성됩니다.
+모든 테이블은 부트스트랩 시 방언(Oracle / MariaDB / MSSQL) 에 맞는 DDL 로 자동 생성됩니다. 또한 매 시작 시점에 `SettingsStore.create_schema()` 가 idempotent DDL(`CREATE TABLE IF NOT EXISTS` / Oracle 의 `user_tables` 체크) 로 호출되므로, 신규 버전에서 추가된 테이블은 이미 부트스트랩된 환경에서도 자동으로 보강됩니다 (예: 구버전에서 운용 중이던 DB 에 `monigrid_users` / `monigrid_monitor_targets` 가 없어도 다음 기동 시 자동 생성).
 
 | 테이블 | 용도 |
 |-------|------|
