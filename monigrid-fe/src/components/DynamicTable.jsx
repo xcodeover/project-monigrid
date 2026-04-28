@@ -225,10 +225,14 @@ const DynamicTable = ({
         }
 
         if (typeof value === "object") {
+            // No-op click handler. The button is just a visual cue that this
+            // cell holds nested data; the actual detail view is opened from
+            // the row click handler higher up. The previous `console.log`
+            // was a debugging artifact that leaked row contents.
             return (
                 <button
                     className='expand-btn'
-                    onClick={() => console.log(value)}
+                    type='button'
                     title='click to view details'
                 >
                     [ object ]

@@ -14,6 +14,7 @@ on its next query.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -132,7 +133,14 @@ class JdbcQueryExecutor:
             self._sql_signatures[endpoint.sql_id] = sql
         if previous_sql is None or previous_sql == sql:
             return
+        # Log the change without leaking the SQL body. Operators occasionally
+        # paste credentials or PII into queries, and the audit log stream is
+        # not the right place for that. Short hashes are enough to correlate
+        # "this version" of a query across log lines.
+        prev_hash = hashlib.sha256(previous_sql.encode("utf-8")).hexdigest()[:8]
+        new_hash = hashlib.sha256(sql.encode("utf-8")).hexdigest()[:8]
         self._logger.info(
-            "SQL changed detected apiId=%s sqlId=%s previousSql=%r newSql=%r",
-            endpoint.api_id, endpoint.sql_id, previous_sql, sql,
+            "SQL changed detected apiId=%s sqlId=%s prevHash=%s newHash=%s prevLen=%d newLen=%d",
+            endpoint.api_id, endpoint.sql_id, prev_hash, new_hash,
+            len(previous_sql), len(sql),
         )

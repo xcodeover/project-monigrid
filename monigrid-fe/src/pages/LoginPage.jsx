@@ -48,6 +48,14 @@ const LoginPage = () => {
 
         try {
             const response = await authService.login(username, password);
+            // Defensive shape check: the BE returns { token, user: {...} } on
+            // success, but a misconfigured proxy or partial outage can yield
+            // a 200 with empty body. Without this guard the next render would
+            // mark the user as authenticated with a null token and every
+            // subsequent request would 401.
+            if (!response?.token || !response?.user) {
+                throw new Error("Invalid login response");
+            }
             login(response.user, response.token);
             navigate("/dashboard");
         } catch (err) {

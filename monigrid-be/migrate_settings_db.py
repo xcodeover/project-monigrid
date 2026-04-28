@@ -33,11 +33,6 @@ from app.settings_store import (
     load_init_settings,
 )
 
-try:
-    import jaydebeapi
-except ImportError:
-    jaydebeapi = None
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,23 +78,19 @@ CLOB_COLUMNS = {
 
 
 def _open_store(cfg: SettingsDbConfig, *, all_jars: list[str]) -> SettingsStore:
-    """Open a SettingsStore but share one JVM classpath with both jars."""
+    """Open a SettingsStore sharing one JVM classpath across both jars.
+
+    The JVM is started once with the union of source+target driver jars so
+    that the first ``SettingsStore.connect()`` doesn't lock the classpath to
+    just its own jar (the JVM can only be initialised once per process).
+    After that, the regular public ``connect()`` is a clean no-op against
+    ``ensure_jvm_started`` and we don't have to reach into the store's
+    private attributes.
+    """
     ensure_jvm_started(classpath=all_jars)
     store = SettingsStore(settings_db=cfg, logger=log)
-    # Bypass its internal ensure_jvm call (already started above).
-    if jaydebeapi is None:
-        raise RuntimeError("jaydebeapi missing")
     log.info("connecting %s url=%s", cfg.db_type, cfg.jdbc_url)
-    store._conn = jaydebeapi.connect(
-        cfg.jdbc_driver_class,
-        cfg.jdbc_url,
-        [cfg.username, cfg.password],
-        all_jars,
-    )
-    try:
-        store._conn.jconn.setAutoCommit(False)
-    except Exception:
-        pass
+    store.connect()
     return store
 
 

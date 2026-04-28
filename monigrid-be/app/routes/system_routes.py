@@ -15,6 +15,19 @@ def register(app, backend, limiter) -> None:
 
     @app.route("/health", methods=["GET"])
     def health_check():
+        # Minimal liveness probe — no auth so LB / k8s readiness checks work,
+        # and intentionally no version / endpoint count: those leak the
+        # deployed build to anyone who can reach the port. Authenticated
+        # callers can use /dashboard/health for diagnostic detail.
+        return jsonify({
+            "status": "healthy",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }), 200
+
+    @app.route("/dashboard/health", methods=["GET"])
+    @require_auth
+    def dashboard_health():
+        """Authenticated diagnostic health: includes version + endpoint count."""
         return jsonify({
             "status": "healthy",
             "version": backend.config.version,
@@ -27,7 +40,14 @@ def register(app, backend, limiter) -> None:
     def get_logs():
         start_date_param = request.args.get("start_date")
         end_date_param = request.args.get("end_date")
-        max_lines = int(request.args.get("max_lines", 1000))
+        # Clamp max_lines to a sane window. Without this a malicious or
+        # buggy client can ask for billions of lines and the backend
+        # happily allocates the response in memory.
+        try:
+            requested = int(request.args.get("max_lines", 1000))
+        except (TypeError, ValueError):
+            return jsonify({"message": "max_lines must be an integer"}), 400
+        max_lines = max(1, min(10000, requested))
         cursor = request.args.get("cursor")
         follow_latest = parse_enabled(request.args.get("follow_latest", False))
 

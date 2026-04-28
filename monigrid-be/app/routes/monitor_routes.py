@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
-from app.auth import require_admin, require_auth
+from app.auth import caller_is_admin, require_admin, require_auth
 from app.monitor_collector_manager import snapshot_to_dict
 from app.utils import get_client_ip
 
@@ -23,9 +23,8 @@ def register(app, backend, limiter) -> None:
         Credentials in `spec` (password/secret/token) are masked for
         non-admin callers; admins get the raw spec so they can edit it.
         """
-        is_admin_caller = _is_admin(request)
         targets = backend.list_monitor_targets()
-        if not is_admin_caller:
+        if not caller_is_admin():
             targets = [_mask_spec(t) for t in targets]
         return jsonify({"targets": targets}), 200
 
@@ -42,7 +41,7 @@ def register(app, backend, limiter) -> None:
             backend.logger.exception(
                 "Monitor target upsert failed clientIp=%s", get_client_ip(),
             )
-            return jsonify({"message": "failed to save monitor target", "detail": str(err)}), 500
+            return jsonify({"message": "failed to save monitor target"}), 500
         backend.logger.info(
             "Monitor target created id=%s type=%s clientIp=%s",
             stored["id"], stored["type"], get_client_ip(),
@@ -63,7 +62,7 @@ def register(app, backend, limiter) -> None:
             backend.logger.exception(
                 "Monitor target update failed id=%s clientIp=%s", target_id, get_client_ip(),
             )
-            return jsonify({"message": "failed to update monitor target", "detail": str(err)}), 500
+            return jsonify({"message": "failed to update monitor target"}), 500
         backend.logger.info(
             "Monitor target updated id=%s type=%s clientIp=%s",
             stored["id"], stored["type"], get_client_ip(),
@@ -80,7 +79,7 @@ def register(app, backend, limiter) -> None:
             backend.logger.exception(
                 "Monitor target delete failed id=%s clientIp=%s", target_id, get_client_ip(),
             )
-            return jsonify({"message": "failed to delete monitor target", "detail": str(err)}), 500
+            return jsonify({"message": "failed to delete monitor target"}), 500
         backend.logger.info(
             "Monitor target deleted id=%s clientIp=%s", target_id, get_client_ip(),
         )
@@ -110,21 +109,16 @@ def register(app, backend, limiter) -> None:
 
     @app.route("/dashboard/monitor-snapshot/<target_id>/refresh", methods=["POST"])
     @require_auth
+    @require_admin
     def refresh_monitor_target(target_id: str):
+        # On-demand refresh forces an SSH/WMI/HTTP probe regardless of the
+        # background scheduler, so it's a privileged operation: a single user
+        # with a tight-loop refresh button can saturate the collector pool
+        # for everyone else. Restrict to admins.
         snapshot = backend.refresh_monitor_target(target_id)
         if snapshot is None:
             return jsonify({"message": "monitor target not found"}), 404
         return jsonify(snapshot_to_dict(snapshot)), 200
-
-
-def _is_admin(req) -> bool:
-    from app.auth import verify_jwt_token, is_admin_username
-
-    auth_header = req.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return False
-    payload = verify_jwt_token(auth_header[7:]) or {}
-    return payload.get("role") == "admin" or is_admin_username(str(payload.get("username", "")))
 
 
 def _mask_spec(target: dict) -> dict:

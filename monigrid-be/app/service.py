@@ -334,38 +334,48 @@ class MonitoringBackend:
     def reload(self) -> None:
         new_config = self._config_reloader()
         old_executor = self.executor
+        # 구 풀을 별도 변수로 보관해야 한다. 그렇지 않으면 self.db_pools 가
+        # 새 dict 로 재할당된 뒤 구 풀들의 close 시점이 모호해지고, 최악의
+        # 경우 in-flight 잡이 닫힌 커넥션을 참조하는 race 가 생긴다.
+        old_pools = self.db_pools
 
         self._stop_background_refreshers()
 
-        # 1) 새 executor부터 준비 — in-flight 작업들이 구 executor에서 종료되길 기다리는
-        #    동안에도 새 요청을 처리할 수 있도록 executor 교체를 먼저 한다.
+        # 1) 새 executor + 새 풀을 모두 미리 준비한다.
         new_executor = ThreadPoolExecutor(
             max_workers=new_config.thread_pool_size,
             thread_name_prefix="jdbc-worker",
         )
-        self.executor = new_executor
+        new_pools = {
+            conn_id: DBConnectionPool(max_size=int(get_env("DB_POOL_SIZE", "5")))
+            for conn_id in new_config.connections
+        }
 
-        # 2) 구 executor를 gracefully drain.
-        #    wait=True로 기다려야 한다: wait=False면 구 executor에 제출된 in-flight
-        #    _execute_jdbc 잡들이 이후 _close_all_pools() 로 닫힌 커넥션을 참조하게
-        #    되어 예외가 튀고, 최악의 경우 JDBC 리소스가 정리되지 않은 채 남는다.
+        # 2) Atomic swap: 새 요청은 이 시점부터 새 executor + 새 풀을 본다.
+        #    sub-services 는 lambda provider 를 통해 self.executor / self.db_pools
+        #    를 매번 lookup 하므로 swap 직후 자동 반영된다.
+        self.executor = new_executor
+        self.db_pools = new_pools
+
+        # 3) 구 executor 를 gracefully drain.
+        #    wait=True 로 기다려야 한다: in-flight _execute_jdbc 잡은 자신이 시작
+        #    시점에 잡아둔 구 풀의 connection 으로 finally 정리(return/discard)
+        #    까지 마쳐야 한다. 이 단계가 끝나기 전에 구 풀을 닫으면 close 된
+        #    커넥션을 또 close 하는 race 가 생긴다.
         try:
             old_executor.shutdown(wait=True, cancel_futures=True)
         except TypeError:
-            # Python 3.8 호환 (cancel_futures는 3.9+)
+            # Python 3.8 호환 (cancel_futures 는 3.9+)
             old_executor.shutdown(wait=True)
 
-        # 3) 이제 구 풀을 안전하게 닫는다 (in-flight 잡이 없음이 보장됨).
-        self._close_all_pools()
+        # 4) 이제 in-flight 잡이 없음이 보장되므로 구 풀을 안전하게 닫는다.
+        for pool in old_pools.values():
+            pool.close_all()
 
         configure_logging(new_config.logging)
         self.logger = logging.getLogger("monitoring_backend")
         self.config = new_config
         self._cache_manager.clear()
-        self.db_pools = {
-            conn_id: DBConnectionPool(max_size=int(get_env("DB_POOL_SIZE", "5")))
-            for conn_id in new_config.connections
-        }
         # LogReader holds a snapshot of logging-config (directory / file_prefix);
         # DbHealthService / JdbcQueryExecutor / EndpointCacheManager read
         # config/executor/pools via providers so they need no refresh.

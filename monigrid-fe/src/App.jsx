@@ -7,6 +7,8 @@ import {
     Navigate,
 } from "react-router-dom";
 import { useAuthStore } from "./store/authStore";
+import { useDashboardStore } from "./store/dashboardStore";
+import { registerUnauthorizedHandler } from "./services/http";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import LogViewerPage from "./pages/LogViewerPage";
@@ -32,12 +34,27 @@ const LoginRoute = () => {
 };
 
 function App() {
-    const restoreSession = useAuthStore((state) => state.restoreSession);
     const ActiveRouter = isElectron() ? HashRouter : Router;
 
+    // restoreSession only needs to run once on app boot. Calling it via
+    // getState() avoids depending on the function's identity (which is
+    // stable today but fragile if Zustand internals ever change) and makes
+    // it visually obvious this is a one-shot, not a subscription.
     useEffect(() => {
-        restoreSession();
-    }, [restoreSession]);
+        useAuthStore.getState().restoreSession();
+    }, []);
+
+    // Bridge http.js → Zustand: when the backend rejects with 401, http.js has
+    // already cleared localStorage; we also need to drop in-memory auth state
+    // and stop the dashboard preference push debounce so the next render
+    // doesn't briefly show the previous session's data on the login page.
+    useEffect(() => {
+        registerUnauthorizedHandler(() => {
+            useAuthStore.getState().logout();
+            useDashboardStore.getState().disableServerSync();
+        });
+        return () => registerUnauthorizedHandler(null);
+    }, []);
 
     return (
         <ActiveRouter>

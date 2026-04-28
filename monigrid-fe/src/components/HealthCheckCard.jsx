@@ -2,16 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
+import { clamp } from "./widgetUtils.js";
 import "./ApiCard.css";
 import "./HealthCheckCard.css";
-
-const clamp = (value, min, max, fallback) => {
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue)) {
-        return fallback;
-    }
-    return Math.min(max, Math.max(min, Math.floor(numericValue)));
-};
 
 const HealthCheckCard = ({
     title,

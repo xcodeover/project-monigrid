@@ -392,17 +392,27 @@ const ApiCard = ({
         return () => document.removeEventListener("keydown", handleKeyDown);
     }, [clipboardRow, visibleColumns]);
 
-    // 선택된 행의 최신 데이터를 실시간으로 추적
+    // 선택된 행의 최신 데이터를 실시간으로 추적.
+    // 매칭 우선순위: _key (in 연산자, null/0도 안전) → id → 스칼라 필드만
+    // 비교한 결과. Object.keys().every(...) 의 깊은 비교는 metadata 같은
+    // 객체 필드의 참조가 매 폴링마다 바뀌어 항상 false 가 떨어졌고,
+    // 그 결과 selectedRow 가 stale 한 채로 화면에 남는 버그가 있었다.
     const liveSelectedRow = useMemo(() => {
         if (!selectedRow) return null;
-        // _key 기준으로 매칭, 없으면 인덱스 기준
-        if (selectedRow._key !== undefined) {
-            return (
-                dataRows.find((r) => r._key === selectedRow._key) ?? selectedRow
-            );
+        if ("_key" in selectedRow) {
+            const found = dataRows.find((r) => r?._key === selectedRow._key);
+            if (found) return found;
         }
-        const idx = dataRows.findIndex((r) =>
-            Object.keys(selectedRow).every((k) => r[k] === selectedRow[k]),
+        if ("id" in selectedRow) {
+            const found = dataRows.find((r) => r?.id === selectedRow.id);
+            if (found) return found;
+        }
+        const scalarKeys = Object.keys(selectedRow).filter((k) => {
+            const v = selectedRow[k];
+            return v === null || (typeof v !== "object" && typeof v !== "function");
+        });
+        const idx = dataRows.findIndex(
+            (r) => r && scalarKeys.every((k) => r[k] === selectedRow[k]),
         );
         return idx >= 0 ? dataRows[idx] : selectedRow;
     }, [selectedRow, dataRows]);

@@ -9,15 +9,21 @@ import {
 } from "../utils/widgetListHelpers";
 import MonitorTargetPicker from "./MonitorTargetPicker";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
+import { clamp, formatInterval, formatLocalTime } from "./widgetUtils.js";
 import "./ApiCard.css";
 import "./NetworkTestCard.css";
 
 /* ── helpers ─────────────────────────────────────────────────────── */
 
-const clamp = (value, min, max, fallback) => {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return fallback;
-    return Math.min(max, Math.max(min, Math.floor(n)));
+const MAX_TARGETS = 50;
+
+const generateId = () =>
+    `net-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+const incrementLabel = (label) => {
+    const m = label.match(/^(.*?)(\d+)$/);
+    if (m) return m[1] + (parseInt(m[2], 10) + 1);
+    return label ? `${label}-2` : "";
 };
 
 const migrateTargets = (cfg) => {
@@ -26,14 +32,7 @@ const migrateTargets = (cfg) => {
     return [];
 };
 
-const formatTime = (d) =>
-    d ? d.toLocaleTimeString("en-GB", { hour12: false }) : null;
-
-const formatInterval = (sec) => {
-    if (sec >= 3600) return `every ${Math.floor(sec / 3600)}h`;
-    if (sec >= 60) return `every ${Math.floor(sec / 60)}m`;
-    return `every ${sec}s`;
-};
+const formatTime = formatLocalTime;
 
 /* ── TargetRow — single-line per target ──────────────────────────── */
 

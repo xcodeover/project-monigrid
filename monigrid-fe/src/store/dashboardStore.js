@@ -68,6 +68,31 @@ const queueServerPush = () => {
     }, PUSH_DEBOUNCE_MS);
 };
 
+/**
+ * Flush any pending debounced push immediately and resolve when it completes.
+ * Used before destructive page actions (reload, hard navigation) so a debounce
+ * window doesn't drop the user's last edits to widget layout / settings.
+ */
+const flushPendingPush = async () => {
+    if (pushTimer) {
+        clearTimeout(pushTimer);
+        pushTimer = null;
+        if (serverSyncEnabled) {
+            const state = useDashboardStore.getState();
+            pushPromise = preferencesService.save(snapshotForServer(state)).catch((err) => {
+                if (typeof console !== "undefined") {
+                    console.warn("[dashboardStore] preferences flush push failed:", err?.message || err);
+                }
+            });
+        }
+    }
+    try {
+        await pushPromise;
+    } catch {
+        // pushPromise has its own .catch above; awaiting only blocks for completion.
+    }
+};
+
 // ── Initial state loader ──────────────────────────────────────────────────────
 
 const loadInitialState = () => ({
@@ -230,6 +255,13 @@ export const useDashboardStore = create((set) => ({
     disableServerSync: () => {
         setServerSyncEnabled(false);
     },
+
+    /**
+     * Flush any pending debounced push and wait for it to land. Use before a
+     * page reload or hard navigation so the user's most recent edits aren't
+     * lost in the debounce window.
+     */
+    flushPendingPush,
 
     exportDashboardConfig: () => {
         const state = useDashboardStore.getState();

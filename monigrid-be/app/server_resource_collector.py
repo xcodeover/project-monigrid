@@ -323,31 +323,47 @@ def _collect_windows_winrm(host: str, port: int, username: str, password: str,
 
 
 def _collect_windows_wmi(run_cmd, host: str, is_local: bool, username: str, password: str, domain: str) -> dict[str, Any]:
-    """Collect resources from Windows via wmic, locally or with /node:."""
+    """Collect resources from Windows via wmic, locally or with /node:.
+
+    Remote calls are executed with ``shell=False`` and an argv list so that
+    the credentials and host name cannot break out of quoting. The previous
+    implementation interpolated ``password`` straight into a shell string,
+    which let any ``"`` in the password trigger arbitrary command execution.
+    """
     metrics = _empty_metrics()
 
-    wmi_auth = ""
+    user_str = ""
     if not is_local and username:
         user_str = f"{domain}\\{username}" if domain else username
-        wmi_auth = f' /user:"{user_str}" /password:"{password}"'
+
+    def _wmic_argv(*query_args: str) -> list[str]:
+        """Build a wmic argv that's safe against credential/host injection."""
+        argv: list[str] = ["wmic"]
+        if not is_local:
+            argv.append(f"/node:{host}")
+            if user_str:
+                argv.extend([f"/user:{user_str}", f"/password:{password}"])
+        argv.extend(query_args)
+        return argv
 
     # CPU
-    cpu_cmd = (
-        'wmic cpu get LoadPercentage /format:value'
-        if is_local
-        else f'wmic /node:"{host}"{wmi_auth} cpu get LoadPercentage /format:value'
-    )
-    cpu_raw = run_cmd(cpu_cmd)
+    if is_local:
+        cpu_raw = run_cmd("wmic cpu get LoadPercentage /format:value")
+    else:
+        cpu_raw = run_cmd(
+            _wmic_argv("cpu", "get", "LoadPercentage", "/format:value"), shell=False,
+        )
     kv = _parse_kv_lines(cpu_raw, "LoadPercentage")
     metrics["cpu"]["usedPct"] = kv["LoadPercentage"]
 
     # Memory
-    mem_cmd = (
-        'wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /format:value'
-        if is_local
-        else f'wmic /node:"{host}"{wmi_auth} OS get FreePhysicalMemory,TotalVisibleMemorySize /format:value'
-    )
-    mem_raw = run_cmd(mem_cmd)
+    if is_local:
+        mem_raw = run_cmd("wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /format:value")
+    else:
+        mem_raw = run_cmd(
+            _wmic_argv("OS", "get", "FreePhysicalMemory,TotalVisibleMemorySize", "/format:value"),
+            shell=False,
+        )
     mem_kv = _parse_kv_lines(mem_raw, "TotalVisibleMemorySize", "FreePhysicalMemory")
     total_kb, free_kb = mem_kv["TotalVisibleMemorySize"], mem_kv["FreePhysicalMemory"]
     metrics["memory"]["totalGb"] = _kb_to_gb(total_kb)
@@ -356,12 +372,18 @@ def _collect_windows_wmi(run_cmd, host: str, is_local: bool, username: str, pass
         metrics["memory"]["usedPct"] = round((total_kb - free_kb) / total_kb * 100, 1)
 
     # Disk
-    disk_cmd = (
-        'wmic logicaldisk where "DriveType=3" get DeviceID,Size,FreeSpace /format:csv'
-        if is_local
-        else f'wmic /node:"{host}"{wmi_auth} logicaldisk where "DriveType=3" get DeviceID,Size,FreeSpace /format:csv'
-    )
-    disk_raw = run_cmd(disk_cmd)
+    if is_local:
+        disk_raw = run_cmd(
+            'wmic logicaldisk where "DriveType=3" get DeviceID,Size,FreeSpace /format:csv'
+        )
+    else:
+        disk_raw = run_cmd(
+            _wmic_argv(
+                "logicaldisk", "where", "DriveType=3",
+                "get", "DeviceID,Size,FreeSpace", "/format:csv",
+            ),
+            shell=False,
+        )
     for line in disk_raw.splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) >= 4 and parts[1] not in ("", "DeviceID"):
@@ -473,6 +495,18 @@ def collect_server_resources(spec: dict[str, Any], logger: logging.Logger | None
     try:
         # Use a single SSH connection for all commands (context manager ensures cleanup)
         with _SshRunner(host, ssh_port, username, password) if needs_ssh else _noop_ctx() as ssh_runner:
+            # Bail out early if SSH connection setup failed. Without this the
+            # collector would silently run every probe and stuff "ERROR: ..."
+            # into each metric, which made the failure look like four
+            # different problems (CPU/mem/disk/net) instead of one
+            # (auth/network).
+            if needs_ssh and getattr(ssh_runner, "_connect_error", None):
+                return {
+                    "osType": os_type, "host": host,
+                    **_empty_metrics(),
+                    "error": f"SSH connect failed: {ssh_runner._connect_error}",
+                }
+
             def run_cmd(cmd, shell: bool = True) -> str:
                 if is_local:
                     return local_runner(cmd, shell=shell)

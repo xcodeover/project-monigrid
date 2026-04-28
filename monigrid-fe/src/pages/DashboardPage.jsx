@@ -96,6 +96,9 @@ const DashboardPage = () => {
     const disableServerSync = useDashboardStore(
         (state) => state.disableServerSync,
     );
+    const flushPendingPush = useDashboardStore(
+        (state) => state.flushPendingPush,
+    );
 
     // 빌드 시점 기본값 해석은 services/http.js에 일원화 (same-origin 모드 포함)
     const rememberedApiBaseUrl =
@@ -178,7 +181,10 @@ const DashboardPage = () => {
         let cancelled = false;
         const fetchBackendVersion = async () => {
             try {
-                const res = await dashboardService.getApiData(null, "/health");
+                // /dashboard/health (authenticated) instead of /health
+                // (public liveness probe). The latter intentionally no
+                // longer leaks the deployed build version.
+                const res = await dashboardService.getApiData(null, "/dashboard/health");
                 if (!cancelled && res?.version) setBackendVersion(res.version);
             } catch {
                 /* ignore */
@@ -299,12 +305,14 @@ const DashboardPage = () => {
         });
     }, [results, dashboardWidgets, reportWidgetStatus]);
 
-    const gridLayout = useMemo(
-        () =>
-            dashboardWidgets.map((widget) =>
-                normalizeWidgetLayout(widget, layouts[widget.id]),
-            ),
-        [dashboardWidgets, layouts],
+    // Intentionally not memoised: `layouts` is replaced with a new object
+    // reference on every save (react-grid-layout's onDragStop fires many
+    // times per gesture), so the previous useMemo deps changed almost as
+    // often as the parent re-rendered. The memo had cache-miss overhead
+    // without ever serving a hit. `normalizeWidgetLayout` is a cheap
+    // O(widgets) map of small objects.
+    const gridLayout = dashboardWidgets.map((widget) =>
+        normalizeWidgetLayout(widget, layouts[widget.id]),
     );
 
     const handleLogout = () => {
@@ -354,7 +362,9 @@ const DashboardPage = () => {
             return;
         }
 
-        const widgetId = `api-${Date.now()}`;
+        // Date.now() alone collides on rapid double-click — append a small
+        // random tail to keep ids unique within the same millisecond.
+        const widgetId = `api-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const nextLayout = {
             ...DEFAULT_WIDGET_LAYOUT,
             y: dashboardWidgets.length * 4,
@@ -561,12 +571,22 @@ const DashboardPage = () => {
         });
     };
 
-    const handleApplyApiBaseUrl = () => {
+    const handleApplyApiBaseUrl = async () => {
         const trimmed = apiBaseUrlDraft.trim().replace(/\/+$/, "");
         if (!trimmed) return;
         rememberApiBaseUrl(trimmed);
         setApiBaseUrlSaved(true);
-        setTimeout(() => setApiBaseUrlSaved(false), 2000);
+        // Stop new debounced pushes from being scheduled, then flush whatever
+        // is already in-flight so the user's most recent layout edits aren't
+        // dropped by the impending page reload.
+        try {
+            disableServerSync();
+            await flushPendingPush();
+        } catch {
+            // flushPendingPush already swallows network errors; reaching here
+            // would mean a programming error — fall through and reload anyway
+            // rather than trapping the user on the modal.
+        }
         window.location.reload();
     };
 

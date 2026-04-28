@@ -3,18 +3,11 @@ import { createPortal } from "react-dom";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import { useAutoScrollTopOnDataChange } from "../utils/widgetListHelpers";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
+import { clamp, formatInterval, formatLocalTime } from "./widgetUtils.js";
 import "./ApiCard.css";
 import "./StatusListCard.css";
 
 const MAX_ENDPOINTS = 50;
-
-const clamp = (value, min, max, fallback) => {
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue)) {
-        return fallback;
-    }
-    return Math.min(max, Math.max(min, Math.floor(numericValue)));
-};
 
 const serializeEndpoints = (endpoints = []) =>
     (endpoints || [])
@@ -46,15 +39,6 @@ const parseEndpointLines = (rawValue) =>
             };
         })
         .filter((item) => item.url);
-
-const formatInterval = (sec) => {
-    if (sec >= 3600) return `every ${Math.floor(sec / 3600)}h`;
-    if (sec >= 60) return `every ${Math.floor(sec / 60)}m`;
-    return `every ${sec}s`;
-};
-
-const formatLocalTime = (date) =>
-    date ? date.toLocaleTimeString("en-GB", { hour12: false }) : null;
 
 const StatusListCard = ({
     title,

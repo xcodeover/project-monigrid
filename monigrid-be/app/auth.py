@@ -103,6 +103,24 @@ def current_username() -> str:
     return str(payload.get("username") or "")
 
 
+def caller_is_admin() -> bool:
+    """Return True if the active request's JWT identifies an admin caller.
+
+    Use this when an endpoint must remain accessible to regular users but
+    needs to branch on role (e.g. masking sensitive fields, refusing
+    privileged sub-operations). Routes that are admin-only should still
+    use the @require_admin decorator instead — this helper is for the
+    handful of cases where the route itself is mixed-role.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return False
+    payload = verify_jwt_token(auth_header[7:]) or {}
+    if str(payload.get("role", "")) == "admin":
+        return True
+    return is_admin_username(str(payload.get("username", "")))
+
+
 def verify_login_credentials(
     username: str,
     password: str,

@@ -121,13 +121,22 @@ class DBConnectionPool:
             return False
         return True
 
-    def _safe_close(self, conn) -> None:
+    def _safe_close(self, conn) -> bool:
+        """Close `conn`, return True if it closed cleanly.
+
+        Callers may use the return value to decide whether to log loudly
+        (resource possibly leaked) or stay quiet (clean shutdown). The
+        previous implementation silently swallowed every error which made
+        connection leaks invisible in production.
+        """
         if conn is None:
-            return
+            return True
         try:
             conn.close()
-        except Exception:
-            pass
+            return True
+        except Exception as exc:
+            _logger.error("JDBC connection close failed — possible leak: %s", exc)
+            return False
 
     def get_connection(self, jdbc_config):
         with self.lock:
@@ -140,6 +149,8 @@ class DBConnectionPool:
                             jdbc_config.jdbc_url, len(self.available),
                         )
                     return conn
+                # Dead connection — close it (logged on failure) and keep
+                # draining the pool until we find a live one or run out.
                 self._safe_close(conn)
         if _logger.isEnabledFor(logging.DEBUG):
             _logger.debug("JDBC pool miss — creating new connection jdbcUrl=%s", jdbc_config.jdbc_url)
@@ -160,6 +171,8 @@ class DBConnectionPool:
                     _logger.debug("JDBC pool return ok availableNow=%d maxSize=%d",
                                   len(self.available), self.max_size)
                 return
+        # Pool is full: drop this connection on the floor. _safe_close logs
+        # if the close itself fails so leaks aren't silent any more.
         self._safe_close(conn)
         if _logger.isEnabledFor(logging.DEBUG):
             _logger.debug("JDBC pool return discarded reason=pool_full maxSize=%d", self.max_size)
@@ -171,5 +184,12 @@ class DBConnectionPool:
         with self.lock:
             connections = list(self.available)
             self.available.clear()
+        failed = 0
         for conn in connections:
-            self._safe_close(conn)
+            if not self._safe_close(conn):
+                failed += 1
+        if failed:
+            _logger.warning(
+                "JDBC pool close_all: %d/%d connections failed to close cleanly",
+                failed, len(connections),
+            )

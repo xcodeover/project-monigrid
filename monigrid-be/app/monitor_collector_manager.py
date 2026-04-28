@@ -159,11 +159,24 @@ class MonitorCollectorManager:
         with self._targets_lock:
             target = self._targets_by_id.get(target_id)
         if target is None:
+            # Cache miss — try to (re)load the target from the settings DB.
+            # A loader failure used to be swallowed silently, leaving the
+            # caller staring at a generic 404 even though the underlying
+            # cause was a DB outage. Log the exception and return None so
+            # the caller still gets a 404 (no usable target) but operators
+            # can see what happened in the logs.
             try:
                 targets = self._target_loader() or []
             except Exception:
-                targets = []
-            target = next((t for t in targets if t["id"] == target_id), None)
+                self._logger.exception(
+                    "Failed to reload monitor targets for on-demand refresh targetId=%s",
+                    target_id,
+                )
+                return None
+            target = next(
+                (t for t in targets if isinstance(t, dict) and str(t.get("id")) == target_id),
+                None,
+            )
             if target is None:
                 return None
             with self._targets_lock:
@@ -188,6 +201,10 @@ class MonitorCollectorManager:
                 current = self._targets_by_id.get(target_id)
             if current is None or not current.get("enabled", True):
                 break
+            # Pick up an interval edit on the next sleep — without this, a
+            # target whose interval was raised stays on the old (faster)
+            # cadence until the process restarts.
+            interval = max(1, int(current.get("interval_sec") or 30))
             self._collect_target(current, source="scheduler")
         if self._logger.isEnabledFor(logging.DEBUG):
             self._logger.debug("Monitor scheduler exited targetId=%s", target_id)

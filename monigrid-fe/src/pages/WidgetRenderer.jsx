@@ -1,3 +1,4 @@
+import { memo } from "react";
 import ApiCard from "../components/ApiCard";
 import HealthCheckCard from "../components/HealthCheckCard";
 import LineChartCard from "../components/LineChartCard";
@@ -259,4 +260,23 @@ const WidgetRenderer = ({
     );
 };
 
-export default WidgetRenderer;
+/**
+ * Custom equality skips re-renders when the only thing that changed in the
+ * parent was a callback identity (DashboardPage rebuilds many of these on
+ * each render). Compare the widget object, layout, and async data fields by
+ * reference; treat callbacks as interchangeable. The parent already calls
+ * the freshest callback when an event fires, so a stale-but-functional
+ * callback here is harmless — the closure inside it reads from the parent's
+ * latest state.
+ */
+const _propsAreEqual = (prev, next) =>
+    prev.widget === next.widget &&
+    prev.currentLayout === next.currentLayout &&
+    prev.apiData === next.apiData &&
+    prev.apiError === next.apiError &&
+    prev.apiStatus === next.apiStatus &&
+    prev.isLoading === next.isLoading &&
+    prev.isRefreshing === next.isRefreshing &&
+    prev.widgetFontSize === next.widgetFontSize;
+
+export default memo(WidgetRenderer, _propsAreEqual);

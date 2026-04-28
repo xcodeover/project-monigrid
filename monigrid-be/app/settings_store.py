@@ -418,6 +418,18 @@ class SettingsStore:
         self._ensure_connection_alive()
         return self._conn.cursor()
 
+    def commit(self) -> None:
+        """Public commit hook for callers that perform writes via this store.
+
+        Mariadb / MSSQL run with autocommit disabled, so any
+        upsert / delete needs an explicit commit to be visible to other
+        sessions (and other Active-Active nodes). Going through this
+        method instead of poking ``self._conn`` keeps the
+        ``_ensure_connection_alive`` reconnect logic in the loop.
+        """
+        self._ensure_connection_alive()
+        self._conn.commit()
+
     @property
     def db_type(self) -> str:
         return self._cfg.db_type
@@ -1123,52 +1135,108 @@ class SettingsStore:
         values: dict[str, Any],
         also_set_updated_at: bool = False,
     ) -> None:
-        """Cross-dialect upsert via probe-then-insert/update.
+        """Cross-dialect single-statement upsert.
 
-        This keeps the code readable across 3 dialects at the cost of an
-        extra round-trip — acceptable for settings writes (low volume).
+        The previous implementation did SELECT-then-INSERT-or-UPDATE in two
+        round-trips, which left a TOCTOU window: between the SELECT and the
+        write, a peer A-A node could insert/delete the same key and one of
+        the two writes would fail (lost update or duplicate-key error). All
+        three target dialects support a native single-statement upsert, so
+        we use those instead — last-write-wins is the same semantic but
+        without the race window or extra round-trip.
         """
+        db_type = self._cfg.db_type
         cur = self._cursor()
         try:
-            cur.execute(
-                f"SELECT 1 FROM {table} WHERE {key_col} = ?",
-                [key_value],
-            )
-            exists = cur.fetchone() is not None
+            if db_type == "mariadb":
+                self._upsert_mariadb(cur, table, key_col, key_value, values, also_set_updated_at)
+            elif db_type == "mssql":
+                self._upsert_mssql(cur, table, key_col, key_value, values, also_set_updated_at)
+            else:
+                # Oracle (default) — MERGE with a dual-source row
+                self._upsert_oracle(cur, table, key_col, key_value, values, also_set_updated_at)
         finally:
             try:
                 cur.close()
             except Exception:
                 pass
 
-        cur = self._cursor()
-        try:
-            if exists:
-                set_parts = [f"{col} = ?" for col in values]
-                params = list(values.values())
-                if also_set_updated_at:
-                    set_parts.append(self._current_ts_expr("updated_at"))
-                params.append(key_value)
-                cur.execute(
-                    f"UPDATE {table} SET {', '.join(set_parts)} WHERE {key_col} = ?",
-                    params,
-                )
-            else:
-                cols = [key_col, *values.keys()]
-                placeholders = ["?"] * len(cols)
-                params = [key_value, *values.values()]
-                if also_set_updated_at:
-                    cols.append("updated_at")
-                    placeholders.append(self._now_literal())
-                cur.execute(
-                    f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(placeholders)})",
-                    params,
-                )
-        finally:
-            try:
-                cur.close()
-            except Exception:
-                pass
+    @staticmethod
+    def _upsert_mariadb(
+        cur, table: str, key_col: str, key_value: str,
+        values: dict[str, Any], also_set_updated_at: bool,
+    ) -> None:
+        cols = [key_col, *values.keys()]
+        placeholders = ["?"] * len(cols)
+        params: list[Any] = [key_value, *values.values()]
+        if also_set_updated_at:
+            cols.append("updated_at")
+            placeholders.append("CURRENT_TIMESTAMP")
+        update_parts = [f"{c} = VALUES({c})" for c in values.keys()]
+        if also_set_updated_at:
+            update_parts.append("updated_at = CURRENT_TIMESTAMP")
+        sql = (
+            f"INSERT INTO {table} ({', '.join(cols)}) "
+            f"VALUES ({', '.join(placeholders)}) "
+            f"ON DUPLICATE KEY UPDATE {', '.join(update_parts)}"
+        )
+        cur.execute(sql, params)
+
+    @staticmethod
+    def _upsert_mssql(
+        cur, table: str, key_col: str, key_value: str,
+        values: dict[str, Any], also_set_updated_at: bool,
+    ) -> None:
+        # WITH (HOLDLOCK) is required for safe MERGE under concurrent writes.
+        # Without it MERGE can race and produce primary-key violations.
+        update_parts = [f"target.{c} = ?" for c in values.keys()]
+        if also_set_updated_at:
+            update_parts.append("target.updated_at = SYSUTCDATETIME()")
+        insert_cols = [key_col, *values.keys()]
+        insert_vals = [f"source.{key_col}"] + [f"src_{c}" for c in values.keys()]
+        if also_set_updated_at:
+            insert_cols.append("updated_at")
+            insert_vals.append("SYSUTCDATETIME()")
+        source_cols = [f"? AS {key_col}"] + [f"? AS src_{c}" for c in values.keys()]
+        sql = (
+            f"MERGE INTO {table} WITH (HOLDLOCK) AS target "
+            f"USING (SELECT {', '.join(source_cols)}) AS source "
+            f"ON target.{key_col} = source.{key_col} "
+            f"WHEN MATCHED THEN UPDATE SET {', '.join(update_parts)} "
+            f"WHEN NOT MATCHED THEN INSERT ({', '.join(insert_cols)}) "
+            f"VALUES ({', '.join(insert_vals)});"
+        )
+        # Params order: source row (key + each value), then UPDATE SET values.
+        # MSSQL drivers bind by position, so we list all source params first
+        # (used by both branches via aliases) then UPDATE SET params.
+        source_params = [key_value, *values.values()]
+        update_params = list(values.values())
+        cur.execute(sql, source_params + update_params)
+
+    @staticmethod
+    def _upsert_oracle(
+        cur, table: str, key_col: str, key_value: str,
+        values: dict[str, Any], also_set_updated_at: bool,
+    ) -> None:
+        update_parts = [f"target.{c} = source.src_{c}" for c in values.keys()]
+        if also_set_updated_at:
+            update_parts.append("target.updated_at = CURRENT_TIMESTAMP")
+        insert_cols = [key_col, *values.keys()]
+        insert_vals = [f"source.{key_col}"] + [f"source.src_{c}" for c in values.keys()]
+        if also_set_updated_at:
+            insert_cols.append("updated_at")
+            insert_vals.append("CURRENT_TIMESTAMP")
+        source_cols = [f"? AS {key_col}"] + [f"? AS src_{c}" for c in values.keys()]
+        sql = (
+            f"MERGE INTO {table} target "
+            f"USING (SELECT {', '.join(source_cols)} FROM dual) source "
+            f"ON (target.{key_col} = source.{key_col}) "
+            f"WHEN MATCHED THEN UPDATE SET {', '.join(update_parts)} "
+            f"WHEN NOT MATCHED THEN INSERT ({', '.join(insert_cols)}) "
+            f"VALUES ({', '.join(insert_vals)})"
+        )
+        params = [key_value, *values.values()]
+        cur.execute(sql, params)
 
     def _current_ts_expr(self, col: str) -> str:
         if self._cfg.db_type == "mssql":
@@ -1284,10 +1352,13 @@ class SqlRepository:
 
     def put(self, sql_id: str, content: str) -> None:
         self._store.upsert_sql(sql_id, content)
-        self._store._conn.commit()
+        self._store.commit()
 
     def list(self) -> list[dict[str, Any]]:
         return self._store.list_sql_ids()
 
     def delete(self, sql_id: str) -> None:
         self._store.delete_sql(sql_id)
+        # delete_sql() ran a DELETE under a non-autocommit connection — commit
+        # so the change is durable and visible to peer A-A nodes.
+        self._store.commit()

@@ -19,6 +19,7 @@ import {
 } from "../utils/chartThresholds.js";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
+import { formatInterval, normalizeChartData } from "./widgetUtils.js";
 import "./ApiCard.css";
 import "./BarChartCard.css";
 
@@ -43,17 +44,6 @@ const ANIMATION_THRESHOLD = 100;
 // 기본 최대 표시 막대 수
 const MAX_BARS_DEFAULT = 200;
 
-const normalizeData = (raw) => {
-    if (Array.isArray(raw)) return raw;
-    if (raw && typeof raw === "object") {
-        return Object.entries(raw).map(([k, v]) => ({
-            _key: k,
-            ...(typeof v === "object" && v !== null ? v : { value: v }),
-        }));
-    }
-    return [];
-};
-
 const detectColumns = (rows) => {
     const cols = new Set();
     rows.slice(0, 20).forEach((r) => {
@@ -65,27 +55,6 @@ const detectColumns = (rows) => {
     });
     return Array.from(cols);
 };
-
-const formatInterval = (sec) => {
-    if (sec >= 3600) return `every ${Math.floor(sec / 3600)}h`;
-    if (sec >= 60) return `every ${Math.floor(sec / 60)}m`;
-    return `every ${sec}s`;
-};
-
-const TOOLTIP_CONTENT_STYLE = {
-    background: "rgba(13, 18, 27, 0.96)",
-    border: "1px solid rgba(148, 163, 184, 0.22)",
-    borderRadius: "10px",
-    padding: "8px 12px",
-    boxShadow: "0 14px 32px rgba(0, 0, 0, 0.45)",
-    fontSize: "12px",
-};
-const TOOLTIP_LABEL_STYLE = {
-    color: "#cbd5e1",
-    fontWeight: 600,
-    marginBottom: "4px",
-};
-const TOOLTIP_ITEM_STYLE = { color: "#e2e8f0", lineHeight: 1.5 };
 
 const formatTooltipNumber = (raw) => {
     if (raw == null || raw === "") return "—";
@@ -170,7 +139,7 @@ const BarChartCard = ({
         if (data != null) setLastUpdatedAt(new Date());
     }, [data]);
 
-    const rows = useMemo(() => normalizeData(data), [data]);
+    const rows = useMemo(() => normalizeChartData(data), [data]);
     const detectedColumns = useMemo(() => detectColumns(rows), [rows]);
 
     // 최대 표시 개수 제한 — 초과분은 잘라내어 렌더링 부하 방지
@@ -187,6 +156,21 @@ const BarChartCard = ({
         chartSettings?.yAxisKeys?.length > 0
             ? chartSettings.yAxisKeys
             : detectedColumns.filter((c) => c !== xAxisKey).slice(0, 4);
+
+    // O(1) lookup for the tooltip path. Without this, every mousemove ran
+    // chartRows.findIndex(...) — at 60fps over a 1k-row chart that's 60k
+    // string comparisons per second per visible chart.
+    const labelToIndex = useMemo(() => {
+        const map = new Map();
+        if (!xAxisKey) return map;
+        for (let i = 0; i < chartRows.length; i += 1) {
+            const key = String(chartRows[i]?.[xAxisKey] ?? "");
+            // Don't overwrite — keep the first occurrence to match the old
+            // findIndex semantics if labels collide.
+            if (!map.has(key)) map.set(key, i);
+        }
+        return map;
+    }, [chartRows, xAxisKey]);
 
     const isHorizontal = orientation === "horizontal";
     // recharts convention: layout="vertical" → horizontal bars, layout="horizontal" → vertical bars
@@ -208,22 +192,6 @@ const BarChartCard = ({
     const useCellColors = singleYMode && chartRows.length <= CELL_COLOR_THRESHOLD;
     // 대량 데이터에서 입장/퇴장 애니메이션은 렌더링 비용이 높으므로 비활성화
     const animationActive = chartRows.length <= ANIMATION_THRESHOLD;
-
-    // Diagnostics: log the exact chartRows + key mapping recharts receives.
-    useEffect(() => {
-        // eslint-disable-next-line no-console
-        console.log("[BarChartCard data]", {
-            title,
-            xAxisKey,
-            yAxisKeys,
-            chartRowsLength: chartRows.length,
-            firstThreeRows: chartRows.slice(0, 3),
-            sampleValues: chartRows.map((r) => ({
-                x: xAxisKey ? r?.[xAxisKey] : undefined,
-                y0: yAxisKeys[0] ? r?.[yAxisKeys[0]] : undefined,
-            })),
-        });
-    }, [chartRows, xAxisKey, yAxisKeys, title]);
 
     const handleApplySettings = () => {
         const resolvedX = xKeyDraft || xAxisKey;
@@ -801,13 +769,6 @@ const BarChartCard = ({
                                         raw == null || raw === ""
                                             ? NaN
                                             : Number(raw);
-                                    // eslint-disable-next-line no-console
-                                    console.log("[BarChart onMouseMove]", {
-                                        rawActiveTooltipIndex: raw,
-                                        parsedIdx: idx,
-                                        isTooltipActive: state?.isTooltipActive,
-                                        activeLabel: state?.activeLabel,
-                                    });
                                     if (
                                         state?.isTooltipActive &&
                                         Number.isInteger(idx) &&
@@ -819,8 +780,6 @@ const BarChartCard = ({
                                     }
                                 }}
                                 onMouseLeave={() => {
-                                    // eslint-disable-next-line no-console
-                                    console.log("[BarChart onMouseLeave]");
                                     setActiveIdx(null);
                                 }}
                             >
@@ -870,25 +829,6 @@ const BarChartCard = ({
                                     cursor={{ fill: "rgba(255,255,255,0.04)" }}
                                     content={(tooltipProps) => {
                                         if (!tooltipProps?.active) return null;
-                                        // eslint-disable-next-line no-console
-                                        console.log("[Tooltip content]", {
-                                            active: tooltipProps?.active,
-                                            label: tooltipProps?.label,
-                                            activeIdxState: activeIdx,
-                                            payloadItems:
-                                                tooltipProps?.payload?.map(
-                                                    (p) => ({
-                                                        dataKey: p?.dataKey,
-                                                        name: p?.name,
-                                                        value: p?.value,
-                                                        payloadRow: p?.payload,
-                                                    }),
-                                                ) ?? null,
-                                            xAxisKey,
-                                            yAxisKeys,
-                                            chartRowsCount: chartRows.length,
-                                            firstRow: chartRows[0],
-                                        });
                                         // recharts payload 가 신뢰할 수 없다는 전제로,
                                         // 우리가 직접 추적한 activeIdx 를 1순위로 사용하고,
                                         // 그것이 없으면 label(카테고리 값)로 chartRows 에서
@@ -899,15 +839,11 @@ const BarChartCard = ({
                                             labelKey &&
                                             tooltipProps.label != null &&
                                             tooltipProps.label !== ""
-                                                ? chartRows.findIndex(
-                                                      (r) =>
-                                                          String(
-                                                              r?.[labelKey],
-                                                          ) ===
-                                                          String(
-                                                              tooltipProps.label,
-                                                          ),
-                                                  )
+                                                ? labelToIndex.get(
+                                                      String(
+                                                          tooltipProps.label,
+                                                      ),
+                                                  ) ?? -1
                                                 : -1;
                                         const idx =
                                             activeIdx != null
@@ -950,22 +886,18 @@ const BarChartCard = ({
                                                   }))
                                         ).filter((it) => it.key);
                                         return (
-                                            <div style={TOOLTIP_CONTENT_STYLE}>
+                                            <div className='bc-tooltip'>
                                                 {labelValue != null &&
                                                     labelValue !== "" && (
-                                                        <div
-                                                            style={
-                                                                TOOLTIP_LABEL_STYLE
-                                                            }
-                                                        >
+                                                        <div className='bc-tooltip-label'>
                                                             {labelValue}
                                                         </div>
                                                     )}
                                                 {items.map((it, i) => (
                                                     <div
                                                         key={`${it.key}-${i}`}
+                                                        className='bc-tooltip-item'
                                                         style={{
-                                                            ...TOOLTIP_ITEM_STYLE,
                                                             color: it.color,
                                                         }}
                                                     >
