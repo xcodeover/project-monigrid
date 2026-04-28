@@ -504,38 +504,37 @@ const ApiCard = ({
                 </div>
             </div>
 
-            {showSettings && (
-                <ApiCardSettingsModal
-                    title={title}
-                    onClose={() => setShowSettings(false)}
-                    titleDraft={titleDraft}
-                    endpointDraft={endpointDraft}
-                    onTitleDraftChange={setTitleDraft}
-                    onEndpointDraftChange={setEndpointDraft}
-                    onWidgetMetaApply={handleWidgetMetaApply}
-                    sizeDraft={sizeDraft}
-                    sizeBounds={sizeBounds}
-                    onSizeDraftChange={setSizeDraft}
-                    onSizeApply={handleSizeApply}
-                    intervalDraft={intervalDraft}
-                    onIntervalDraftChange={setIntervalDraft}
-                    onIntervalApply={handleIntervalApply}
-                    orderedColumns={orderedColumns}
-                    visibleColumns={visibleColumns}
-                    localColumnWidths={localColumnWidths}
-                    draggingColumn={draggingColumn}
-                    dragOverColumn={dragOverColumn}
-                    onColumnToggle={handleColumnToggle}
-                    onColumnWidthChange={handleColumnWidthChange}
-                    onColumnDragStart={handleColumnDragStart}
-                    onColumnDragEnd={handleColumnDragEnd}
-                    onColumnDragOver={handleColumnDragOver}
-                    onColumnDropEvent={handleColumnDropEvent}
-                    availableColumns={availableColumns}
-                    criteriaMap={criteriaMap}
-                    onCriteriaChange={handleCriteriaChange}
-                />
-            )}
+            <ApiCardSettingsModal
+                open={showSettings}
+                title={title}
+                onClose={() => setShowSettings(false)}
+                titleDraft={titleDraft}
+                endpointDraft={endpointDraft}
+                onTitleDraftChange={setTitleDraft}
+                onEndpointDraftChange={setEndpointDraft}
+                onWidgetMetaApply={handleWidgetMetaApply}
+                sizeDraft={sizeDraft}
+                sizeBounds={sizeBounds}
+                onSizeDraftChange={setSizeDraft}
+                onSizeApply={handleSizeApply}
+                intervalDraft={intervalDraft}
+                onIntervalDraftChange={setIntervalDraft}
+                onIntervalApply={handleIntervalApply}
+                orderedColumns={orderedColumns}
+                visibleColumns={visibleColumns}
+                localColumnWidths={localColumnWidths}
+                draggingColumn={draggingColumn}
+                dragOverColumn={dragOverColumn}
+                onColumnToggle={handleColumnToggle}
+                onColumnWidthChange={handleColumnWidthChange}
+                onColumnDragStart={handleColumnDragStart}
+                onColumnDragEnd={handleColumnDragEnd}
+                onColumnDragOver={handleColumnDragOver}
+                onColumnDropEvent={handleColumnDropEvent}
+                availableColumns={availableColumns}
+                criteriaMap={criteriaMap}
+                onCriteriaChange={handleCriteriaChange}
+            />
             <ApiCardRowDetailModal
                 row={liveSelectedRow}
                 title={title}

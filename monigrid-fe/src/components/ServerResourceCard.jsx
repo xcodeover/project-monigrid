@@ -571,25 +571,24 @@ const ServerResourceCard = ({
                 </div>
             </div>
 
-            {showSettings && (
-                <ServerResourceSettingsModal
-                    title={title}
-                    onClose={() => setShowSettings(false)}
-                    titleDraft={titleDraft}
-                    onTitleDraftChange={setTitleDraft}
-                    onTitleApply={handleTitleApply}
-                    sizeDraft={sizeDraft}
-                    sizeBounds={sizeBounds}
-                    onSizeDraftChange={setSizeDraft}
-                    onSizeApply={handleSizeApply}
-                    intervalDraft={intervalDraft}
-                    onIntervalDraftChange={setIntervalDraft}
-                    onIntervalApply={handleIntervalApply}
-                    selectedTargetIds={selectedTargetIdsDraft}
-                    onSelectedTargetIdsChange={setSelectedTargetIdsDraft}
-                    onSave={handleSaveTargets}
-                />
-            )}
+            <ServerResourceSettingsModal
+                open={showSettings}
+                title={title}
+                onClose={() => setShowSettings(false)}
+                titleDraft={titleDraft}
+                onTitleDraftChange={setTitleDraft}
+                onTitleApply={handleTitleApply}
+                sizeDraft={sizeDraft}
+                sizeBounds={sizeBounds}
+                onSizeDraftChange={setSizeDraft}
+                onSizeApply={handleSizeApply}
+                intervalDraft={intervalDraft}
+                onIntervalDraftChange={setIntervalDraft}
+                onIntervalApply={handleIntervalApply}
+                selectedTargetIds={selectedTargetIdsDraft}
+                onSelectedTargetIdsChange={setSelectedTargetIdsDraft}
+                onSave={handleSaveTargets}
+            />
             {detailServer && (
                 <ServerDetailPopup
                     server={detailServer}

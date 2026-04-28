@@ -1,7 +1,6 @@
-import { createPortal } from "react-dom";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import MonitorTargetPicker from "./MonitorTargetPicker";
-import { IconClose } from "./icons";
+import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 
 /**
  * ServerResource widget settings modal.
@@ -9,11 +8,13 @@ import { IconClose } from "./icons";
  * 위젯 자체에서 호스트/자격증명을 직접 입력하는 legacy UI 는 제거되었고,
  * 백엔드 설정의 "서버/네트워크 체크" 탭에 등록된 대상 중에서만 선택한다.
  *
- * NOTE: Does not close on outside click — only the ✕ button. Prevents
- * losing in-progress edits to selection.
+ * 자체 footer ("취소 / 저장 (N개)") 의 동적 라벨을 보존해야 하므로
+ * WidgetSettingsModal 의 표준 footer 대신 children 에 그대로 둔다.
+ * 외부 클릭으로 닫히지 않도록 closeOnBackdropClick=false — 사용자가
+ * picker draft 를 입력하다가 잃지 않게 한다.
  */
-
 const ServerResourceSettingsModal = ({
+    open,
     title,
     onClose,
     // Title editor
@@ -34,31 +35,14 @@ const ServerResourceSettingsModal = ({
     onSelectedTargetIdsChange,
     onSave,
 }) => {
-    return createPortal(
-        <div
-            className='settings-overlay'
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
+    return (
+        <WidgetSettingsModal
+            open={open}
+            onClose={onClose}
+            title='서버 리소스 위젯 설정'
+            subtitle={title}
+            closeOnBackdropClick={false}
         >
-            <div
-                className='settings-popup srv-settings-popup'
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className='settings-popup-header'>
-                    <div>
-                        <h5>서버 리소스 위젯 설정</h5>
-                        <p>{title}</p>
-                    </div>
-                    <button
-                        type='button'
-                        className='close-settings-btn'
-                        onClick={onClose}
-                    >
-                        <IconClose size={14} />
-                    </button>
-                </div>
-                <div className='settings-popup-body'>
                     <div className='settings-section'>
                         <h6>위젯 정보</h6>
                         <div className='size-editor widget-meta-editor'>
@@ -159,7 +143,6 @@ const ServerResourceSettingsModal = ({
                             onChange={onSelectedTargetIdsChange}
                         />
                     </div>
-                </div>
                 <div className='srv-settings-footer'>
                     <button
                         type='button'
@@ -176,9 +159,7 @@ const ServerResourceSettingsModal = ({
                         저장 ({selectedTargetIds.length}개)
                     </button>
                 </div>
-            </div>
-        </div>,
-        document.body,
+        </WidgetSettingsModal>
     );
 };
 
