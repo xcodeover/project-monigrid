@@ -1,34 +1,24 @@
 /* LineChartCard -------------------------------------------------- */
+/* See styles/index.css for the shared widget surface tokens
+   (--card-bg, --card-border, --card-shadow, --card-blur, …). */
 .lc-card {
     display: flex;
     flex-direction: column;
     height: 100%;
-    background:
-        linear-gradient(
-            180deg,
-            rgba(255, 255, 255, 0.025),
-            rgba(255, 255, 255, 0.01)
-        ),
-        rgba(21, 28, 40, 0.94);
-    border-radius: 10px;
-    border: 1px solid rgba(148, 163, 184, 0.12);
+    background: var(--card-bg);
+    border-radius: var(--card-radius);
+    border: var(--card-border);
     overflow: hidden;
-    box-shadow: 0 16px 40px rgba(3, 8, 20, 0.26);
-    backdrop-filter: blur(14px);
+    box-shadow: var(--card-shadow);
+    backdrop-filter: var(--card-blur);
 }
 
 /* Header */
 .lc-header {
     flex-shrink: 0;
     padding: 10px 14px;
-    background:
-        linear-gradient(
-            180deg,
-            rgba(255, 255, 255, 0.025),
-            rgba(255, 255, 255, 0.012)
-        ),
-        rgba(15, 20, 29, 0.92);
-    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    background: var(--card-header-bg);
+    border-bottom: var(--card-header-border);
 }
 
 /* Time range toggle (segmented control) */
