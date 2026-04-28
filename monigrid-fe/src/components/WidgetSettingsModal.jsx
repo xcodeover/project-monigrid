@@ -31,6 +31,11 @@ const WidgetSettingsModal = ({
     children,
     applyLabel = "적용",
     cancelLabel = "취소",
+    // Some widgets (NetworkTestCard) rely on a draft buffer the user is
+    // editing inside the modal — clicking the dim backdrop and losing those
+    // edits is hostile, so they opt out. Default stays true to match the
+    // old chart-card behaviour.
+    closeOnBackdropClick = true,
 }) => {
     const popupRef = useRef(null);
 
@@ -82,6 +87,7 @@ const WidgetSettingsModal = ({
             onClick={(e) => {
                 // Click on the dim background = close, click on the popup =
                 // do nothing. The popup itself stops propagation below.
+                if (!closeOnBackdropClick) return;
                 if (e.target === e.currentTarget) onClose?.();
             }}
         >

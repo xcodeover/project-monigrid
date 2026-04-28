@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import { createPortal } from "react-dom";
 import apiClient from "../services/http.js";
 import { monitorService } from "../services/dashboardService.js";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
@@ -10,6 +9,7 @@ import {
 import MonitorTargetPicker from "./MonitorTargetPicker";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
 import { clamp, formatInterval, formatLocalTime } from "./widgetUtils.js";
+import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./NetworkTestCard.css";
 
@@ -369,27 +369,18 @@ const NetworkTestCard = ({
     }, [targetStates]);
 
     /* ── render: settings popup ──────────────────────────────────── */
-    // 외부 클릭으로는 닫히지 않는다 — 헤더의 ✕ 버튼 / 하단 닫기 버튼으로만 닫힌다.
-    // (사용자 요구: 바깥쪽 오클릭으로 설정 변경이 날아가는 것을 방지)
-    const settingsPopup = showSettings ? (
-        <div
-            className="settings-overlay"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
+    // closeOnBackdropClick=false — 사용자가 대상 picker 에 입력한 draft 가
+    // 바깥쪽 오클릭으로 날아가는 것을 방지한다.
+    // 자체 footer (취소 / 저장 N개) 를 children 으로 그대로 두어 동적
+    // 라벨과 srv-save-btn 스타일을 보존한다.
+    const settingsPopup = (
+        <WidgetSettingsModal
+            open={showSettings}
+            onClose={() => setShowSettings(false)}
+            title='네트워크 테스트 위젯 설정'
+            subtitle={title}
+            closeOnBackdropClick={false}
         >
-            <div
-                className="settings-popup srv-settings-popup"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className="settings-popup-header">
-                    <div>
-                        <h5>네트워크 테스트 위젯 설정</h5>
-                        <p>{title}</p>
-                    </div>
-                    <button type="button" className="close-settings-btn" onClick={() => setShowSettings(false)} aria-label="닫기"><IconClose size={14} /></button>
-                </div>
-                <div className="settings-popup-body">
                     <div className="settings-section">
                         <h6>위젯 정보</h6>
                         <div className="size-editor widget-meta-editor">
@@ -427,14 +418,12 @@ const NetworkTestCard = ({
                             onChange={setSelectedTargetIdsDraft}
                         />
                     </div>
-                </div>
                 <div className="srv-settings-footer">
                     <button type="button" className="size-preset-btn" onClick={() => setShowSettings(false)}>취소</button>
                     <button type="button" className="size-preset-btn srv-save-btn" onClick={handleSaveTargets}>저장 ({selectedTargetIdsDraft.length}개)</button>
                 </div>
-            </div>
-        </div>
-    ) : null;
+        </WidgetSettingsModal>
+    );
 
     /* ── render: main widget ─────────────────────────────────────── */
     return (
@@ -475,7 +464,7 @@ const NetworkTestCard = ({
                 </div>
             </div>
 
-            {settingsPopup && createPortal(settingsPopup, document.body)}
+            {settingsPopup}
 
             <div className="api-card-content">
                 {targets.length === 0 ? (
