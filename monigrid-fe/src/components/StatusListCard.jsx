@@ -87,6 +87,11 @@ const StatusListCard = ({
     const okCount = Number(data?.okCount || 0);
     const failCount = Number(data?.failCount || 0);
 
+    // NetworkTestCard와 동일한 폭 기반 모드 분기.
+    // compact(≤3)에서는 URL/latency 라벨을 숨겨 한 줄 텍스트만 남긴다.
+    const widgetW = currentSize?.w ?? 4;
+    const displayMode = widgetW <= 3 ? "compact" : widgetW <= 6 ? "normal" : "wide";
+
     useEffect(() => {
         setSizeDraft({
             w: currentSize?.w ?? 4,
@@ -388,12 +393,18 @@ const StatusListCard = ({
                         표시할 API 상태가 없습니다.
                     </div>
                 ) : (
-                    <div className='status-list-items' ref={scrollRef}>
+                    <div
+                        className={`status-list-items status-list-${displayMode}`}
+                        ref={scrollRef}
+                    >
                         {items.map((item) => (
-                            <div key={item.id} className='status-list-item'>
+                            <div
+                                key={item.id}
+                                className={`status-list-item mode-${displayMode}`}
+                                title={`${item.label}\n${item.url}${item.responseTimeMs != null ? `\n${item.responseTimeMs} ms` : ""}${item.error ? `\n${item.error}` : ""}`}
+                            >
                                 <span
-                                    className={`status-pill ${item.ok ? "live" : "dead"}`}
-                                    style={{ fontSize: "10px", padding: "2px 5px", flexShrink: 0 }}
+                                    className={`status-pill ${item.ok ? "live" : "dead"} status-list-pill`}
                                 >
                                     <span className='status-dot' />
                                     {item.ok
@@ -405,9 +416,11 @@ const StatusListCard = ({
                                 <strong className='status-list-label'>
                                     {item.label}
                                 </strong>
-                                <span className='status-list-url'>
-                                    {item.url}
-                                </span>
+                                {displayMode !== "compact" && (
+                                    <span className='status-list-url'>
+                                        {item.url}
+                                    </span>
+                                )}
                                 <span className='status-list-latency'>
                                     {item.responseTimeMs != null
                                         ? `${item.responseTimeMs} ms`
