@@ -67,9 +67,18 @@ def register(app, backend, limiter) -> None:
             return jsonify({
                 "message": error.message, "apiId": endpoint.api_id, "detail": error.detail,
             }), 500
-        except Exception as error:
+        except Exception:
+            # str(error) often contains JDBC driver stack frames or SQL state
+            # that exposes the schema. Log it server-side and return a
+            # generic detail to the client.
+            backend.logger.exception(
+                "Dynamic endpoint failed apiId=%s path=/%s clientIp=%s",
+                endpoint.api_id, requested_path, client_ip,
+            )
             return jsonify({
-                "message": "query execution failed", "apiId": endpoint.api_id, "detail": str(error),
+                "message": "query execution failed",
+                "apiId": endpoint.api_id,
+                "detail": "internal error",
             }), 500
 
         return jsonify(data), 200

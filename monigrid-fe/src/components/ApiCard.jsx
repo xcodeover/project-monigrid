@@ -16,6 +16,7 @@ import {
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import ApiCardRowDetailModal from "./ApiCardRowDetailModal";
 import ApiCardSettingsModal from "./ApiCardSettingsModal";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
 import "./ApiCard.css";
 
 const ApiCard = ({
@@ -391,17 +392,27 @@ const ApiCard = ({
         return () => document.removeEventListener("keydown", handleKeyDown);
     }, [clipboardRow, visibleColumns]);
 
-    // 선택된 행의 최신 데이터를 실시간으로 추적
+    // 선택된 행의 최신 데이터를 실시간으로 추적.
+    // 매칭 우선순위: _key (in 연산자, null/0도 안전) → id → 스칼라 필드만
+    // 비교한 결과. Object.keys().every(...) 의 깊은 비교는 metadata 같은
+    // 객체 필드의 참조가 매 폴링마다 바뀌어 항상 false 가 떨어졌고,
+    // 그 결과 selectedRow 가 stale 한 채로 화면에 남는 버그가 있었다.
     const liveSelectedRow = useMemo(() => {
         if (!selectedRow) return null;
-        // _key 기준으로 매칭, 없으면 인덱스 기준
-        if (selectedRow._key !== undefined) {
-            return (
-                dataRows.find((r) => r._key === selectedRow._key) ?? selectedRow
-            );
+        if ("_key" in selectedRow) {
+            const found = dataRows.find((r) => r?._key === selectedRow._key);
+            if (found) return found;
         }
-        const idx = dataRows.findIndex((r) =>
-            Object.keys(selectedRow).every((k) => r[k] === selectedRow[k]),
+        if ("id" in selectedRow) {
+            const found = dataRows.find((r) => r?.id === selectedRow.id);
+            if (found) return found;
+        }
+        const scalarKeys = Object.keys(selectedRow).filter((k) => {
+            const v = selectedRow[k];
+            return v === null || (typeof v !== "object" && typeof v !== "function");
+        });
+        const idx = dataRows.findIndex(
+            (r) => r && scalarKeys.every((k) => r[k] === selectedRow[k]),
         );
         return idx >= 0 ? dataRows[idx] : selectedRow;
     }, [selectedRow, dataRows]);
@@ -447,8 +458,9 @@ const ApiCard = ({
                                     onRefresh();
                                 }}
                                 title='새로고침'
+                                aria-label='새로고침'
                             >
-                                ⟳
+                                <IconRefresh size={14} />
                             </button>
                             <button
                                 type='button'
@@ -458,8 +470,9 @@ const ApiCard = ({
                                     setShowSettings(true);
                                 }}
                                 title='설정'
+                                aria-label='설정'
                             >
-                                ⚙
+                                <IconSettings size={14} />
                             </button>
                             <button
                                 type='button'
@@ -469,8 +482,9 @@ const ApiCard = ({
                                     onRemove();
                                 }}
                                 title='제거'
+                                aria-label='제거'
                             >
-                                ✕
+                                <IconClose size={14} />
                             </button>
                         </div>
                     </div>
@@ -490,38 +504,37 @@ const ApiCard = ({
                 </div>
             </div>
 
-            {showSettings && (
-                <ApiCardSettingsModal
-                    title={title}
-                    onClose={() => setShowSettings(false)}
-                    titleDraft={titleDraft}
-                    endpointDraft={endpointDraft}
-                    onTitleDraftChange={setTitleDraft}
-                    onEndpointDraftChange={setEndpointDraft}
-                    onWidgetMetaApply={handleWidgetMetaApply}
-                    sizeDraft={sizeDraft}
-                    sizeBounds={sizeBounds}
-                    onSizeDraftChange={setSizeDraft}
-                    onSizeApply={handleSizeApply}
-                    intervalDraft={intervalDraft}
-                    onIntervalDraftChange={setIntervalDraft}
-                    onIntervalApply={handleIntervalApply}
-                    orderedColumns={orderedColumns}
-                    visibleColumns={visibleColumns}
-                    localColumnWidths={localColumnWidths}
-                    draggingColumn={draggingColumn}
-                    dragOverColumn={dragOverColumn}
-                    onColumnToggle={handleColumnToggle}
-                    onColumnWidthChange={handleColumnWidthChange}
-                    onColumnDragStart={handleColumnDragStart}
-                    onColumnDragEnd={handleColumnDragEnd}
-                    onColumnDragOver={handleColumnDragOver}
-                    onColumnDropEvent={handleColumnDropEvent}
-                    availableColumns={availableColumns}
-                    criteriaMap={criteriaMap}
-                    onCriteriaChange={handleCriteriaChange}
-                />
-            )}
+            <ApiCardSettingsModal
+                open={showSettings}
+                title={title}
+                onClose={() => setShowSettings(false)}
+                titleDraft={titleDraft}
+                endpointDraft={endpointDraft}
+                onTitleDraftChange={setTitleDraft}
+                onEndpointDraftChange={setEndpointDraft}
+                onWidgetMetaApply={handleWidgetMetaApply}
+                sizeDraft={sizeDraft}
+                sizeBounds={sizeBounds}
+                onSizeDraftChange={setSizeDraft}
+                onSizeApply={handleSizeApply}
+                intervalDraft={intervalDraft}
+                onIntervalDraftChange={setIntervalDraft}
+                onIntervalApply={handleIntervalApply}
+                orderedColumns={orderedColumns}
+                visibleColumns={visibleColumns}
+                localColumnWidths={localColumnWidths}
+                draggingColumn={draggingColumn}
+                dragOverColumn={dragOverColumn}
+                onColumnToggle={handleColumnToggle}
+                onColumnWidthChange={handleColumnWidthChange}
+                onColumnDragStart={handleColumnDragStart}
+                onColumnDragEnd={handleColumnDragEnd}
+                onColumnDragOver={handleColumnDragOver}
+                onColumnDropEvent={handleColumnDropEvent}
+                availableColumns={availableColumns}
+                criteriaMap={criteriaMap}
+                onCriteriaChange={handleCriteriaChange}
+            />
             <ApiCardRowDetailModal
                 row={liveSelectedRow}
                 title={title}

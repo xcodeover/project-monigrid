@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Callable
 
+import bcrypt
 import jwt
 from flask import jsonify, request
 from pydantic import BaseModel, validator
@@ -45,16 +46,38 @@ def is_admin_username(username: str) -> bool:
     return (username or "").strip().lower() == get_admin_username().lower()
 
 
-def create_jwt_token(username: str, hours: int = 24) -> str:
+def create_jwt_token(username: str, hours: int = 24, *, role: str | None = None) -> str:
+    resolved_role = (role or ("admin" if is_admin_username(username) else "user")).strip().lower()
     payload = {
         "username": username,
-        "role": "admin" if is_admin_username(username) else "user",
+        "role": resolved_role,
         "exp": datetime.now(timezone.utc) + timedelta(hours=hours),
         "iat": datetime.now(timezone.utc),
     }
     secret = _resolve_jwt_secret()
     algo = get_env("JWT_ALGORITHM", "HS256")
     return jwt.encode(payload, secret, algorithm=algo)
+
+
+def hash_password(password: str) -> str:
+    """Return a bcrypt hash of the given password (UTF-8 encoded).
+
+    Cost factor 12 is a reasonable balance for 2026-class hardware —
+    ~200ms/hash on a laptop, cheap enough not to block the API yet
+    expensive enough to slow down offline cracking.
+    """
+    if not password:
+        raise ValueError("password must not be empty")
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    if not password or not password_hash:
+        return False
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 def verify_jwt_token(token: str) -> dict | None:
@@ -64,6 +87,38 @@ def verify_jwt_token(token: str) -> dict | None:
         return jwt.decode(token, secret, algorithms=[algo])
     except (jwt.InvalidTokenError, jwt.ExpiredSignatureError):
         return None
+
+
+def current_username() -> str:
+    """Return the JWT `username` claim of the active request, or "".
+
+    Call only from handlers behind @require_auth — the decorator has
+    already validated the token, so we can re-parse it cheaply to
+    recover the claim without threading it through flask.g.
+    """
+    header = request.headers.get("Authorization", "")
+    if not header.startswith("Bearer "):
+        return ""
+    payload = verify_jwt_token(header[7:]) or {}
+    return str(payload.get("username") or "")
+
+
+def caller_is_admin() -> bool:
+    """Return True if the active request's JWT identifies an admin caller.
+
+    Use this when an endpoint must remain accessible to regular users but
+    needs to branch on role (e.g. masking sensitive fields, refusing
+    privileged sub-operations). Routes that are admin-only should still
+    use the @require_admin decorator instead — this helper is for the
+    handful of cases where the route itself is mixed-role.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return False
+    payload = verify_jwt_token(auth_header[7:]) or {}
+    if str(payload.get("role", "")) == "admin":
+        return True
+    return is_admin_username(str(payload.get("username", "")))
 
 
 def verify_login_credentials(

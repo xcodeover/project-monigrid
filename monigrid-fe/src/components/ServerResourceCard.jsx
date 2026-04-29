@@ -6,23 +6,26 @@ import {
     useMemo,
 } from "react";
 import apiClient from "../services/http.js";
+import { monitorService } from "../services/dashboardService.js";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import {
     DEFAULT_CRITERIA,
     MAX_HISTORY,
-    MAX_SERVERS,
     checkCriteria,
     clamp,
     formatElapsed,
     formatInterval,
     formatTime,
-    generateId,
-    incrementLabel,
     migrateServers,
 } from "./serverResourceHelpers";
 import ServerRow from "./ServerRow";
 import ServerDetailPopup from "./ServerDetailPopup";
 import ServerResourceSettingsModal from "./ServerResourceSettingsModal";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
+import {
+    sortAlertsFirst,
+    useAutoScrollTopOnDataChange,
+} from "../utils/widgetListHelpers";
 import "./ApiCard.css";
 import "./ServerResourceCard.css";
 
@@ -46,8 +49,20 @@ const ServerResourceCard = ({
     onWidgetConfigChange,
     onAlarmChange,
 }) => {
-    /* ── derived: servers list (migrate old format) ──────────────── */
-    const servers = useMemo(() => migrateServers(widgetConfig), [widgetConfig]);
+    /* ── mode: snapshot (BE-centralized) vs legacy (credentials in widget) */
+    const targetIds = useMemo(
+        () => (Array.isArray(widgetConfig?.targetIds) ? widgetConfig.targetIds : []),
+        [widgetConfig],
+    );
+    const useSnapshot = targetIds.length > 0;
+
+    /* ── derived: servers list ────────────────────────────────────
+     * snapshot mode → built from the latest /monitor-snapshot response
+     * legacy mode   → migrateServers(widgetConfig.servers)
+     */
+    const [snapshotServers, setSnapshotServers] = useState([]);
+    const legacyServers = useMemo(() => migrateServers(widgetConfig), [widgetConfig]);
+    const servers = useSnapshot ? snapshotServers : legacyServers;
 
     /* ── display mode based on grid width ────────────────────────── */
     const widgetW = currentSize?.w ?? 4;
@@ -90,6 +105,58 @@ const ServerResourceCard = ({
     }, [servers]);
 
     const fetchAllServers = useCallback(async () => {
+        if (useSnapshot) {
+            if (targetIds.length === 0) return;
+            setDiskCycleIdx((prev) => prev + 1);
+            try {
+                const res = await monitorService.getSnapshot(targetIds);
+                const items = Array.isArray(res?.items) ? res.items : [];
+                const criteriaOverrides = widgetConfig?.criteriaByTarget || {};
+                const now = new Date();
+                const derivedServers = items.map((it) => ({
+                    id: it.targetId,
+                    label: it.label || it.spec?.host || it.targetId,
+                    osType: it.spec?.os_type || it.spec?.osType || "linux-generic",
+                    host: it.spec?.host || "",
+                    criteria: {
+                        ...DEFAULT_CRITERIA,
+                        ...(it.spec?.criteria || {}),
+                        ...(criteriaOverrides[it.targetId] || {}),
+                    },
+                }));
+                setSnapshotServers(derivedServers);
+                setServerStates(() => {
+                    const next = {};
+                    items.forEach((it) => {
+                        next[it.targetId] = {
+                            data: it.data,
+                            error: it.errorMessage || null,
+                            loading: false,
+                            lastUpdated: it.updatedAt ? new Date(it.updatedAt) : null,
+                            lastAttempted: now,
+                        };
+                    });
+                    return next;
+                });
+            } catch (err) {
+                const errorMsg = err?.response?.data?.message || err?.message || "스냅샷 조회 실패";
+                setServerStates((prev) => {
+                    const next = { ...prev };
+                    targetIds.forEach((tid) => {
+                        next[tid] = {
+                            data: prev[tid]?.data ?? null,
+                            error: errorMsg,
+                            loading: false,
+                            lastUpdated: prev[tid]?.lastUpdated ?? null,
+                            lastAttempted: new Date(),
+                        };
+                    });
+                    return next;
+                });
+            }
+            return;
+        }
+
         const list = serversRef.current;
         if (list.length === 0) return;
         setDiskCycleIdx((prev) => prev + 1);
@@ -173,24 +240,29 @@ const ServerResourceCard = ({
                 return next;
             });
         }
-    }, []);
+    }, [useSnapshot, targetIds, widgetConfig]);
 
-    // stable key for detecting server list changes
-    const serversKey = useMemo(
-        () => servers.map((s) => `${s.id}|${s.host}|${s.osType}`).join(","),
-        [servers],
-    );
+    // stable key for detecting server list changes.
+    // snapshot mode: tracks the target id set.
+    // legacy mode: tracks each server's identity (host/os may change).
+    const pollKey = useMemo(() => (
+        useSnapshot
+            ? `s:${targetIds.join(",")}`
+            : `l:${legacyServers.map((s) => `${s.id}|${s.host}|${s.osType}`).join(",")}`
+    ), [useSnapshot, targetIds, legacyServers]);
+
+    const hasItems = useSnapshot ? targetIds.length > 0 : legacyServers.length > 0;
 
     useEffect(() => {
-        if (servers.length > 0) fetchAllServers();
-    }, [serversKey, fetchAllServers]);
+        if (hasItems) fetchAllServers();
+    }, [pollKey, hasItems, fetchAllServers]);
 
     useEffect(() => {
-        if (servers.length === 0) return;
+        if (!hasItems) return;
         const ms = (refreshIntervalSec ?? 30) * 1000;
         timerRef.current = setInterval(fetchAllServers, ms);
         return () => clearInterval(timerRef.current);
-    }, [serversKey, refreshIntervalSec, fetchAllServers]);
+    }, [pollKey, hasItems, refreshIntervalSec, fetchAllServers]);
 
     /* ── accumulate history for charts ─────────────────────────── */
     useEffect(() => {
@@ -258,6 +330,18 @@ const ServerResourceCard = ({
         [violationsMap],
     );
 
+    /* ── NG(알람) 서버를 목록 상단으로 끌어올림 ───────────────────── */
+    // 판정 기준은 statusCounts 와 동일: 접속 에러(데이터 없음) 또는 임계치 위반.
+    const displayServers = useMemo(
+        () =>
+            sortAlertsFirst(servers, (srv) => {
+                const state = serverStates[srv.id];
+                if (state?.error && !state?.data) return true;
+                return (violationsMap[srv.id] || []).length > 0;
+            }),
+        [servers, serverStates, violationsMap],
+    );
+
     const statusCounts = useMemo(() => {
         let ok = 0,
             ng = 0;
@@ -303,12 +387,21 @@ const ServerResourceCard = ({
         onAlarmChange(totalViolations > 0 || isDead ? "dead" : "live");
     }, [totalViolations, isDead, onAlarmChange]);
 
+    /* ── 갱신 주기마다 목록 스크롤 최상단으로 ─────────────────────── */
+    const scrollRef = useRef(null);
+    useAutoScrollTopOnDataChange(scrollRef, serverStates);
+
     /* ── settings modal state ────────────────────────────────────── */
     const [showSettings, setShowSettings] = useState(false);
     const hasAutoOpened = useRef(false);
 
     useEffect(() => {
-        if (!hasAutoOpened.current && servers.length === 0) {
+        // 새로 추가된 위젯에 대상이 비어있으면 settings 모달을 자동으로 한 번 열어준다.
+        if (
+            !hasAutoOpened.current &&
+            targetIds.length === 0 &&
+            legacyServers.length === 0
+        ) {
             setShowSettings(true);
             hasAutoOpened.current = true;
         }
@@ -321,8 +414,7 @@ const ServerResourceCard = ({
     });
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 30);
     const [titleDraft, setTitleDraft] = useState(title);
-    const [serversDraft, setServersDraft] = useState([]);
-    const [expandedId, setExpandedId] = useState(null);
+    const [selectedTargetIdsDraft, setSelectedTargetIdsDraft] = useState([]);
 
     useEffect(() => {
         setSizeDraft({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 });
@@ -335,15 +427,9 @@ const ServerResourceCard = ({
     }, [title]);
 
     const openSettings = useCallback(() => {
-        setServersDraft(
-            servers.map((s) => ({
-                ...s,
-                criteria: { ...DEFAULT_CRITERIA, ...s.criteria },
-            })),
-        );
-        setExpandedId(null);
+        setSelectedTargetIdsDraft([...targetIds]);
         setShowSettings(true);
-    }, [servers]);
+    }, [targetIds]);
 
     /* ── settings handlers ───────────────────────────────────────── */
     const handleSizeApply = () => {
@@ -374,64 +460,9 @@ const ServerResourceCard = ({
         if (t && t !== title) onWidgetMetaChange?.({ title: t });
     };
 
-    const handleAddServer = () => {
-        if (serversDraft.length >= MAX_SERVERS) {
-            window.alert(`최대 ${MAX_SERVERS}개까지 등록할 수 있습니다.`);
-            return;
-        }
-        const last = serversDraft[serversDraft.length - 1];
-        const defaultOsType = last?.osType || "linux-rhel8";
-        const defaultPort = defaultOsType === "windows-winrm" ? "5985" : "22";
-        const newSrv = {
-            id: generateId(),
-            label: "",
-            osType: defaultOsType,
-            host: "",
-            username: last?.username || "",
-            password: last?.password || "",
-            domain: last?.domain || "",
-            port: last?.port || defaultPort,
-            transport: last?.transport || "",
-            criteria: { ...DEFAULT_CRITERIA },
-        };
-        setServersDraft((p) => [...p, newSrv]);
-        setExpandedId(newSrv.id);
-    };
-
-    const handleDuplicateServer = (srv) => {
-        if (serversDraft.length >= MAX_SERVERS) {
-            window.alert(`최대 ${MAX_SERVERS}개까지 등록할 수 있습니다.`);
-            return;
-        }
-        const dup = {
-            ...srv,
-            id: generateId(),
-            label: incrementLabel(srv.label),
-            criteria: { ...srv.criteria },
-            domain: srv.domain || "",
-        };
-        setServersDraft((p) => [...p, dup]);
-        setExpandedId(dup.id);
-    };
-
-    const handleRemoveServer = (id) => {
-        setServersDraft((p) => p.filter((s) => s.id !== id));
-        if (expandedId === id) setExpandedId(null);
-    };
-
-    const handleUpdateServerField = (id, field, value) => {
-        setServersDraft((p) =>
-            p.map((s) => (s.id === id ? { ...s, [field]: value } : s)),
-        );
-    };
-
-    const handleSaveServers = () => {
-        onWidgetConfigChange?.({ servers: serversDraft });
+    const handleSaveTargets = () => {
+        onWidgetConfigChange?.({ targetIds: selectedTargetIdsDraft });
         setShowSettings(false);
-    };
-
-    const handleToggleExpanded = (id) => {
-        setExpandedId(expandedId === id ? null : id);
     };
 
     /* ── summary info ────────────────────────────────────────────── */
@@ -478,7 +509,7 @@ const ServerResourceCard = ({
                                 onClick={fetchAllServers}
                                 title='새로고침'
                             >
-                                ⟳
+                                <IconRefresh size={14} />
                             </button>
                             <button
                                 type='button'
@@ -486,7 +517,7 @@ const ServerResourceCard = ({
                                 onClick={openSettings}
                                 title='설정'
                             >
-                                ⚙
+                                <IconSettings size={14} />
                             </button>
                             <button
                                 type='button'
@@ -494,7 +525,7 @@ const ServerResourceCard = ({
                                 onClick={onRemove}
                                 title='제거'
                             >
-                                ✕
+                                <IconClose size={14} />
                             </button>
                         </div>
                     </div>
@@ -540,30 +571,24 @@ const ServerResourceCard = ({
                 </div>
             </div>
 
-            {showSettings && (
-                <ServerResourceSettingsModal
-                    title={title}
-                    onClose={() => setShowSettings(false)}
-                    titleDraft={titleDraft}
-                    onTitleDraftChange={setTitleDraft}
-                    onTitleApply={handleTitleApply}
-                    sizeDraft={sizeDraft}
-                    sizeBounds={sizeBounds}
-                    onSizeDraftChange={setSizeDraft}
-                    onSizeApply={handleSizeApply}
-                    intervalDraft={intervalDraft}
-                    onIntervalDraftChange={setIntervalDraft}
-                    onIntervalApply={handleIntervalApply}
-                    serversDraft={serversDraft}
-                    expandedId={expandedId}
-                    onToggleExpanded={handleToggleExpanded}
-                    onAddServer={handleAddServer}
-                    onDuplicateServer={handleDuplicateServer}
-                    onRemoveServer={handleRemoveServer}
-                    onUpdateServerField={handleUpdateServerField}
-                    onSave={handleSaveServers}
-                />
-            )}
+            <ServerResourceSettingsModal
+                open={showSettings}
+                title={title}
+                onClose={() => setShowSettings(false)}
+                titleDraft={titleDraft}
+                onTitleDraftChange={setTitleDraft}
+                onTitleApply={handleTitleApply}
+                sizeDraft={sizeDraft}
+                sizeBounds={sizeBounds}
+                onSizeDraftChange={setSizeDraft}
+                onSizeApply={handleSizeApply}
+                intervalDraft={intervalDraft}
+                onIntervalDraftChange={setIntervalDraft}
+                onIntervalApply={handleIntervalApply}
+                selectedTargetIds={selectedTargetIdsDraft}
+                onSelectedTargetIdsChange={setSelectedTargetIdsDraft}
+                onSave={handleSaveTargets}
+            />
             {detailServer && (
                 <ServerDetailPopup
                     server={detailServer}
@@ -585,8 +610,11 @@ const ServerResourceCard = ({
                         </button>
                     </div>
                 ) : (
-                    <div className={`srv-list srv-list-${displayMode}`}>
-                        {servers.map((srv) => (
+                    <div
+                        className={`srv-list srv-list-${displayMode}`}
+                        ref={scrollRef}
+                    >
+                        {displayServers.map((srv) => (
                             <ServerRow
                                 key={srv.id}
                                 server={srv}

@@ -13,10 +13,13 @@ waitress==3.0.2
 pydantic==2.12.5
 PyJWT==2.12.1
 python-dotenv==1.2.2
+bcrypt==4.2.0
 
 # JDBC bridge (JayDeBeApi depends on JPype1)
+# JPype1 1.6.0 segfaults on Windows + Python 3.12 (access violation on `import jpype`).
+# Pin to 1.5.2 until the upstream fix lands.
 JayDeBeApi==1.2.3
-JPype1==1.6.0
+JPype1==1.5.2
 
 # SSH remote command execution (server resource monitoring)
 paramiko==4.0.0

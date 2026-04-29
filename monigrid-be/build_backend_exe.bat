@@ -44,18 +44,38 @@ if exist "dist\monigrid-be" (
 echo.
 echo [5/6] Ensuring editable runtime files in dist\...
 
-:: config.json — copy only if not already present
+:: initsetting.json — seed from example template if neither the real file
+:: nor an existing deployment copy is present. Contains DB credentials, so
+:: operators MUST edit after first copy.
+if not exist "dist\initsetting.json" (
+    if exist "initsetting.json" (
+        copy /Y "initsetting.json" "dist\initsetting.json"
+        echo   initsetting.json copied
+    ) else if exist "initsetting.example.json" (
+        copy /Y "initsetting.example.json" "dist\initsetting.json"
+        echo   initsetting.json seeded from example — EDIT CREDENTIALS before first run
+    )
+) else (
+    echo   initsetting.json already exists, keeping as-is
+)
+
+:: config.json — only needed for the one-time bootstrap seed. Copy if
+:: missing AND no config.json.bak exists yet (i.e. the settings DB hasn't
+:: been seeded on this host).
 if not exist "dist\config.json" (
-    copy /Y "config.json" "dist\config.json"
-    echo   config.json copied
+    if not exist "dist\config.json.bak" (
+        copy /Y "config.json" "dist\config.json"
+        echo   config.json copied (used only for first-run seed)
+    )
 ) else (
     echo   config.json already exists, keeping as-is
 )
 
-:: sql\ — copy only if not already present
+:: sql\ — only needed for the one-time bootstrap seed. Keep alongside the
+:: exe so first-run seeding can import files into the settings DB.
 if not exist "dist\sql" (
     xcopy /E /I /Q "sql" "dist\sql"
-    echo   sql\ copied
+    echo   sql\ copied (used only for first-run seed)
 ) else (
     echo   sql\ already exists, keeping as-is
 )
@@ -84,8 +104,9 @@ echo   Output folder : dist\
 echo.
 echo   monigrid-be.exe        - executable
 echo   _internal\             - Python runtime (do not edit)
-echo   config.json            - server / DB / API configuration
-echo   sql\                   - SQL query files
+echo   initsetting.json       - settings DB connection (edit before first run)
+echo   config.json            - one-time seed (renamed to .bak after bootstrap)
+echo   sql\                   - one-time seed for SQL queries
 echo   drivers\               - JDBC driver JARs
 echo   logs\                  - log output directory
 echo   .env.example           - environment variable reference

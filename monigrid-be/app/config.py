@@ -139,13 +139,22 @@ def resolve_jars(base_dir: str, jar_paths: list[str]) -> tuple[str, ...]:
 
 def load_app_config(config_path: str) -> AppConfig:
     import json
-    from .__version__ import __version__ as _BUILD_VERSION
-    from .sql_validator import normalize_typo_patterns
 
     with open(config_path, "r", encoding="utf-8") as file:
         raw = json.load(file)
-
     base_dir = os.path.dirname(os.path.abspath(config_path))
+    return build_app_config(raw, base_dir)
+
+
+def build_app_config(raw: dict[str, Any], base_dir: str) -> AppConfig:
+    """Shared core used by both file-based and DB-based config loading.
+
+    `base_dir` is used to resolve relative JDBC jar paths. For the DB path,
+    pass the directory that holds drivers/ (typically the backend root).
+    """
+    from .__version__ import __version__ as _BUILD_VERSION
+    from .sql_validator import normalize_typo_patterns
+
     server = raw.get("server", {})
     auth_section = raw.get("auth", {})
     sql_validation_section = raw.get("sql_validation", {})

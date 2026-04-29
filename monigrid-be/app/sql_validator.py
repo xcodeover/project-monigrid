@@ -1,12 +1,8 @@
 """SQL validation: patterns, typo detection, and SELECT-only enforcement."""
 from __future__ import annotations
 
-import logging
-import os
 import re
 from typing import Any
-
-from .exceptions import SqlFileNotFoundError
 
 
 SELECT_LIKE_PATTERN = re.compile(r"^\s*(select\b|with\b[\s\S]*\bselect\b)", re.IGNORECASE)
@@ -90,11 +86,22 @@ def build_typo_regexes(typo_patterns: dict[str, tuple[str, ...]] | None) -> dict
     return result
 
 
+# MariaDB/MySQL and MS SQL Server permit FROM-less SELECTs (e.g. `SELECT NOW()`,
+# `SELECT 1+1`). Oracle is the outlier — it requires `FROM DUAL` even for scalar
+# SELECTs — so only Oracle enforces the FROM clause here.
+_FROM_REQUIRED_DIALECTS = frozenset({"oracle"})
+
+
 def validate_select_only_sql(
     sql: str,
     typo_patterns: dict[str, tuple[str, ...]] | None = None,
+    db_type: str | None = None,
 ) -> None:
-    """Validate that SQL is a safe SELECT-only query. Raises ValueError on violations."""
+    """Validate that SQL is a safe SELECT-only query. Raises ValueError on violations.
+
+    `db_type` toggles dialect-specific rules. When None (e.g. standalone SQL entries
+    not bound to a connection), the FROM check is skipped to stay permissive.
+    """
     normalized_sql = str(sql or "").replace("\r\n", "\n").strip()
     normalized_sql_for_check = re.sub(r"\s+", " ", normalized_sql)
     typo_regexes = build_typo_regexes(typo_patterns)
@@ -109,8 +116,9 @@ def validate_select_only_sql(
     if not SELECT_LIKE_PATTERN.match(normalized_sql):
         raise ValueError("Only SELECT queries are allowed")
 
-    if not FROM_PATTERN.search(normalized_sql):
-        raise ValueError("FROM clause is required")
+    require_from = (db_type or "").strip().lower() in _FROM_REQUIRED_DIALECTS
+    if require_from and not FROM_PATTERN.search(normalized_sql):
+        raise ValueError("FROM clause is required (Oracle requires FROM DUAL for scalar SELECTs)")
 
     for key, pattern in typo_regexes.items():
         typo_match = pattern.search(normalized_sql)
@@ -141,11 +149,3 @@ def validate_select_only_sql(
         )
 
 
-def load_sql_file(sql_id: str, sql_dir: str, logger: logging.Logger) -> str:
-    """Read SQL from <sql_dir>/<sql_id>.sql on every call (no caching)."""
-    sql_path = os.path.join(sql_dir, f"{sql_id}.sql")
-    if not os.path.isfile(sql_path):
-        logger.warning("SQL file not found sqlId=%s expectedPath=%s", sql_id, sql_path)
-        raise SqlFileNotFoundError(sql_id, sql_path)
-    with open(sql_path, "r", encoding="utf-8") as f:
-        return f.read()

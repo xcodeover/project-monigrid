@@ -1,5 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
+import { IconClose } from "./icons";
 
 /**
  * Row detail popup extracted from ApiCard (SRP).
@@ -52,7 +53,7 @@ const ApiCardRowDetailModal = ({ row, title, onClose }) => {
                         className='close-settings-btn'
                         onClick={onClose}
                     >
-                        ✕
+                        <IconClose size={14} />
                     </button>
                 </div>
                 <div className='row-detail-body'>

@@ -118,7 +118,13 @@ class EndpointCacheManager:
     # ── Background refresh loop ───────────────────────────────────────────
 
     def _refresh_loop(self, api_id: str) -> None:
-        """Periodic refresh — initial warm-up is done in start()."""
+        """Periodic refresh — initial warm-up is done in start().
+
+        Re-resolves the endpoint from the current config on every tick so
+        runtime changes (interval edits, disabling an endpoint, removing
+        it altogether) take effect on the next iteration instead of being
+        frozen to whatever value was captured when the thread started.
+        """
         endpoint = self._config_provider().apis.get(api_id)
         if endpoint is None or not endpoint.enabled:
             return
@@ -128,6 +134,11 @@ class EndpointCacheManager:
                 api_id, endpoint.refresh_interval_sec,
             )
         while not self._stop_event.wait(endpoint.refresh_interval_sec):
+            # Reload the endpoint each tick: a config edit may have changed
+            # the interval, the SQL id, or even disabled/removed this api.
+            endpoint = self._config_provider().apis.get(api_id)
+            if endpoint is None or not endpoint.enabled:
+                break
             if self._logger.isEnabledFor(logging.DEBUG):
                 self._logger.debug("Scheduler tick apiId=%s", api_id)
             self.refresh_endpoint_cache(endpoint, source="scheduler", client_ip="scheduler")

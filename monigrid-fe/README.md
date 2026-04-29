@@ -67,15 +67,29 @@ Electron으로 패키징하여 Windows 데스크탑 앱(EXE 설치 파일)으로
 
 ### 백엔드 설정 관리
 
-- **config.json 에디터** — 대시보드에서 백엔드 설정 직접 편집 (서버, 인증, DB 연결, API 엔드포인트, 로깅, 고급)
+- **백엔드 설정 모달** — 대시보드에서 모든 운영 설정을 한 곳에서 편집 (서버 / 인증 / DB 연결 / **데이터 API** / **서버 리소스** / **네트워크 체크** / 로깅 / 고급 / JSON)
+- **진입 게이트** — 백엔드 설정 진입 시 현재 사용자 비밀번호 재확인 (`BackendConfigPasswordPrompt`) — 자리비움 시 백엔드 설정 변경 사고 방지
 - **탭 기반 UI** — 설정 항목별 탭 전환 + JSON 직접 편집 모드
-- **아코디언 카드** — DB 연결·API 엔드포인트를 접기/펼치기 카드 형식으로 관리
-- **설정 핫 리로드** — 저장 시 서버 재시작 없이 즉시 반영
+- **아코디언 카드** — DB 연결·데이터 API·모니터 대상을 접기/펼치기 카드 형식으로 관리, 항목별 **복제(`Copy`)** / **삭제(`Trash`)** 지원
+- **모니터 대상 통합** — 별도 페이지 없이 백엔드 설정 모달 안의 두 탭(서버 리소스 / 네트워크 체크)에서 카드 단위 즉시 저장
+- **설정 핫 리로드** — 저장 시 서버 재시작 없이 즉시 반영 (서버 리소스/네트워크 체크는 카드 저장 시 즉시 BE 호출)
+
+### 위젯 추가 / 편집
+
+- **데이터 API 위젯** (테이블 / 차트 / 헬스체크 등) — 엔드포인트 URL 직접 입력
+- **서버 리소스 / 네트워크 체크 위젯** — 호스트/자격증명을 위젯에 입력하지 않고, 백엔드 설정에 등록된 모니터 대상 중에서 **체크박스 다중 선택** (`MonitorTargetPicker` 공용 컴포넌트). 추가 모달 / ⚙ 설정 모달 양쪽에서 동일 픽커 사용
 
 ### 인증 & 보안
 
 - JWT 기반 로그인·세션 관리
 - 401 응답 시 자동 로그아웃
+- **모든 비밀번호 입력 칸 평문 토글** — `PasswordInput` 공용 컴포넌트 (눈 모양 아이콘)
+- **사용자 계정 관리 페이지** (관리자 전용) — `/admin/users` API 연동, 헤더의 사용자 아이콘 버튼 → `UserManagementPage`
+- **사용자별 대시보드 상태** — 위젯 레이아웃·임계값·알람 소리를 `monigrid_user_preferences` 에 저장하여 계정 단위로 복원 (다른 브라우저에서도 동일 화면)
+
+### UI/UX
+
+- **Lucide 스타일 아이콘 통일** — 1.75px stroke 인라인 SVG 모음 (`components/icons.jsx`). 헤더 툴바·위젯 헤더·모달 닫기·카드 액션 등 모든 액션 버튼에 적용. emoji/유니코드 글자 아이콘은 더 이상 사용하지 않습니다.
 
 ---
 
@@ -109,12 +123,19 @@ monigrid-fe/
 │   │   ├── LineChartCard.jsx        # 시간대별 추이 라인차트 위젯
 │   │   ├── BarChartCard.jsx         # 기준별 수량 바차트 위젯
 │   │   ├── StatusListCard.jsx       # API 상태 리스트 위젯
-│   │   ├── NetworkTestCard.jsx      # Ping/Telnet 네트워크 테스트 위젯
-│   │   ├── ServerResourceCard.jsx   # 서버 리소스 모니터링 위젯
+│   │   ├── NetworkTestCard.jsx      # 네트워크 테스트 위젯 (모니터 대상 픽커 사용)
+│   │   ├── ServerResourceCard.jsx   # 서버 리소스 위젯 (모니터 대상 픽커 사용)
+│   │   ├── ServerResourceSettingsModal.jsx  # 서버 리소스 위젯 설정 모달
+│   │   ├── ServerDetailPopup.jsx    # 서버 상세 팝업
 │   │   ├── DynamicTable.jsx         # 동적 테이블 (정렬, 색상, 필터, 행 이벤트)
 │   │   ├── AlarmBanner.jsx          # 상단 알람 배너
 │   │   ├── SqlEditorModal.jsx       # SQL Editor 모달
-│   │   ├── ConfigEditorModal.jsx    # 백엔드 config.json 에디터 모달
+│   │   ├── ConfigEditorModal.jsx    # 백엔드 설정 편집 모달 (탭: 서버/인증/DB/데이터API/서버 리소스/네트워크 체크/로깅/고급/JSON)
+│   │   ├── MonitorTargetsTab.jsx    # 백엔드 설정의 서버 리소스 / 네트워크 체크 탭 (targetType prop) ★
+│   │   ├── MonitorTargetPicker.jsx  # 모니터 대상 다중 선택 픽커 (위젯 추가/⚙ 모달 공용) ★
+│   │   ├── BackendConfigPasswordPrompt.jsx  # 백엔드 설정 진입 비밀번호 재확인 게이트 ★
+│   │   ├── PasswordInput.jsx        # 눈모양 토글이 있는 공용 비밀번호 입력 ★
+│   │   ├── icons.jsx                # Lucide 스타일 인라인 SVG 아이콘 모음 ★
 │   │   ├── IncidentTimelineCard.jsx # 장애 타임라인
 │   │   └── *.css                    # 컴포넌트별 스타일
 │   ├── hooks/
@@ -125,11 +146,16 @@ monigrid-fe/
 │   ├── pages/
 │   │   ├── DashboardPage.jsx        # 메인 대시보드
 │   │   ├── DashboardPage.css        # 대시보드 스타일
+│   │   ├── DashboardHeader.jsx      # 헤더 바 (toolbar, 사용자 메뉴)
 │   │   ├── LoginPage.jsx            # 로그인 페이지
 │   │   ├── LoginPage.css            # 로그인 스타일
 │   │   ├── AlertHistoryPage.jsx     # 알람 이력 페이지
 │   │   ├── LogViewerPage.jsx        # 서버 로그 뷰어
-│   │   └── LogViewerPage.css        # 로그 뷰어 스타일
+│   │   ├── LogViewerPage.css        # 로그 뷰어 스타일
+│   │   ├── UserManagementPage.jsx   # 사용자 계정 관리 (admin)
+│   │   └── UserManagementPage.css
+│   │   # 참고: 모니터 대상 관리는 ConfigEditorModal 의 두 탭(서버 리소스/네트워크 체크)으로 통합되어
+│   │   # 별도 MonitorTargetsPage 라우트(`/monitor-targets`) 는 v2.2+ 에서 제거되었습니다.
 │   ├── services/
 │   │   ├── http.js                  # Axios 인스턴스 (인터셉터 포함)
 │   │   ├── api.js                   # API URL 헬퍼
@@ -868,22 +894,27 @@ Ping 또는 TCP 연결(Telnet) 테스트를 수행합니다.
 
 관리자(admin) 전용 기능으로, 대시보드에서 백엔드의 `config.json`을 직접 편집할 수 있습니다.
 
+**진입 게이트:** 모달이 열리기 전에 현재 사용자 비밀번호 재확인을 요구합니다 (`BackendConfigPasswordPrompt`). 통과 시 토큰이 자동으로 갱신됩니다.
+
 **탭 구성:**
 
 | 탭 | 설명 |
 |----|------|
 | 서버 | Host/Port (읽기 전용), Thread Pool Size, Refresh Interval, Query Timeout |
-| 인증 | Username, Password |
-| DB 연결 | DB 연결 목록 — 접기/펼치기 카드 형식, Connection ID, DB 타입, JDBC URL, 계정 |
-| API 엔드포인트 | API 목록 — 접기/펼치기 카드 형식, API ID, REST 경로, Connection, SQL ID, 갱신 주기 |
+| 인증 | Username, Password (눈모양 토글) |
+| DB 연결 | DB 연결 목록 — 접기/펼치기 카드, 카드별 복제/삭제, Connection ID·DB 타입·JDBC URL·계정 |
+| 데이터 API | 사용자 정의 데이터 API 목록 — 접기/펼치기 카드, 카드별 복제/삭제, API ID·REST 경로·Connection·SQL ID·갱신 주기 |
+| 서버 리소스 | `monigrid_monitor_targets` 중 `type=server_resource` — 카드 단위 즉시 저장 (`/dashboard/monitor-targets`), 추가/복제/삭제 |
+| 네트워크 체크 | `monigrid_monitor_targets` 중 `type=network` — 카드 단위 즉시 저장, 추가/복제/삭제 |
 | 로깅 | Log Directory, File Prefix, Log Level, Retention, Slow Query Threshold |
 | 고급 | Global JDBC JARs, SQL Validation (typo patterns) |
-| JSON | 전체 config.json을 raw JSON으로 직접 편집 |
+| JSON | 전체 설정을 raw JSON으로 직접 편집 |
 
 **카드 접기/펼치기:**
-- DB 연결 및 API 엔드포인트 카드는 헤더를 클릭하면 접거나 펼 수 있습니다
-- ▶ 화살표가 접힌 상태를, ▼ 화살표가 펼쳐진 상태를 나타냅니다
-- 카드가 접힌 상태에서도 Connection ID/API ID와 DB 타입/REST 경로 뱃지가 표시됩니다
+- DB 연결, 데이터 API, 서버 리소스, 네트워크 체크 카드는 헤더를 클릭하면 접거나 펼 수 있습니다
+- chevron 아이콘이 접힌(▶) / 펼친(▼) 상태를 나타내며, Lucide 스타일 SVG 입니다
+- 카드가 접힌 상태에서도 ID·타입·호스트 등 식별 정보 뱃지가 표시됩니다
+- 변경된 카드는 `변경됨`, 신규 카드는 `신규` 배지가 헤더에 추가됩니다 (서버 리소스 / 네트워크 체크 탭)
 
 **저장 & 적용:**
 - **저장 & 적용** 버튼을 누르면 백엔드에 즉시 반영됩니다 (서버 재시작 불필요)

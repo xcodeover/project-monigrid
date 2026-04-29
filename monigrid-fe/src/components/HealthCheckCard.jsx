@@ -1,16 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
+import { clamp } from "./widgetUtils.js";
+import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./HealthCheckCard.css";
-
-const clamp = (value, min, max, fallback) => {
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue)) {
-        return fallback;
-    }
-    return Math.min(max, Math.max(min, Math.floor(numericValue)));
-};
 
 const HealthCheckCard = ({
     title,
@@ -142,29 +136,16 @@ const HealthCheckCard = ({
         setShowSettings(false);
     };
 
-    const settingsPopup = showSettings ? (
-        <div
-            className='settings-overlay'
+    // No global apply/cancel footer here: each section has its own
+    // per-section apply button so the user can save piece by piece. We pass
+    // `onApply={undefined}` so the shared modal wrapper omits the footer.
+    const settingsPopup = (
+        <WidgetSettingsModal
+            open={showSettings}
+            onClose={() => setShowSettings(false)}
+            title='위젯 설정'
+            subtitle={title}
         >
-            <div
-                className='settings-popup'
-                onClick={(event) => event.stopPropagation()}
-            >
-                <div className='settings-popup-header'>
-                    <div>
-                        <h5>위젯 설정</h5>
-                        <p>{title}</p>
-                    </div>
-                    <button
-                        type='button'
-                        className='close-settings-btn'
-                        onClick={() => setShowSettings(false)}
-                    >
-                        ✕
-                    </button>
-                </div>
-
-                <div className='settings-popup-body'>
                     <div className='settings-section'>
                         <h6>위젯 정보</h6>
                         <div className='size-editor widget-meta-editor'>
@@ -267,10 +248,8 @@ const HealthCheckCard = ({
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>
-    ) : null;
+        </WidgetSettingsModal>
+    );
 
     return (
         <div className='api-card'>
@@ -292,7 +271,7 @@ const HealthCheckCard = ({
                                 }}
                                 title='새로고침'
                             >
-                                ⟳
+                                <IconRefresh size={14} />
                             </button>
                             <button
                                 type='button'
@@ -303,7 +282,7 @@ const HealthCheckCard = ({
                                 }}
                                 title='설정'
                             >
-                                ⚙
+                                <IconSettings size={14} />
                             </button>
                             <button
                                 type='button'
@@ -314,7 +293,7 @@ const HealthCheckCard = ({
                                 }}
                                 title='제거'
                             >
-                                ✕
+                                <IconClose size={14} />
                             </button>
                         </div>
                     </div>
@@ -335,7 +314,7 @@ const HealthCheckCard = ({
                 </div>
             </div>
 
-            {settingsPopup && createPortal(settingsPopup, document.body)}
+            {settingsPopup}
 
             <div className='api-card-content'>
                 <div className='health-widget-content'>

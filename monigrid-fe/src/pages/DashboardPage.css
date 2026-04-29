@@ -28,6 +28,121 @@
     position: sticky;
     top: 0;
     z-index: 25;
+    transition:
+        padding 0.28s ease,
+        gap 0.28s ease;
+}
+
+.dashboard-header-compact {
+    padding: 8px 18px;
+    gap: 12px;
+}
+
+.header-subtitle-row {
+    overflow: hidden;
+    max-height: 40px;
+    transition:
+        max-height 0.28s ease,
+        opacity 0.2s ease,
+        transform 0.28s ease,
+        margin 0.28s ease;
+}
+
+.dashboard-header-compact .header-subtitle-row {
+    max-height: 0;
+    opacity: 0;
+    margin: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+}
+
+/* Compact mode: pin the title to the same 34px row the button icons occupy
+ * so their vertical centers line up exactly (buttons don't move — title
+ * box is resized to match). */
+.dashboard-header-compact .header-left {
+    display: flex;
+    align-items: center;
+    min-height: 34px;
+}
+
+.dashboard-header-compact .header-left h1.app-title {
+    margin: 0;
+    height: 34px;
+    line-height: 1;
+    align-items: center;
+}
+
+.dashboard-header-compact .app-title-text {
+    display: inline-flex;
+    align-items: center;
+    height: 34px;
+    line-height: 1;
+}
+
+.dashboard-header-compact .header-user-id,
+.dashboard-header-compact .logout-btn {
+    display: none;
+}
+
+/* Compact mode: fold info-row + controls-row into a single horizontal row,
+ * and reorder so the fullscreen toggle sits at the very far right. */
+.dashboard-header-compact .header-right {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.dashboard-header-compact .header-info-row,
+.dashboard-header-compact .header-controls-row {
+    width: auto;
+}
+
+.dashboard-header-compact .header-controls-row {
+    order: 1;
+}
+
+.dashboard-header-compact .header-info-row {
+    order: 2;
+}
+
+/* Logout/fullscreen icon-only header buttons — same chrome as toolbar buttons
+ * but slightly smaller chrome footprint and centered SVG content. */
+.logout-btn.icon,
+.fullscreen-btn.icon {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(255, 255, 255, 0.03);
+    color: #b7c3d4;
+    font-size: 15px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.logout-btn.icon:hover,
+.fullscreen-btn.icon:hover {
+    border-color: rgba(25, 160, 255, 0.28);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.fullscreen-btn.icon.active {
+    background: rgba(25, 144, 255, 0.22);
+    border-color: rgba(25, 144, 255, 0.6);
+    color: #60a5fa;
+    box-shadow: 0 0 0 2px rgba(25, 144, 255, 0.14);
+}
+
+.fullscreen-btn.icon.active:hover {
+    background: rgba(25, 144, 255, 0.28);
+    border-color: rgba(25, 144, 255, 0.75);
 }
 
 .header-left h1 {
@@ -389,6 +504,11 @@
     font-style: italic;
 }
 
+.form-hint-error {
+    color: #fca5a5;
+    font-style: normal;
+}
+
 .inline-input-group {
     display: grid;
     grid-template-columns: 1fr auto;
@@ -445,43 +565,6 @@
     background: rgba(148, 163, 184, 0.12);
     border-color: rgba(148, 163, 184, 0.35);
     color: var(--text-secondary, #94a3b8);
-}
-
-.zoom-control-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.zoom-range-input {
-    flex: 1;
-    accent-color: #1690ff;
-    cursor: pointer;
-    height: 4px;
-}
-
-.zoom-range-input::-webkit-slider-thumb {
-    width: 16px;
-    height: 16px;
-}
-
-.zoom-warning {
-    display: block;
-    margin-top: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    color: #f59e0b;
-}
-
-/* ── Disable widget buttons when zoom ≠ 100% ──────────────── */
-
-.dashboard-content.zoom-scaled .compact-icon-btn,
-.dashboard-content.zoom-scaled .lc-action-btn,
-.dashboard-content.zoom-scaled .lc-range-btn,
-.dashboard-content.zoom-scaled .bc-action-btn,
-.dashboard-content.zoom-scaled .alert-pill {
-    pointer-events: none;
-    opacity: 0.35;
 }
 
 .config-json-textarea {

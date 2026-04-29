@@ -2,12 +2,21 @@
 .DS_Store
 Thumbs.db
 
+# ── Editors / IDE ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.pyo
 .env
-.env.local
+.env.*
+!.env.example
+!monigrid-fe/.env.example
 
 # ── PyInstaller build artifacts ───────────────────────────────────────────────
 monigrid-be/build/
@@ -20,6 +29,10 @@ monigrid-be/pyinstaller_build.log
 node_modules/
 monigrid-fe/dist/
 monigrid-fe/release/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # ── Release packages ──────────────────────────────────────────────────────────
 *.zip
@@ -29,5 +42,30 @@ monigrid-fe/release/
 monigrid-be/logs/
 *.log
 
+# ── Settings bootstrap (local only; contains DB credentials) ─────────────────
+# Ignore every initsetting*.json / *.bak variant, but keep the example template.
+monigrid-be/initsetting*.json
+monigrid-be/initsetting*.json.bak
+!monigrid-be/initsetting.example.json
+
+# ── Seed config / SQL (contains DB credentials before first boot) ────────────
+# config.json 은 최초 기동 시 시드되어 .bak 으로 이름이 바뀌지만, 시드 전 단계에서
+# DB 자격증명이 들어가므로 git 에는 올라가지 않도록 한다. example/template 만 허용.
+monigrid-be/config.json
+monigrid-be/config.json.bak
+!monigrid-be/config.example.json
+monigrid-be/sql.bak/
+
+# ── Local databases / dumps ──────────────────────────────────────────────────
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.bak
+
+# ── JDBC drivers (binary, license-bound) ─────────────────────────────────────
+monigrid-be/drivers/*.jar
+
 # ── Temp ─────────────────────────────────────────────────────────────────────
 temp/
+tmp/

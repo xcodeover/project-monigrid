@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { dashboardService } from "../services/api";
+import { IconRefresh } from "../components/icons";
 import "./LogViewerPage.css";
 
 const getToday = () => new Date().toISOString().split("T")[0];
@@ -156,7 +157,7 @@ export default function LogViewerPage() {
                             title='로그 새로고침'
                             disabled={loading}
                         >
-                            <span className='toolbar-btn-icon'>⟳</span>
+                            <IconRefresh size={16} />
                         </button>
                     </div>
                 </div>

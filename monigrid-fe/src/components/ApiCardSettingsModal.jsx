@@ -1,16 +1,19 @@
 import React from "react";
-import { createPortal } from "react-dom";
 import { getDefaultColumnWidth } from "./apiCardHelpers";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 
 /**
  * Widget settings popup extracted from ApiCard (SRP).
  *
  * Receives every piece of state and every handler as props — owns no
  * state of its own. This makes the parent ApiCard the single source of
- * truth and lets us test the settings UI in isolation.
+ * truth and lets us test the settings UI in isolation. Each section has
+ * its own apply button so the shared WidgetSettingsModal wrapper is used
+ * without `onApply` (footer is suppressed).
  */
 const ApiCardSettingsModal = ({
+    open,
     title,
     onClose,
     // Widget meta editor
@@ -45,27 +48,13 @@ const ApiCardSettingsModal = ({
     criteriaMap,
     onCriteriaChange,
 }) => {
-    return createPortal(
-        <div className='settings-overlay'>
-            <div
-                className='settings-popup'
-                onClick={(event) => event.stopPropagation()}
-            >
-                <div className='settings-popup-header'>
-                    <div>
-                        <h5>위젯 설정</h5>
-                        <p>{title}</p>
-                    </div>
-                    <button
-                        type='button'
-                        className='close-settings-btn'
-                        onClick={onClose}
-                    >
-                        ✕
-                    </button>
-                </div>
-
-                <div className='settings-popup-body'>
+    return (
+        <WidgetSettingsModal
+            open={open}
+            onClose={onClose}
+            title='위젯 설정'
+            subtitle={title}
+        >
                     <div className='settings-section'>
                         <h6>위젯 정보</h6>
                         <div className='size-editor widget-meta-editor'>
@@ -317,10 +306,7 @@ const ApiCardSettingsModal = ({
                             })}
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>,
-        document.body,
+        </WidgetSettingsModal>
     );
 };
 

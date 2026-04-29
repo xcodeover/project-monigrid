@@ -14,6 +14,7 @@ import {
     MAX_HISTORY,
     formatChartTime,
 } from "./serverResourceHelpers";
+import { IconClose } from "./icons";
 
 /**
  * Real-time chart modal for a single server (SRP).
@@ -89,7 +90,7 @@ const ServerDetailPopup = ({ server, history, onClose }) => {
                         className='close-settings-btn'
                         onClick={onClose}
                     >
-                        ✕
+                        <IconClose size={14} />
                     </button>
                 </div>
 

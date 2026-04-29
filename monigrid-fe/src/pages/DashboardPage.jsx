@@ -9,6 +9,7 @@ import {
     rememberApiBaseUrl,
     resolveEndpointWithBase,
 } from "../services/api";
+import { monitorService } from "../services/dashboardService";
 import { API_BASE_URL as BUILDTIME_API_BASE_URL } from "../services/http";
 import {
     countRowsMatchingCriteria,
@@ -22,20 +23,18 @@ import { useAlarmStore } from "../store/alarmStore";
 import AlarmBanner from "../components/AlarmBanner";
 import SqlEditorModal from "../components/SqlEditorModal";
 import ConfigEditorModal from "../components/ConfigEditorModal";
+import BackendConfigPasswordPrompt from "../components/BackendConfigPasswordPrompt";
 import DashboardHeader from "./DashboardHeader";
 import AddApiModal from "./AddApiModal";
 import DashboardSettingsModal from "./DashboardSettingsModal";
 import WidgetRenderer from "./WidgetRenderer";
 import {
-    DEFAULT_CONTENT_ZOOM,
     DEFAULT_REFRESH_INTERVAL_SEC,
     DEFAULT_WIDGET_FONT_SIZE,
     DEFAULT_WIDGET_LAYOUT,
     GRID_COLUMNS,
-    MAX_CONTENT_ZOOM,
     MAX_WIDGET_H,
     MAX_WIDGET_W,
-    MIN_CONTENT_ZOOM,
     MIN_WIDGET_H,
     MIN_WIDGET_W,
     WIDGET_TYPE_NETWORK_TEST,
@@ -91,6 +90,15 @@ const DashboardPage = () => {
     const importDashboardConfig = useDashboardStore(
         (state) => state.importDashboardConfig,
     );
+    const syncPreferencesFromServer = useDashboardStore(
+        (state) => state.syncPreferencesFromServer,
+    );
+    const disableServerSync = useDashboardStore(
+        (state) => state.disableServerSync,
+    );
+    const flushPendingPush = useDashboardStore(
+        (state) => state.flushPendingPush,
+    );
 
     // 빌드 시점 기본값 해석은 services/http.js에 일원화 (same-origin 모드 포함)
     const rememberedApiBaseUrl =
@@ -100,29 +108,83 @@ const DashboardPage = () => {
     const [showDashboardSettings, setShowDashboardSettings] = useState(false);
     const [showSqlEditor, setShowSqlEditor] = useState(false);
     const [showConfigEditor, setShowConfigEditor] = useState(false);
+    const [showConfigPasswordPrompt, setShowConfigPasswordPrompt] = useState(false);
     const [newApiForm, setNewApiForm] = useState({
         title: "",
         endpoint: "",
         type: WIDGET_TYPE_TABLE,
         endpointsText: `${rememberedApiBaseUrl}/health\n${rememberedApiBaseUrl}/dashboard/endpoints`,
+        targetIds: [],
     });
+    const [monitorTargets, setMonitorTargets] = useState([]);
+    const [monitorTargetsError, setMonitorTargetsError] = useState(null);
     const [fontSizeDraft, setFontSizeDraft] = useState(
         dashboardSettings?.widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE,
-    );
-    const [zoomDraft, setZoomDraft] = useState(
-        dashboardSettings?.contentZoom ?? DEFAULT_CONTENT_ZOOM,
     );
     const [configJsonDraft, setConfigJsonDraft] = useState("");
     const [configErrorMessage, setConfigErrorMessage] = useState("");
     const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(rememberedApiBaseUrl);
     const [apiBaseUrlSaved, setApiBaseUrlSaved] = useState(false);
     const [backendVersion, setBackendVersion] = useState(null);
+    const [isFullscreen, setIsFullscreen] = useState(
+        () => typeof document !== "undefined" && !!document.fullscreenElement,
+    );
+
+    useEffect(() => {
+        const handleFullscreenChange = () => {
+            setIsFullscreen(!!document.fullscreenElement);
+        };
+        document.addEventListener("fullscreenchange", handleFullscreenChange);
+        return () => {
+            document.removeEventListener(
+                "fullscreenchange",
+                handleFullscreenChange,
+            );
+        };
+    }, []);
+
+    // AddApiModal 이 열릴 때 모니터 대상 목록을 로드해 둔다.
+    // 서버 리소스/네트워크 위젯은 이 목록에서 골라서만 추가할 수 있다.
+    useEffect(() => {
+        if (!showAddApi) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const data = await monitorService.listTargets();
+                if (cancelled) return;
+                setMonitorTargets(Array.isArray(data?.targets) ? data.targets : []);
+                setMonitorTargetsError(null);
+            } catch (err) {
+                if (cancelled) return;
+                setMonitorTargets([]);
+                setMonitorTargetsError(
+                    err?.response?.data?.message ||
+                        err?.message ||
+                        "모니터 대상을 불러올 수 없습니다.",
+                );
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [showAddApi]);
+
+    const handleToggleFullscreen = () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen?.().catch(() => {});
+        } else {
+            document.exitFullscreen?.().catch(() => {});
+        }
+    };
 
     useEffect(() => {
         let cancelled = false;
         const fetchBackendVersion = async () => {
             try {
-                const res = await dashboardService.getApiData(null, "/health");
+                // /dashboard/health (authenticated) instead of /health
+                // (public liveness probe). The latter intentionally no
+                // longer leaks the deployed build version.
+                const res = await dashboardService.getApiData(null, "/dashboard/health");
                 if (!cancelled && res?.version) setBackendVersion(res.version);
             } catch {
                 /* ignore */
@@ -140,9 +202,12 @@ const DashboardPage = () => {
         );
     }, [dashboardSettings?.widgetFontSize]);
 
+    // Hydrate the store with server-side preferences once per session
+    // (keyed by username so switching users re-fetches).
     useEffect(() => {
-        setZoomDraft(dashboardSettings?.contentZoom ?? DEFAULT_CONTENT_ZOOM);
-    }, [dashboardSettings?.contentZoom]);
+        if (!user?.username) return;
+        syncPreferencesFromServer();
+    }, [user?.username, syncPreferencesFromServer]);
 
     useEffect(() => {
         if (widgets !== null) {
@@ -240,15 +305,18 @@ const DashboardPage = () => {
         });
     }, [results, dashboardWidgets, reportWidgetStatus]);
 
-    const gridLayout = useMemo(
-        () =>
-            dashboardWidgets.map((widget) =>
-                normalizeWidgetLayout(widget, layouts[widget.id]),
-            ),
-        [dashboardWidgets, layouts],
+    // Intentionally not memoised: `layouts` is replaced with a new object
+    // reference on every save (react-grid-layout's onDragStop fires many
+    // times per gesture), so the previous useMemo deps changed almost as
+    // often as the parent re-rendered. The memo had cache-miss overhead
+    // without ever serving a hit. `normalizeWidgetLayout` is a cheap
+    // O(widgets) map of small objects.
+    const gridLayout = dashboardWidgets.map((widget) =>
+        normalizeWidgetLayout(widget, layouts[widget.id]),
     );
 
     const handleLogout = () => {
+        disableServerSync();
         logout();
         navigate("/login");
     };
@@ -283,7 +351,20 @@ const DashboardPage = () => {
             return;
         }
 
-        const widgetId = `api-${Date.now()}`;
+        // 서버 리소스/네트워크 위젯은 백엔드에 등록된 모니터 대상을 1개 이상 선택해야 한다.
+        const selectedTargetIds = Array.isArray(newApiForm.targetIds)
+            ? newApiForm.targetIds.filter(Boolean)
+            : [];
+        if (
+            (isServerResourceWidget || isNetworkTestWidget) &&
+            selectedTargetIds.length === 0
+        ) {
+            return;
+        }
+
+        // Date.now() alone collides on rapid double-click — append a small
+        // random tail to keep ids unique within the same millisecond.
+        const widgetId = `api-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const nextLayout = {
             ...DEFAULT_WIDGET_LAYOUT,
             y: dashboardWidgets.length * 4,
@@ -317,9 +398,11 @@ const DashboardPage = () => {
                   }
                 : undefined,
             serverConfig: isServerResourceWidget
-                ? { servers: [] }
+                ? { targetIds: selectedTargetIds }
                 : undefined,
-            networkConfig: isNetworkTestWidget ? { targets: [] } : undefined,
+            networkConfig: isNetworkTestWidget
+                ? { targetIds: selectedTargetIds }
+                : undefined,
         };
 
         addWidget(newWidget);
@@ -329,6 +412,7 @@ const DashboardPage = () => {
             endpoint: "",
             type: WIDGET_TYPE_TABLE,
             endpointsText: `${rememberedApiBaseUrl}/health\n${rememberedApiBaseUrl}/dashboard/endpoints`,
+            targetIds: [],
         });
         setShowAddApi(false);
     };
@@ -481,27 +565,28 @@ const DashboardPage = () => {
             18,
             DEFAULT_WIDGET_FONT_SIZE,
         );
-        const normalizedZoom = clampValue(
-            zoomDraft,
-            MIN_CONTENT_ZOOM,
-            MAX_CONTENT_ZOOM,
-            DEFAULT_CONTENT_ZOOM,
-        );
-
         setFontSizeDraft(normalizedFontSize);
-        setZoomDraft(normalizedZoom);
         setDashboardSettings({
             widgetFontSize: normalizedFontSize,
-            contentZoom: normalizedZoom,
         });
     };
 
-    const handleApplyApiBaseUrl = () => {
+    const handleApplyApiBaseUrl = async () => {
         const trimmed = apiBaseUrlDraft.trim().replace(/\/+$/, "");
         if (!trimmed) return;
         rememberApiBaseUrl(trimmed);
         setApiBaseUrlSaved(true);
-        setTimeout(() => setApiBaseUrlSaved(false), 2000);
+        // Stop new debounced pushes from being scheduled, then flush whatever
+        // is already in-flight so the user's most recent layout edits aren't
+        // dropped by the impending page reload.
+        try {
+            disableServerSync();
+            await flushPendingPush();
+        } catch {
+            // flushPendingPush already swallows network errors; reaching here
+            // would mean a programming error — fall through and reload anyway
+            // rather than trapping the user on the modal.
+        }
         window.location.reload();
     };
 
@@ -554,8 +639,6 @@ const DashboardPage = () => {
         setApiBaseUrlSaved(false);
     };
 
-    const contentZoom =
-        dashboardSettings?.contentZoom ?? DEFAULT_CONTENT_ZOOM;
     const widgetFontSize =
         dashboardSettings?.widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE;
 
@@ -565,10 +648,13 @@ const DashboardPage = () => {
                 widgetCount={dashboardWidgets.length}
                 user={user}
                 isAdmin={isAdmin}
+                isFullscreen={isFullscreen}
+                onToggleFullscreen={handleToggleFullscreen}
                 onOpenSettings={() => setShowDashboardSettings(true)}
-                onOpenConfigEditor={() => setShowConfigEditor(true)}
+                onOpenConfigEditor={() => setShowConfigPasswordPrompt(true)}
                 onOpenAddApi={() => setShowAddApi(true)}
                 onOpenSqlEditor={() => setShowSqlEditor(true)}
+                onOpenUserManagement={() => navigate("/users")}
                 onRefreshAll={() => refetchAll()}
                 onOpenLogs={() => navigate("/logs")}
                 onLogout={handleLogout}
@@ -580,6 +666,8 @@ const DashboardPage = () => {
                     onChange={setNewApiForm}
                     onSubmit={handleAddApi}
                     onClose={() => setShowAddApi(false)}
+                    monitorTargets={monitorTargets}
+                    monitorTargetsError={monitorTargetsError}
                 />
             )}
 
@@ -592,8 +680,6 @@ const DashboardPage = () => {
                     onApplyApiBaseUrl={handleApplyApiBaseUrl}
                     fontSizeDraft={fontSizeDraft}
                     onFontSizeDraftChange={setFontSizeDraft}
-                    zoomDraft={zoomDraft}
-                    onZoomDraftChange={setZoomDraft}
                     onApplyDashboardSettings={handleApplyDashboardSettings}
                     alarmSound={alarmSound}
                     soundEnabled={soundEnabled}
@@ -615,6 +701,17 @@ const DashboardPage = () => {
                 />
             )}
 
+            {isAdmin && (
+                <BackendConfigPasswordPrompt
+                    open={showConfigPasswordPrompt}
+                    onClose={() => setShowConfigPasswordPrompt(false)}
+                    onSuccess={() => {
+                        setShowConfigPasswordPrompt(false);
+                        setShowConfigEditor(true);
+                    }}
+                />
+            )}
+
             {showConfigEditor && isAdmin && (
                 <ConfigEditorModal
                     open={showConfigEditor}
@@ -623,32 +720,20 @@ const DashboardPage = () => {
             )}
 
             <div className='dashboard-content-wrapper'>
-                <div
-                    className={`dashboard-content${contentZoom !== 100 ? " zoom-scaled" : ""}`}
-                    style={(() => {
-                        const s = contentZoom / 100;
-                        return s !== 1
-                            ? {
-                                  transform: `scale(${s})`,
-                                  transformOrigin: "top left",
-                                  width: `${100 / s}%`,
-                              }
-                            : undefined;
-                    })()}
-                >
+                <div className='dashboard-content'>
                     {dashboardWidgets.length === 0 ? (
                         <div className='empty-state'>
                             <div className='empty-icon'>📭</div>
-                            <h2>API 엔드포인트를 추가하세요</h2>
+                            <h2>위젯을 추가하세요</h2>
                             <p>
-                                모니터링할 REST API 엔드포인트를 추가하여
-                                대시보드를 시작합니다.
+                                모니터링할 데이터 API · 서버 리소스 · 네트워크 체크
+                                위젯을 추가하여 대시보드를 시작합니다.
                             </p>
                             <button
                                 className='primary-btn'
                                 onClick={() => setShowAddApi(true)}
                             >
-                                API 추가
+                                위젯 추가
                             </button>
                         </div>
                     ) : (
@@ -680,7 +765,6 @@ const DashboardPage = () => {
                             containerPadding={[0, 0]}
                             draggableHandle='.api-card-header'
                             resizeHandles={["se"]}
-                            transformScale={contentZoom / 100}
                             onDragStop={handleLayoutCommit}
                             onResizeStop={handleLayoutCommit}
                         >

@@ -2,7 +2,7 @@
  * AlarmBanner: fixed top bar shown when any widget is in "dead" state.
  * Plays a Web Audio API beep on alarm. Admin can acknowledge or toggle sound.
  */
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useCallback, useMemo } from "react";
 import { useAlarmStore } from "../store/alarmStore.js";
 import "./AlarmBanner.css";
 
@@ -119,10 +119,16 @@ const AlarmBanner = () => {
         return stopBeepLoop;
     }, [isAlarming, acknowledged, soundEnabled, alarmedWidgets.size, stopBeepLoop]);
 
-    if (!isAlarming) return null;
-
-    const widgetList = [...alarmedWidgets].slice(0, 5).join(", ");
+    // Memoise the formatted alarm list so the spread + slice + join doesn't
+    // run on every render of the parent (this banner re-renders whenever
+    // any dashboard widget updates).
+    const widgetList = useMemo(
+        () => [...alarmedWidgets].slice(0, 5).join(", "),
+        [alarmedWidgets],
+    );
     const extra = alarmedWidgets.size > 5 ? ` 외 ${alarmedWidgets.size - 5}개` : "";
+
+    if (!isAlarming) return null;
 
     return (
         <div className={`alarm-banner${acknowledged ? " muted" : ""}`}>

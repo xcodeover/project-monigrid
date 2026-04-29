@@ -25,6 +25,32 @@
     --radius-lg: 18px;
     --radius-md: 14px;
     --radius-sm: 10px;
+
+    /* Widget card surface tokens.
+       The same gradient + border + shadow + blur set used to be hard-coded
+       in ApiCard.css, BarChartCard.css, LineChartCard.css independently —
+       fixing the brand color meant editing all three. These tokens give
+       every card surface (and the header strip on top of it) a single
+       source of truth. */
+    --card-bg:
+        linear-gradient(
+            180deg,
+            rgba(255, 255, 255, 0.025),
+            rgba(255, 255, 255, 0.01)
+        ),
+        rgba(21, 28, 40, 0.94);
+    --card-header-bg:
+        linear-gradient(
+            180deg,
+            rgba(255, 255, 255, 0.025),
+            rgba(255, 255, 255, 0.012)
+        ),
+        rgba(15, 20, 29, 0.92);
+    --card-border: 1px solid rgba(148, 163, 184, 0.12);
+    --card-header-border: 1px solid rgba(148, 163, 184, 0.08);
+    --card-shadow: 0 16px 40px rgba(3, 8, 20, 0.26);
+    --card-blur: blur(14px);
+    --card-radius: 10px;
 }
 
 * {

@@ -1,1 +1,24 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ── Build / packaging artifacts ───────────────────────────────────────────────
+build/
+dist/
+*.spec.bak
+build_output.txt
+pyinstaller_build.log
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
 logs/
+*.log
+
+# ── Local-only settings (may contain DB credentials) ──────────────────────────
+.env
+.env.local
+config.json
+config.json.bak
+initsetting*.json
+initsetting*.json.bak
+!initsetting.example.json
