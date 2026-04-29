@@ -1,18 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import { useAutoScrollTopOnDataChange } from "../utils/widgetListHelpers";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
+import { clamp, formatInterval, formatLocalTime } from "./widgetUtils.js";
+import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./StatusListCard.css";
 
 const MAX_ENDPOINTS = 50;
-
-const clamp = (value, min, max, fallback) => {
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue)) {
-        return fallback;
-    }
-    return Math.min(max, Math.max(min, Math.floor(numericValue)));
-};
 
 const serializeEndpoints = (endpoints = []) =>
     (endpoints || [])
@@ -45,15 +40,6 @@ const parseEndpointLines = (rawValue) =>
         })
         .filter((item) => item.url);
 
-const formatInterval = (sec) => {
-    if (sec >= 3600) return `every ${Math.floor(sec / 3600)}h`;
-    if (sec >= 60) return `every ${Math.floor(sec / 60)}m`;
-    return `every ${sec}s`;
-};
-
-const formatLocalTime = (date) =>
-    date ? date.toLocaleTimeString("en-GB", { hour12: false }) : null;
-
 const StatusListCard = ({
     title,
     endpoints,
@@ -79,6 +65,9 @@ const StatusListCard = ({
         serializeEndpoints(endpoints),
     );
     const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+    // 갱신 주기마다 목록 스크롤을 상단으로 리셋
+    const scrollRef = useRef(null);
+    useAutoScrollTopOnDataChange(scrollRef, data);
 
     useEffect(() => {
         // 부모(useWidgetApiData)가 새 결과를 내려줄 때마다 갱신 시각을 저장.
@@ -97,6 +86,11 @@ const StatusListCard = ({
     }, [data]);
     const okCount = Number(data?.okCount || 0);
     const failCount = Number(data?.failCount || 0);
+
+    // NetworkTestCard와 동일한 폭 기반 모드 분기.
+    // compact(≤3)에서는 URL/latency 라벨을 숨겨 한 줄 텍스트만 남긴다.
+    const widgetW = currentSize?.w ?? 4;
+    const displayMode = widgetW <= 3 ? "compact" : widgetW <= 6 ? "normal" : "wide";
 
     useEffect(() => {
         setSizeDraft({
@@ -173,29 +167,14 @@ const StatusListCard = ({
         onEndpointsChange?.(nextEndpoints);
     };
 
-    const settingsPopup = showSettings ? (
-        <div
-            className='settings-overlay'
+    // Sections each have their own apply button, so no global footer.
+    const settingsPopup = (
+        <WidgetSettingsModal
+            open={showSettings}
+            onClose={() => setShowSettings(false)}
+            title='위젯 설정'
+            subtitle={title}
         >
-            <div
-                className='settings-popup'
-                onClick={(event) => event.stopPropagation()}
-            >
-                <div className='settings-popup-header'>
-                    <div>
-                        <h5>위젯 설정</h5>
-                        <p>{title}</p>
-                    </div>
-                    <button
-                        type='button'
-                        className='close-settings-btn'
-                        onClick={() => setShowSettings(false)}
-                    >
-                        ✕
-                    </button>
-                </div>
-
-                <div className='settings-popup-body'>
                     <div className='settings-section'>
                         <h6>위젯 정보</h6>
                         <div className='size-editor widget-meta-editor'>
@@ -328,10 +307,8 @@ const StatusListCard = ({
                     >
                         리프레시 + 재연결 시도
                     </button>
-                </div>
-            </div>
-        </div>
-    ) : null;
+        </WidgetSettingsModal>
+    );
 
     return (
         <div className='api-card'>
@@ -359,7 +336,7 @@ const StatusListCard = ({
                                 }}
                                 title='새로고침'
                             >
-                                ⟳
+                                <IconRefresh size={14} />
                             </button>
                             <button
                                 type='button'
@@ -370,7 +347,7 @@ const StatusListCard = ({
                                 }}
                                 title='설정'
                             >
-                                ⚙
+                                <IconSettings size={14} />
                             </button>
                             <button
                                 type='button'
@@ -383,7 +360,7 @@ const StatusListCard = ({
                                 }}
                                 title='제거'
                             >
-                                ✕
+                                <IconClose size={14} />
                             </button>
                         </div>
                     </div>
@@ -406,7 +383,7 @@ const StatusListCard = ({
                 </div>
             </div>
 
-            {settingsPopup && createPortal(settingsPopup, document.body)}
+            {settingsPopup}
 
             <div className='api-card-content'>
                 {error && <div className='status-list-error'>{error}</div>}
@@ -416,12 +393,18 @@ const StatusListCard = ({
                         표시할 API 상태가 없습니다.
                     </div>
                 ) : (
-                    <div className='status-list-items'>
+                    <div
+                        className={`status-list-items status-list-${displayMode}`}
+                        ref={scrollRef}
+                    >
                         {items.map((item) => (
-                            <div key={item.id} className='status-list-item'>
+                            <div
+                                key={item.id}
+                                className={`status-list-item mode-${displayMode}`}
+                                title={`${item.label}\n${item.url}${item.responseTimeMs != null ? `\n${item.responseTimeMs} ms` : ""}${item.error ? `\n${item.error}` : ""}`}
+                            >
                                 <span
-                                    className={`status-pill ${item.ok ? "live" : "dead"}`}
-                                    style={{ fontSize: "10px", padding: "2px 5px", flexShrink: 0 }}
+                                    className={`status-pill ${item.ok ? "live" : "dead"} status-list-pill`}
                                 >
                                     <span className='status-dot' />
                                     {item.ok
@@ -433,9 +416,11 @@ const StatusListCard = ({
                                 <strong className='status-list-label'>
                                     {item.label}
                                 </strong>
-                                <span className='status-list-url'>
-                                    {item.url}
-                                </span>
+                                {displayMode !== "compact" && (
+                                    <span className='status-list-url'>
+                                        {item.url}
+                                    </span>
+                                )}
                                 <span className='status-list-latency'>
                                     {item.responseTimeMs != null
                                         ? `${item.responseTimeMs} ms`

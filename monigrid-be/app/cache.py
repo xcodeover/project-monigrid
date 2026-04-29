@@ -1,32 +1,46 @@
 """In-memory TTL cache and endpoint cache entry model."""
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from time import time
 from typing import Any
 
 
 class QueryCache:
-    """Simple TTL-based in-memory cache."""
+    """Thread-safe TTL-based in-memory cache.
+
+    The previous implementation read-then-deleted without a lock, so two
+    Flask worker threads racing on the same expired key could trigger a
+    KeyError on the second `del`. The lock is uncontended for normal
+    workloads (one round-trip per call) so the cost is negligible.
+    """
 
     def __init__(self, ttl_sec: int = 300) -> None:
         self.cache: dict[str, tuple[Any, float]] = {}
         self.ttl_sec = ttl_sec
+        self._lock = threading.Lock()
 
     def get(self, key: str) -> Any | None:
-        if key not in self.cache:
-            return None
-        value, timestamp = self.cache[key]
-        if time() - timestamp > self.ttl_sec:
-            del self.cache[key]
-            return None
-        return value
+        with self._lock:
+            entry = self.cache.get(key)
+            if entry is None:
+                return None
+            value, timestamp = entry
+            if time() - timestamp > self.ttl_sec:
+                # pop() is idempotent; another thread may have already
+                # deleted the entry between the read and the write.
+                self.cache.pop(key, None)
+                return None
+            return value
 
     def set(self, key: str, value: Any) -> None:
-        self.cache[key] = (value, time())
+        with self._lock:
+            self.cache[key] = (value, time())
 
     def clear(self) -> None:
-        self.cache.clear()
+        with self._lock:
+            self.cache.clear()
 
 
 @dataclass

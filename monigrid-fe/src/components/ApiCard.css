@@ -1,31 +1,19 @@
 .api-card {
-    background:
-        linear-gradient(
-            180deg,
-            rgba(255, 255, 255, 0.025),
-            rgba(255, 255, 255, 0.01)
-        ),
-        rgba(21, 28, 40, 0.94);
-    border: 1px solid rgba(148, 163, 184, 0.12);
-    border-radius: 10px;
+    background: var(--card-bg);
+    border: var(--card-border);
+    border-radius: var(--card-radius);
     overflow: hidden;
-    box-shadow: 0 16px 40px rgba(3, 8, 20, 0.26);
+    box-shadow: var(--card-shadow);
     height: 100%;
     display: flex;
     flex-direction: column;
-    backdrop-filter: blur(14px);
+    backdrop-filter: var(--card-blur);
 }
 
 .api-card-header {
-    background:
-        linear-gradient(
-            180deg,
-            rgba(255, 255, 255, 0.025),
-            rgba(255, 255, 255, 0.012)
-        ),
-        rgba(15, 20, 29, 0.92);
+    background: var(--card-header-bg);
     padding: 12px 14px 10px;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    border-bottom: var(--card-header-border);
     display: flex;
     align-items: center;
     min-height: 62px;

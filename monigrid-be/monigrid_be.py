@@ -21,43 +21,97 @@ from werkzeug.exceptions import HTTPException
 load_dotenv()
 
 from app.auth import get_env
-from app.config import load_app_config
+from app.config import build_app_config
 from app.logging_setup import configure_logging, install_global_exception_hooks
 from app.routes import register_all_routes
 from app.service import MonitoringBackend
+from app.settings_store import SettingsStore, load_init_settings
 from app.utils import get_client_ip
 
 
 # ── Resolve paths ─────────────────────────────────────────────────────────────
 
 def _resolve_base_dir() -> str:
-    """Return the directory that holds config.json, sql/, and drivers/.
+    """Return the directory that holds initsetting.json, drivers/, and the
+    one-time config.json seed (renamed to config.json.bak after bootstrap).
 
     - Dev mode  : directory of this .py file
     - onefile   : sys._MEIPASS  (temp extraction dir, all data bundled inside)
-    - onedir    : directory of the exe  (config/sql/drivers live next to the exe,
-                  NOT inside _internal/, so operators can edit them freely)
+    - onedir    : directory of the exe  (operator-editable files live beside
+                  the exe, not inside _internal/)
     """
     if getattr(sys, "frozen", False):
-        # onedir: _MEIPASS points to _internal/ but our editable files sit beside the exe
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
 
 
 BASE_DIR = _resolve_base_dir()
-DEFAULT_CONFIG_PATH = os.environ.get(
+INIT_SETTINGS_PATH = os.environ.get(
+    "MONITORING_INIT_SETTINGS_PATH",
+    os.path.join(BASE_DIR, "initsetting.json"),
+)
+SEED_CONFIG_PATH = os.environ.get(
     "MONITORING_CONFIG_PATH",
     os.path.join(BASE_DIR, "config.json"),
 )
+SEED_SQL_DIR = os.path.join(BASE_DIR, "sql")
 
 
-# ── Bootstrap ─────────────────────────────────────────────────────────────────
+# ── Bootstrap: load settings DB, run first-time seed if needed ───────────────
 
-initial_config = load_app_config(DEFAULT_CONFIG_PATH)
+def _read_seed_config() -> dict:
+    import json
+    with open(SEED_CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _bootstrap_settings_store() -> SettingsStore:
+    init_cfg = load_init_settings(INIT_SETTINGS_PATH)
+    store = SettingsStore(settings_db=init_cfg, logger=logging.getLogger("monitoring_backend"))
+    store.connect()
+
+    # DDL은 idempotent 하므로 매 시작마다 호출해 신규 버전에서 추가된 테이블이
+    # 이미 부트스트랩된 DB 에도 자동 반영되도록 한다.
+    store.create_schema()
+
+    if store.is_bootstrapped():
+        return store
+
+    # First-run: create schema, seed from config.json + sql/*.sql, rename
+    # config.json to .bak so no one edits the stale file.
+    if not os.path.isfile(SEED_CONFIG_PATH):
+        raise RuntimeError(
+            "Settings DB is not bootstrapped yet and seed config.json is missing at "
+            f"{SEED_CONFIG_PATH}. Provide a config.json for first-time seeding or "
+            "restore the settings DB from another node."
+        )
+    seed = _read_seed_config()
+    store.create_schema()
+    store.seed_from_config(seed, SEED_SQL_DIR)
+    try:
+        backup_path = SEED_CONFIG_PATH + ".bak"
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+        os.rename(SEED_CONFIG_PATH, backup_path)
+    except OSError as exc:
+        # Non-fatal: seeding succeeded. Operators can rename manually.
+        logging.getLogger("monitoring_backend").warning(
+            "Seed succeeded but failed to rename %s to .bak: %s", SEED_CONFIG_PATH, exc,
+        )
+    return store
+
+
+def _load_config_from_store(store: SettingsStore):
+    return build_app_config(store.load_config_dict(), BASE_DIR)
+
+
+settings_store = _bootstrap_settings_store()
+initial_config = _load_config_from_store(settings_store)
 configure_logging(initial_config.logging)
 
 backend = MonitoringBackend(
-    config_path=DEFAULT_CONFIG_PATH,
+    settings_store=settings_store,
+    config_reloader=lambda: _load_config_from_store(settings_store),
     logger=logging.getLogger("monitoring_backend"),
     initial_config=initial_config,
 )
@@ -196,4 +250,8 @@ if __name__ == "__main__":
     finally:
         backend._stop_background_refreshers()
         backend._close_all_pools()
+        try:
+            settings_store.close()
+        except Exception:
+            backend.logger.exception("Failed to close settings store")
         backend.logger.info("MonitoringBackend process stopped")

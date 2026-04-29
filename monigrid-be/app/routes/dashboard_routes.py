@@ -1,11 +1,9 @@
 """Dashboard endpoints: endpoint listing, cache, sql-editor, db-health, config."""
 from __future__ import annotations
 
-import json
-
 from flask import jsonify, request
 
-from app.auth import require_admin, require_auth, verify_jwt_token
+from app.auth import caller_is_admin, require_admin, require_auth, verify_jwt_token
 from app.exceptions import SqlFileNotFoundError
 from app.utils import get_client_ip
 
@@ -83,7 +81,7 @@ def register(app, backend, limiter) -> None:
     @require_auth
     @require_admin
     def dashboard_sql_editor_create_file():
-        """Create (or overwrite) a standalone SQL file at <sql_dir>/<sqlId>.sql.
+        """Create (or overwrite) a standalone SQL entry in the settings DB.
 
         JSON body:
           sqlId     — required, [A-Za-z0-9_-]{1,64}
@@ -167,44 +165,45 @@ def register(app, backend, limiter) -> None:
         result = backend.get_db_health_data(connection_id, category, timeout_sec)
         return jsonify(result), 200
 
-    @app.route("/dashboard/config", methods=["GET", "PUT"])
+    # Split into two handlers (one per HTTP method) so the route reads
+    # top-to-bottom instead of branching on request.method. Tests can target
+    # either path independently and stack traces point to the actual operation.
+    @app.route("/dashboard/config", methods=["GET"])
     @require_auth
     @require_admin
-    def handle_config():
-        """GET: return config.json content. PUT: write config.json and reload."""
-        if request.method == "GET":
-            config_path = backend.config_path
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    config_data = json.load(f)
-                return jsonify(config_data), 200
-            except FileNotFoundError:
-                return jsonify({"message": "config.json not found"}), 404
-            except Exception as e:
-                return jsonify({"message": "failed to read config", "detail": str(e)}), 500
+    def get_config():
+        """Return the config stored in the settings DB (same shape as the
+        legacy config.json so the frontend is unchanged)."""
+        try:
+            return jsonify(backend.settings_store.load_config_dict()), 200
+        except Exception:
+            backend.logger.exception("Config read from settings DB failed")
+            return jsonify({"message": "failed to read config", "detail": "internal error"}), 500
 
-        # PUT
+    @app.route("/dashboard/config", methods=["PUT"])
+    @require_auth
+    @require_admin
+    def update_config():
+        """Persist the config back into the settings DB and reload."""
         client_ip = get_client_ip()
         config_data = request.get_json(silent=True)
         if not config_data or not isinstance(config_data, dict):
             return jsonify({"message": "invalid config JSON"}), 400
 
-        config_path = backend.config_path
         try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(config_data, f, indent=4, ensure_ascii=False)
-            backend.logger.info("Config file updated by admin clientIp=%s", client_ip)
-        except Exception as e:
-            backend.logger.exception("Config write failed clientIp=%s", client_ip)
-            return jsonify({"message": "failed to write config", "detail": str(e)}), 500
+            backend.settings_store.save_config_dict(config_data)
+            backend.logger.info("Config updated in settings DB by admin clientIp=%s", client_ip)
+        except Exception:
+            backend.logger.exception("Config write to settings DB failed clientIp=%s", client_ip)
+            return jsonify({"message": "failed to write config", "detail": "internal error"}), 500
 
         try:
             backend.reload()
-        except Exception as e:
+        except Exception:
             backend.logger.exception("Config reload after update failed clientIp=%s", client_ip)
             return jsonify({
                 "message": "config saved but reload failed",
-                "detail": str(e),
+                "detail": "internal error",
                 "saved": True,
                 "reloaded": False,
             }), 500
@@ -221,6 +220,7 @@ def register(app, backend, limiter) -> None:
 
     @app.route("/dashboard/reload-config", methods=["POST"])
     @require_auth
+    @require_admin
     def reload_config():
         client_ip = get_client_ip()
         try:
@@ -240,6 +240,11 @@ def register(app, backend, limiter) -> None:
         reset_connection = bool(request_json.get("reset_connection", False))
         client_ip = get_client_ip()
 
+        # Privileged operations: only admins may flush every cache or force a
+        # JDBC reconnect. Regular users are still allowed to refresh a single
+        # endpoint's cache so that the per-widget "manual refresh" works.
+        is_admin = caller_is_admin()
+
         endpoint = backend.resolve_endpoint_reference(
             api_id=str(api_id).strip() if api_id else None,
             endpoint_value=str(endpoint_value).strip() if endpoint_value else None,
@@ -249,6 +254,11 @@ def register(app, backend, limiter) -> None:
             return jsonify({"message": "enabled api not found"}), 404
 
         if endpoint is None:
+            if not is_admin:
+                backend.logger.warning(
+                    "Refresh-all cache rejected reason=non_admin clientIp=%s", client_ip,
+                )
+                return jsonify({"message": "Admin privileges are required"}), 403
             entries = backend.refresh_all_endpoint_caches(
                 source="manual-refresh-all", client_ip=client_ip, reset_connection=reset_connection,
             )
@@ -262,8 +272,17 @@ def register(app, backend, limiter) -> None:
                 ],
             }), 200
 
+        # Non-admin users may refresh a single endpoint's cache, but they are
+        # not allowed to force a JDBC reconnect — that affects every caller
+        # sharing the connection pool.
+        effective_reset = reset_connection and is_admin
+        if reset_connection and not is_admin:
+            backend.logger.warning(
+                "reset_connection ignored reason=non_admin apiId=%s clientIp=%s",
+                endpoint.api_id, client_ip,
+            )
         entry = backend.refresh_endpoint_cache(
-            endpoint, source="manual-refresh", client_ip=client_ip, reset_connection=reset_connection,
+            endpoint, source="manual-refresh", client_ip=client_ip, reset_connection=effective_reset,
         )
         return jsonify({
             "message": "cache refresh completed",

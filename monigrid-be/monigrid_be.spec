@@ -33,6 +33,7 @@ a = Analysis(
         'app.network_tester',
         'app.server_resource_collector',
         'app.service',
+        'app.settings_store',
         'app.sql_validator',
         'app.utils',
         'app.routes',

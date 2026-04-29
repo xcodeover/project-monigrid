@@ -1,19 +1,21 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import { createPortal } from "react-dom";
 import apiClient from "../services/http.js";
+import { monitorService } from "../services/dashboardService.js";
 import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import {
+    sortAlertsFirst,
+    useAutoScrollTopOnDataChange,
+} from "../utils/widgetListHelpers";
+import MonitorTargetPicker from "./MonitorTargetPicker";
+import { IconClose, IconRefresh, IconSettings } from "./icons";
+import { clamp, formatInterval, formatLocalTime } from "./widgetUtils.js";
+import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./NetworkTestCard.css";
 
 /* ── helpers ─────────────────────────────────────────────────────── */
 
 const MAX_TARGETS = 50;
-
-const clamp = (value, min, max, fallback) => {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return fallback;
-    return Math.min(max, Math.max(min, Math.floor(n)));
-};
 
 const generateId = () =>
     `net-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -30,14 +32,7 @@ const migrateTargets = (cfg) => {
     return [];
 };
 
-const formatTime = (d) =>
-    d ? d.toLocaleTimeString("en-GB", { hour12: false }) : null;
-
-const formatInterval = (sec) => {
-    if (sec >= 3600) return `every ${Math.floor(sec / 3600)}h`;
-    if (sec >= 60) return `every ${Math.floor(sec / 60)}m`;
-    return `every ${sec}s`;
-};
+const formatTime = formatLocalTime;
 
 /* ── TargetRow — single-line per target ──────────────────────────── */
 
@@ -90,68 +85,6 @@ const TargetRow = ({ target, state, displayMode }) => {
     );
 };
 
-/* ── Settings: single target row (collapsible) ─────────────────── */
-
-const TargetSettingRow = ({
-    target,
-    expanded,
-    onToggle,
-    onChange,
-    onDuplicate,
-    onRemove,
-}) => {
-    const update = (field, value) => onChange(target.id, field, value);
-    const summary = `${target.label || "(이름없음)"} — ${target.type}://${target.host || "(호스트없음)"}${target.type === "telnet" ? `:${target.port || "?"}` : ""}`;
-
-    return (
-        <div className={`srv-setting-row${expanded ? " expanded" : ""}`}>
-            <div className="srv-setting-summary" onClick={onToggle}>
-                <span className="srv-setting-chevron">{expanded ? "▾" : "▸"}</span>
-                <span className="srv-setting-summary-text">{summary}</span>
-                <span className="srv-setting-os-badge">{target.type.toUpperCase()}</span>
-                <div className="srv-setting-actions">
-                    <button type="button" className="srv-action-btn" onClick={(e) => { e.stopPropagation(); onDuplicate(); }} title="복제">⧉</button>
-                    <button type="button" className="srv-action-btn danger" onClick={(e) => { e.stopPropagation(); onRemove(); }} title="삭제">✕</button>
-                </div>
-            </div>
-
-            {expanded && (
-                <div className="srv-setting-detail">
-                    <div className="srv-setting-grid-2">
-                        <label>
-                            <span>대상 이름</span>
-                            <input type="text" value={target.label} onChange={(e) => update("label", e.target.value)} placeholder="예: Web-01" />
-                        </label>
-                        <label>
-                            <span>테스트 유형</span>
-                            <select value={target.type} onChange={(e) => update("type", e.target.value)}>
-                                <option value="ping">Ping</option>
-                                <option value="telnet">Telnet</option>
-                            </select>
-                        </label>
-                    </div>
-                    <div className="srv-setting-grid-2">
-                        <label>
-                            <span>호스트</span>
-                            <input type="text" value={target.host} onChange={(e) => update("host", e.target.value)} placeholder="192.168.0.1" />
-                        </label>
-                        {target.type === "telnet" && (
-                            <label>
-                                <span>포트</span>
-                                <input type="number" value={target.port} onChange={(e) => update("port", e.target.value)} placeholder="80" min="1" max="65535" />
-                            </label>
-                        )}
-                    </div>
-                    <label>
-                        <span>타임아웃 (초)</span>
-                        <input type="number" value={target.timeout} onChange={(e) => update("timeout", e.target.value)} placeholder="5" min="1" max="30" />
-                    </label>
-                </div>
-            )}
-        </div>
-    );
-};
-
 /* ══════════════════════════════════════════════════════════════════
    Main component
    ══════════════════════════════════════════════════════════════════ */
@@ -169,7 +102,16 @@ const NetworkTestCard = ({
     onWidgetConfigChange,
     onAlarmChange,
 }) => {
-    const targets = useMemo(() => migrateTargets(networkConfig), [networkConfig]);
+    /* ── mode: snapshot (BE-centralized) vs legacy (probe-from-browser) */
+    const targetIds = useMemo(
+        () => (Array.isArray(networkConfig?.targetIds) ? networkConfig.targetIds : []),
+        [networkConfig],
+    );
+    const useSnapshot = targetIds.length > 0;
+
+    const legacyTargets = useMemo(() => migrateTargets(networkConfig), [networkConfig]);
+    const [snapshotTargets, setSnapshotTargets] = useState([]);
+    const targets = useSnapshot ? snapshotTargets : legacyTargets;
 
     const widgetW = currentSize?.w ?? 4;
     const displayMode = widgetW <= 3 ? "compact" : widgetW <= 6 ? "normal" : "wide";
@@ -181,6 +123,58 @@ const NetworkTestCard = ({
     useEffect(() => { targetsRef.current = targets; }, [targets]);
 
     const checkAllTargets = useCallback(async () => {
+        if (useSnapshot) {
+            if (targetIds.length === 0) return;
+            try {
+                const res = await monitorService.getSnapshot(targetIds);
+                const items = Array.isArray(res?.items) ? res.items : [];
+                const derived = items.map((it) => {
+                    const spec = it.spec || {};
+                    return {
+                        id: it.targetId,
+                        label: it.label || spec.host || it.targetId,
+                        type: spec.type || "ping",
+                        host: spec.host || "",
+                        port: spec.port != null ? String(spec.port) : "",
+                        timeout: spec.timeout != null ? String(spec.timeout) : "5",
+                    };
+                });
+                setSnapshotTargets(derived);
+                setTargetStates(() => {
+                    const next = {};
+                    items.forEach((it) => {
+                        const d = it.data || {};
+                        const hasError = !!it.errorMessage;
+                        const success = !hasError && (d.success === true);
+                        next[it.targetId] = {
+                            success,
+                            responseTimeMs: d.responseTimeMs ?? null,
+                            error: hasError ? it.errorMessage : (success ? null : (d.message || "Fail")),
+                            loading: false,
+                            lastChecked: it.updatedAt ? new Date(it.updatedAt) : new Date(),
+                        };
+                    });
+                    return next;
+                });
+            } catch (err) {
+                const errorMsg = err?.response?.data?.message || err?.message || "스냅샷 조회 실패";
+                setTargetStates((prev) => {
+                    const next = { ...prev };
+                    targetIds.forEach((tid) => {
+                        next[tid] = {
+                            success: false,
+                            responseTimeMs: null,
+                            error: errorMsg,
+                            loading: false,
+                            lastChecked: new Date(),
+                        };
+                    });
+                    return next;
+                });
+            }
+            return;
+        }
+
         const list = targetsRef.current;
         if (list.length === 0) return;
 
@@ -247,24 +241,27 @@ const NetworkTestCard = ({
                 return next;
             });
         }
-    }, []);
+    }, [useSnapshot, targetIds]);
 
-    const targetsKey = useMemo(
-        () => targets.map((t) => `${t.id}|${t.host}|${t.type}|${t.port}`).join(","),
-        [targets],
-    );
+    const pollKey = useMemo(() => (
+        useSnapshot
+            ? `s:${targetIds.join(",")}`
+            : `l:${legacyTargets.map((t) => `${t.id}|${t.host}|${t.type}|${t.port}`).join(",")}`
+    ), [useSnapshot, targetIds, legacyTargets]);
+
+    const hasItems = useSnapshot ? targetIds.length > 0 : legacyTargets.length > 0;
 
     useEffect(() => {
-        if (targets.length > 0) checkAllTargets();
-    }, [targetsKey, checkAllTargets]);
+        if (hasItems) checkAllTargets();
+    }, [pollKey, hasItems, checkAllTargets]);
 
     useEffect(() => {
-        if (targets.length === 0) return undefined;
+        if (!hasItems) return undefined;
         // refreshIntervalSec이 string("30")으로 들어와도 안전하게 처리한다.
         const sec = Math.max(MIN_REFRESH_INTERVAL_SEC, Number(refreshIntervalSec) || 10);
         const id = setInterval(checkAllTargets, sec * 1000);
         return () => clearInterval(id);
-    }, [targetsKey, refreshIntervalSec, checkAllTargets]);
+    }, [pollKey, hasItems, refreshIntervalSec, checkAllTargets]);
 
     /* ── alarm reporting ──────────────────────────────────────���─── */
     const statusSummary = useMemo(() => {
@@ -293,12 +290,33 @@ const NetworkTestCard = ({
         onAlarmChange(statusSummary.fail > 0 ? "dead" : "live");
     }, [statusSummary, onAlarmChange]);
 
+    /* ── NG(실패/에러) 대상을 목록 상단으로 끌어올림 ──────────────── */
+    // statusSummary 의 fail 판정과 동일한 기준: 체크 완료 & success=false.
+    const displayTargets = useMemo(
+        () =>
+            sortAlertsFirst(targets, (t) => {
+                const s = targetStates[t.id];
+                if (!s || s.lastChecked == null) return false;
+                return !s.success;
+            }),
+        [targets, targetStates],
+    );
+
+    /* ── 갱신 주기마다 목록 스크롤 최상단으로 ─────────────────────── */
+    const scrollRef = useRef(null);
+    useAutoScrollTopOnDataChange(scrollRef, targetStates);
+
     /* ── settings modal state ────────────────────────────────────── */
     const [showSettings, setShowSettings] = useState(false);
     const hasAutoOpened = useRef(false);
 
     useEffect(() => {
-        if (!hasAutoOpened.current && targets.length === 0) {
+        // 새로 추가된 위젯에 대상이 비어있으면 settings 모달을 자동으로 한 번 열어준다.
+        if (
+            !hasAutoOpened.current &&
+            targetIds.length === 0 &&
+            legacyTargets.length === 0
+        ) {
             setShowSettings(true);
             hasAutoOpened.current = true;
         }
@@ -308,18 +326,16 @@ const NetworkTestCard = ({
     const [sizeDraft, setSizeDraft] = useState({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 });
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 10);
     const [titleDraft, setTitleDraft] = useState(title);
-    const [targetsDraft, setTargetsDraft] = useState([]);
-    const [expandedId, setExpandedId] = useState(null);
+    const [selectedTargetIdsDraft, setSelectedTargetIdsDraft] = useState([]);
 
     useEffect(() => { setSizeDraft({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 }); }, [currentSize?.w, currentSize?.h]);
     useEffect(() => { setIntervalDraft(refreshIntervalSec ?? 10); }, [refreshIntervalSec]);
     useEffect(() => { setTitleDraft(title); }, [title]);
 
     const openSettings = useCallback(() => {
-        setTargetsDraft(targets.map((t) => ({ ...t })));
-        setExpandedId(null);
+        setSelectedTargetIdsDraft([...targetIds]);
         setShowSettings(true);
-    }, [targets]);
+    }, [targetIds]);
 
     const handleSizeApply = () => {
         const w = clamp(sizeDraft.w, sizeBounds?.minW ?? 2, sizeBounds?.maxW ?? 12, currentSize?.w ?? 4);
@@ -339,45 +355,8 @@ const NetworkTestCard = ({
         if (t && t !== title) onWidgetMetaChange?.({ title: t });
     };
 
-    const handleAddTarget = () => {
-        if (targetsDraft.length >= MAX_TARGETS) {
-            window.alert(`최대 ${MAX_TARGETS}개까지 등록할 수 있습니다.`);
-            return;
-        }
-        const last = targetsDraft[targetsDraft.length - 1];
-        const newTarget = {
-            id: generateId(),
-            label: "",
-            type: last?.type || "ping",
-            host: "",
-            port: last?.port || "80",
-            timeout: last?.timeout || "5",
-        };
-        setTargetsDraft((p) => [...p, newTarget]);
-        setExpandedId(newTarget.id);
-    };
-
-    const handleDuplicateTarget = (t) => {
-        if (targetsDraft.length >= MAX_TARGETS) {
-            window.alert(`최대 ${MAX_TARGETS}개까지 등록할 수 있습니다.`);
-            return;
-        }
-        const dup = { ...t, id: generateId(), label: incrementLabel(t.label) };
-        setTargetsDraft((p) => [...p, dup]);
-        setExpandedId(dup.id);
-    };
-
-    const handleRemoveTarget = (id) => {
-        setTargetsDraft((p) => p.filter((t) => t.id !== id));
-        if (expandedId === id) setExpandedId(null);
-    };
-
-    const handleUpdateTargetField = (id, field, value) => {
-        setTargetsDraft((p) => p.map((t) => (t.id === id ? { ...t, [field]: value } : t)));
-    };
-
     const handleSaveTargets = () => {
-        onWidgetConfigChange?.({ targets: targetsDraft });
+        onWidgetConfigChange?.({ targetIds: selectedTargetIdsDraft });
         setShowSettings(false);
     };
 
@@ -390,27 +369,18 @@ const NetworkTestCard = ({
     }, [targetStates]);
 
     /* ── render: settings popup ──────────────────────────────────── */
-    // 외부 클릭으로는 닫히지 않는다 — 헤더의 ✕ 버튼 / 하단 닫기 버튼으로만 닫힌다.
-    // (사용자 요구: 바깥쪽 오클릭으로 설정 변경이 날아가는 것을 방지)
-    const settingsPopup = showSettings ? (
-        <div
-            className="settings-overlay"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
+    // closeOnBackdropClick=false — 사용자가 대상 picker 에 입력한 draft 가
+    // 바깥쪽 오클릭으로 날아가는 것을 방지한다.
+    // 자체 footer (취소 / 저장 N개) 를 children 으로 그대로 두어 동적
+    // 라벨과 srv-save-btn 스타일을 보존한다.
+    const settingsPopup = (
+        <WidgetSettingsModal
+            open={showSettings}
+            onClose={() => setShowSettings(false)}
+            title='네트워크 테스트 위젯 설정'
+            subtitle={title}
+            closeOnBackdropClick={false}
         >
-            <div
-                className="settings-popup srv-settings-popup"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className="settings-popup-header">
-                    <div>
-                        <h5>네트워크 테스트 위젯 설정</h5>
-                        <p>{title}</p>
-                    </div>
-                    <button type="button" className="close-settings-btn" onClick={() => setShowSettings(false)}>✕</button>
-                </div>
-                <div className="settings-popup-body">
                     <div className="settings-section">
                         <h6>위젯 정보</h6>
                         <div className="size-editor widget-meta-editor">
@@ -440,38 +410,20 @@ const NetworkTestCard = ({
                     </div>
                     <div className="settings-section srv-list-section">
                         <div className="srv-list-header">
-                            <h6>대상 목록 ({targetsDraft.length} / {MAX_TARGETS})</h6>
-                            <button type="button" className="size-preset-btn srv-add-btn" onClick={handleAddTarget} disabled={targetsDraft.length >= MAX_TARGETS}>＋ 대상 추가</button>
+                            <h6>대상 선택 ({selectedTargetIdsDraft.length}개)</h6>
                         </div>
-                        {targetsDraft.length === 0 ? (
-                            <div className="srv-list-empty">
-                                <p>등록된 대상이 없습니다.</p>
-                                <button type="button" className="size-preset-btn" onClick={handleAddTarget}>첫 대상 추가</button>
-                            </div>
-                        ) : (
-                            <div className="srv-list-items">
-                                {targetsDraft.map((t) => (
-                                    <TargetSettingRow
-                                        key={t.id}
-                                        target={t}
-                                        expanded={expandedId === t.id}
-                                        onToggle={() => setExpandedId(expandedId === t.id ? null : t.id)}
-                                        onChange={handleUpdateTargetField}
-                                        onDuplicate={() => handleDuplicateTarget(t)}
-                                        onRemove={() => handleRemoveTarget(t.id)}
-                                    />
-                                ))}
-                            </div>
-                        )}
+                        <MonitorTargetPicker
+                            targetType="network"
+                            selectedIds={selectedTargetIdsDraft}
+                            onChange={setSelectedTargetIdsDraft}
+                        />
                     </div>
-                </div>
                 <div className="srv-settings-footer">
                     <button type="button" className="size-preset-btn" onClick={() => setShowSettings(false)}>취소</button>
-                    <button type="button" className="size-preset-btn srv-save-btn" onClick={handleSaveTargets}>저장 ({targetsDraft.length}개)</button>
+                    <button type="button" className="size-preset-btn srv-save-btn" onClick={handleSaveTargets}>저장 ({selectedTargetIdsDraft.length}개)</button>
                 </div>
-            </div>
-        </div>
-    ) : null;
+        </WidgetSettingsModal>
+    );
 
     /* ── render: main widget ─────────────────────────────────────── */
     return (
@@ -487,9 +439,9 @@ const NetworkTestCard = ({
                             </span>
                         )}
                         <div className="title-actions">
-                            <button type="button" className="compact-icon-btn" onClick={checkAllTargets} title="새로고침">⟳</button>
-                            <button type="button" className="compact-icon-btn" onClick={openSettings} title="설정">⚙</button>
-                            <button type="button" className="compact-icon-btn remove" onClick={onRemove} title="제거">✕</button>
+                            <button type="button" className="compact-icon-btn" onClick={checkAllTargets} title="새로고침" aria-label="새로고침"><IconRefresh size={14} /></button>
+                            <button type="button" className="compact-icon-btn" onClick={openSettings} title="설정" aria-label="설정"><IconSettings size={14} /></button>
+                            <button type="button" className="compact-icon-btn remove" onClick={onRemove} title="제거" aria-label="제거"><IconClose size={14} /></button>
                         </div>
                     </div>
                     <div className="api-endpoint-row">
@@ -512,7 +464,7 @@ const NetworkTestCard = ({
                 </div>
             </div>
 
-            {settingsPopup && createPortal(settingsPopup, document.body)}
+            {settingsPopup}
 
             <div className="api-card-content">
                 {targets.length === 0 ? (
@@ -521,8 +473,11 @@ const NetworkTestCard = ({
                         <button type="button" className="size-preset-btn" onClick={openSettings}>설정 열기</button>
                     </div>
                 ) : (
-                    <div className={`net-list net-list-${displayMode}`}>
-                        {targets.map((t) => (
+                    <div
+                        className={`net-list net-list-${displayMode}`}
+                        ref={scrollRef}
+                    >
+                        {displayTargets.map((t) => (
                             <TargetRow
                                 key={t.id}
                                 target={t}

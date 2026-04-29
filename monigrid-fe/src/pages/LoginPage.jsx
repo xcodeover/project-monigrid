@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { authService } from "../services/api";
 import AppLogo from "../components/AppLogo.jsx";
+import PasswordInput from "../components/PasswordInput.jsx";
 import "./LoginPage.css";
 
 const APP_TITLE = import.meta.env.VITE_APP_TITLE || "Monitoring Dashboard";
@@ -47,6 +48,14 @@ const LoginPage = () => {
 
         try {
             const response = await authService.login(username, password);
+            // Defensive shape check: the BE returns { token, user: {...} } on
+            // success, but a misconfigured proxy or partial outage can yield
+            // a 200 with empty body. Without this guard the next render would
+            // mark the user as authenticated with a null token and every
+            // subsequent request would 401.
+            if (!response?.token || !response?.user) {
+                throw new Error("Invalid login response");
+            }
             login(response.user, response.token);
             navigate("/dashboard");
         } catch (err) {
@@ -96,9 +105,8 @@ const LoginPage = () => {
 
                         <div className='form-group'>
                             <label htmlFor='password'>비밀번호</label>
-                            <input
+                            <PasswordInput
                                 id='password'
-                                type='password'
                                 placeholder='password'
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}

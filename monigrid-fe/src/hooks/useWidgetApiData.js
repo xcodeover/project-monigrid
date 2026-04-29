@@ -185,7 +185,17 @@ const useWidgetApiData = (widgets) => {
 
             scheduleKeyRef.current[widget.id] = key;
             fetchWidget(widget);
-            timersRef.current[widget.id] = setInterval(() => fetchWidget(widget), intervalSec * 1000);
+            // Resolve the widget from widgetsRef on every tick instead of
+            // capturing it in the closure: a setting edit (criteria, table
+            // formatting, etc.) won't change the schedule key but still
+            // needs to be visible on the next fetch — a captured `widget`
+            // would keep the old settings until the user toggles something
+            // that does invalidate the schedule key.
+            const widgetId = widget.id;
+            timersRef.current[widgetId] = setInterval(() => {
+                const latest = widgetsRef.current.find((w) => w.id === widgetId);
+                if (latest) fetchWidget(latest);
+            }, intervalSec * 1000);
         });
 
         // Only clean up all timers on full unmount (not on every widgets change)

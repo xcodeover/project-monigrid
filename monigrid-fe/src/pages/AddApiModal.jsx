@@ -7,14 +7,31 @@ import {
     WIDGET_TYPE_STATUS_LIST,
     WIDGET_TYPE_TABLE,
 } from "./dashboardConstants";
+import MonitorTargetPicker from "../components/MonitorTargetPicker";
+import { IconClose, IconPlus } from "../components/icons";
 
 /**
  * "API 추가" modal extracted from DashboardPage (SRP).
  *
  * Pure presentational — receives the form draft, change handler, and
  * submit/cancel callbacks. Parent owns the draft state.
+ *
+ * Server Resource / Network Test 위젯은 백엔드 설정의 "서버/네트워크 체크"
+ * 탭에 등록된 모니터 대상 중에서만 골라 추가할 수 있다.
  */
-const AddApiModal = ({ form, onChange, onSubmit, onClose }) => {
+const AddApiModal = ({
+    form,
+    onChange,
+    onSubmit,
+    onClose,
+    monitorTargets = [],
+    monitorTargetsError = null,
+}) => {
+    const isServer = form.type === WIDGET_TYPE_SERVER_RESOURCE;
+    const isNetwork = form.type === WIDGET_TYPE_NETWORK_TEST;
+    const usesMonitorTargets = isServer || isNetwork;
+    const selectedIds = Array.isArray(form.targetIds) ? form.targetIds : [];
+
     return (
         <div className='modal-overlay'>
             <div
@@ -22,9 +39,9 @@ const AddApiModal = ({ form, onChange, onSubmit, onClose }) => {
                 onClick={(event) => event.stopPropagation()}
             >
                 <div className='modal-header'>
-                    <h3>API 엔드포인트 추가</h3>
-                    <button className='close-btn' onClick={onClose}>
-                        ✕
+                    <h3>위젯 추가</h3>
+                    <button className='close-btn' onClick={onClose} aria-label='닫기'>
+                        <IconClose size={16} />
                     </button>
                 </div>
 
@@ -62,23 +79,24 @@ const AddApiModal = ({ form, onChange, onSubmit, onClose }) => {
                                 }
                             />
                         </div>
-                    ) : form.type === WIDGET_TYPE_NETWORK_TEST ||
-                      form.type === WIDGET_TYPE_SERVER_RESOURCE ? (
+                    ) : usesMonitorTargets ? (
                         <div className='form-group'>
-                            <label htmlFor='api-endpoint'>엔드포인트 URL</label>
-                            <input
-                                id='api-endpoint'
-                                type='text'
-                                value={
-                                    form.type === WIDGET_TYPE_NETWORK_TEST
-                                        ? "/dashboard/network-test"
-                                        : "/dashboard/server-resources"
+                            <label>
+                                {isServer ? "서버 대상 선택" : "네트워크 대상 선택"}
+                            </label>
+                            <MonitorTargetPicker
+                                targetType={
+                                    isServer ? "server_resource" : "network"
                                 }
-                                disabled
-                                className='input-disabled'
+                                selectedIds={selectedIds}
+                                onChange={(ids) =>
+                                    onChange({ ...form, targetIds: ids })
+                                }
+                                presetTargets={monitorTargets}
+                                presetError={monitorTargetsError}
                             />
                             <span className='form-hint'>
-                                백엔드 고정 엔드포인트 (자동 설정)
+                                선택 {selectedIds.length}개 — 수집 주기/접속 정보는 백엔드 설정에서 관리됩니다.
                             </span>
                         </div>
                     ) : (
@@ -105,7 +123,11 @@ const AddApiModal = ({ form, onChange, onSubmit, onClose }) => {
                             id='api-widget-type'
                             value={form.type}
                             onChange={(event) =>
-                                onChange({ ...form, type: event.target.value })
+                                onChange({
+                                    ...form,
+                                    type: event.target.value,
+                                    targetIds: [],
+                                })
                             }
                         >
                             <option value={WIDGET_TYPE_TABLE}>
@@ -137,7 +159,13 @@ const AddApiModal = ({ form, onChange, onSubmit, onClose }) => {
                     <button className='secondary-btn' onClick={onClose}>
                         취소
                     </button>
-                    <button className='primary-btn' onClick={onSubmit}>
+                    <button
+                        className='primary-btn'
+                        onClick={onSubmit}
+                        disabled={
+                            usesMonitorTargets && selectedIds.length === 0
+                        }
+                    >
                         추가
                     </button>
                 </div>

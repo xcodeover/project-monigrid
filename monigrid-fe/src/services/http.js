@@ -3,6 +3,7 @@
  * All other services depend on this module — not on axios directly (DIP).
  */
 import axios from "axios";
+import { STORAGE_KEYS } from "../store/storageKeys.js";
 
 /**
  * 빌드 시점 환경변수(VITE_API_URL) 해석 규칙:
@@ -170,15 +171,35 @@ export const formatErrorMessage = (error) => {
     return error?.message || "데이터 로드 실패";
 };
 
-// ── 429 Rate-limit guard ─────────────────────────────────────────────────────
-// When a 429 is received, all subsequent requests are delayed until the
-// Retry-After period expires. This prevents the retry storm that makes 429s
-// snowball across multiple polling widgets.
+// ── 429 Rate-limit guard (per-endpoint) ──────────────────────────────────────
+// When a 429 is received, only requests to the *same path* are delayed until
+// the Retry-After period expires. Rate-limiting one endpoint should not stall
+// every polling widget on the dashboard; the original implementation used a
+// single global timer which meant a noisy widget could freeze the whole UI.
+//
+// Path is used (not full URL) so cache-busting query params don't accidentally
+// create separate rate buckets.
 
-let _rateLimitedUntil = 0;
+const _rateLimitByPath = new Map(); // path → resume-at timestamp (ms)
+let _rateLimitedUntilGlobal = 0; // fallback: 429 with no parseable URL
 
-const _waitForRateLimit = () => {
-    const remaining = _rateLimitedUntil - Date.now();
+const _pathOf = (urlOrPath) => {
+    if (!urlOrPath) return null;
+    try {
+        // axios passes either a full URL or a path-only relative URL
+        return new URL(urlOrPath, "http://_").pathname;
+    } catch {
+        const qIdx = urlOrPath.indexOf("?");
+        return qIdx >= 0 ? urlOrPath.slice(0, qIdx) : urlOrPath;
+    }
+};
+
+const _waitForRateLimit = (config) => {
+    const now = Date.now();
+    const path = _pathOf(config?.url);
+    const pathUntil = path ? (_rateLimitByPath.get(path) || 0) : 0;
+    const until = Math.max(pathUntil, _rateLimitedUntilGlobal);
+    const remaining = until - now;
     if (remaining <= 0) return Promise.resolve();
     return new Promise((resolve) => setTimeout(resolve, remaining));
 };
@@ -193,11 +214,11 @@ const apiClient = axios.create({
 
 apiClient.interceptors.request.use(
     async (config) => {
-        // If we are rate-limited, wait before sending the request
-        await _waitForRateLimit();
+        // If we are rate-limited for this path, wait before sending the request
+        await _waitForRateLimit(config);
         // Dynamically resolve baseURL so changes via dashboard settings take effect
         config.baseURL = getRememberedApiBaseUrl();
-        const token = localStorage.getItem("auth_token");
+        const token = localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
         }
@@ -206,19 +227,56 @@ apiClient.interceptors.request.use(
     (error) => Promise.reject(error),
 );
 
+// ── Unauthorized handler registry ────────────────────────────────────────────
+//
+// Stores (authStore, dashboardStore) cannot be imported from here without
+// creating an axios↔store import cycle, so the App registers its own cleanup
+// callback at boot and we invoke it on 401. This keeps http.js dependency-free
+// while ensuring Zustand state is wiped in step with localStorage.
+
+let _onUnauthorized = null;
+
+export const registerUnauthorizedHandler = (handler) => {
+    _onUnauthorized = typeof handler === "function" ? handler : null;
+};
+
 apiClient.interceptors.response.use(
     (response) => response,
     (error) => {
-        // On 429, record the back-off window so subsequent requests wait
+        // On 429, record the back-off window so subsequent requests to the
+        // same path wait. If we can't parse a URL out of the failing config,
+        // fall back to the legacy global window so we still slow the storm.
         if (error.response?.status === 429) {
             const waitMs = parseRetryAfterMs(error) || RATE_LIMIT_WAIT_MS;
-            _rateLimitedUntil = Math.max(_rateLimitedUntil, Date.now() + waitMs);
+            const resumeAt = Date.now() + waitMs;
+            const path = _pathOf(error.config?.url);
+            if (path) {
+                const prev = _rateLimitByPath.get(path) || 0;
+                _rateLimitByPath.set(path, Math.max(prev, resumeAt));
+            } else {
+                _rateLimitedUntilGlobal = Math.max(_rateLimitedUntilGlobal, resumeAt);
+            }
         }
 
         const requestUrl = String(error.config?.url ?? "");
         const isLoginRequest = requestUrl.includes("/auth/login");
         if (error.response?.status === 401 && !isLoginRequest) {
-            localStorage.removeItem("auth_token");
+            // Clear both keys: leaving USER behind means the next page render
+            // would briefly show stale username/role until App reads it again.
+            localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+            localStorage.removeItem(STORAGE_KEYS.USER);
+            if (_onUnauthorized) {
+                try {
+                    _onUnauthorized();
+                } catch (handlerError) {
+                    if (typeof console !== "undefined") {
+                        console.warn(
+                            "[http] unauthorized handler threw:",
+                            handlerError?.message || handlerError,
+                        );
+                    }
+                }
+            }
             if (window.location.protocol === "file:") {
                 window.location.hash = "/login";
             } else {

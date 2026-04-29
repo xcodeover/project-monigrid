@@ -3,6 +3,7 @@ import Editor from "react-simple-code-editor";
 import Prism from "prismjs";
 import "prismjs/components/prism-sql";
 import { dashboardService } from "../services/api";
+import { IconClose } from "./icons";
 import "./SqlEditorModal.css";
 
 const SELECT_START_PATTERN = /^\s*(select\b|with\b[\s\S]*\bselect\b)/i;
@@ -77,7 +78,12 @@ const buildTypoRegexes = (rawPatterns) => {
     };
 };
 
-const validateSqlScript = (sql, typoPatterns) => {
+// Oracle은 스칼라 SELECT도 FROM DUAL 이 필수인 반면, MariaDB/MySQL/MSSQL 은
+// `SELECT NOW()` 처럼 FROM 없이도 허용된다. db_type 을 알 수 없는 경우(예: 생성 모드)에는
+// 관대하게 FROM 검사를 건너뛴다.
+const FROM_REQUIRED_DIALECTS = new Set(["oracle"]);
+
+const validateSqlScript = (sql, typoPatterns, dbType) => {
     const issues = [];
     const trimmed = String(sql ?? "").trim();
     const typoRegexes = buildTypoRegexes(typoPatterns);
@@ -97,10 +103,13 @@ const validateSqlScript = (sql, typoPatterns) => {
         });
     }
 
-    if (!FROM_PATTERN.test(trimmed)) {
+    const requireFrom = FROM_REQUIRED_DIALECTS.has(
+        String(dbType ?? "").toLowerCase(),
+    );
+    if (requireFrom && !FROM_PATTERN.test(trimmed)) {
         issues.push({
             severity: "error",
-            message: "FROM 절이 필요합니다.",
+            message: "FROM 절이 필요합니다. (Oracle 은 스칼라 SELECT 에도 FROM DUAL 이 필요합니다)",
         });
     }
 
@@ -224,8 +233,8 @@ const highlightSql = (code) =>
 const SQL_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 const SqlEditorModal = ({ open, onClose }) => {
-    // mode: "edit" — 기존 활성 API의 SQL 파일을 편집
-    //       "create" — 새 sqlId로 sql/<id>.sql 파일을 생성
+    // mode: "edit"   — 기존 활성 API에 연결된 SQL 쿼리를 편집 (설정 DB에 저장)
+    //       "create" — 새 sqlId 로 설정 DB에 SQL 쿼리를 등록
     const [mode, setMode] = useState("edit");
 
     const [endpoints, setEndpoints] = useState([]);
@@ -244,15 +253,18 @@ const SqlEditorModal = ({ open, onClose }) => {
     const [newSqlId, setNewSqlId] = useState("");
     const [existingSqlFiles, setExistingSqlFiles] = useState([]);
 
-    const issues = useMemo(
-        () => validateSqlScript(sqlText, typoPatterns),
-        [sqlText, typoPatterns],
-    );
-    const hasError = issues.some((issue) => issue.severity === "error");
     const selectedEndpoint = useMemo(
         () => endpoints.find((item) => item.id === selectedApiId) ?? null,
         [endpoints, selectedApiId],
     );
+    // Create mode has no connection yet → dbType undefined → validator stays permissive.
+    const currentDbType =
+        mode === "edit" ? selectedEndpoint?.dbType : undefined;
+    const issues = useMemo(
+        () => validateSqlScript(sqlText, typoPatterns, currentDbType),
+        [sqlText, typoPatterns, currentDbType],
+    );
+    const hasError = issues.some((issue) => issue.severity === "error");
 
     const trimmedNewSqlId = newSqlId.trim();
     const newSqlIdValid = SQL_ID_PATTERN.test(trimmedNewSqlId);
@@ -366,8 +378,8 @@ const SqlEditorModal = ({ open, onClose }) => {
                 setOriginalSql(nextSql);
                 setSuccessMessage(
                     response?.created
-                        ? `새 SQL 파일을 생성했습니다: ${response.fileName}`
-                        : `기존 SQL 파일을 덮어썼습니다: ${response.fileName}`,
+                        ? `새 SQL 쿼리를 설정 DB에 등록했습니다: ${trimmedNewSqlId}`
+                        : `기존 SQL 쿼리를 덮어썼습니다: ${trimmedNewSqlId}`,
                 );
                 // Refresh file list so duplicate-detection stays accurate.
                 try {
@@ -385,7 +397,7 @@ const SqlEditorModal = ({ open, onClose }) => {
                 setSqlText(nextSql);
                 setOriginalSql(nextSql);
                 setSuccessMessage(
-                    "SQL 스크립트를 저장했습니다. 다음 API 호출부터 반영됩니다.",
+                    "SQL 쿼리를 설정 DB에 저장했습니다. 다음 API 호출부터 반영됩니다.",
                 );
             }
         } catch (saveError) {
@@ -432,12 +444,12 @@ const SqlEditorModal = ({ open, onClose }) => {
                     <div>
                         <h3>API SQL 편집</h3>
                         <p className='sql-editor-subtitle'>
-                            활성화된 API의 SQL 스크립트를 서버에 직접
-                            반영합니다.
+                            SQL 쿼리를 설정 DB에 저장하여 모든 A-A 노드에
+                            즉시 반영합니다.
                         </p>
                     </div>
-                    <button className='close-btn' onClick={onClose}>
-                        ✕
+                    <button className='close-btn' onClick={onClose} aria-label='닫기'>
+                        <IconClose size={16} />
                     </button>
                 </div>
 
@@ -465,7 +477,7 @@ const SqlEditorModal = ({ open, onClose }) => {
                             onClick={() => handleModeChange("create")}
                             disabled={saving}
                         >
-                            새 SQL 파일
+                            새 SQL 쿼리
                         </button>
                     </div>
 
@@ -507,9 +519,7 @@ const SqlEditorModal = ({ open, onClose }) => {
                     ) : (
                         <div className='sql-toolbar-grid'>
                             <div className='form-group'>
-                                <label htmlFor='sql-new-id'>
-                                    SQL ID (파일명)
-                                </label>
+                                <label htmlFor='sql-new-id'>SQL ID</label>
                                 <input
                                     id='sql-new-id'
                                     type='text'
@@ -529,23 +539,23 @@ const SqlEditorModal = ({ open, onClose }) => {
                                 )}
                                 {newSqlIdValid && newSqlIdAlreadyExists && (
                                     <p className='sql-id-hint warn'>
-                                        같은 이름의 파일이 이미 존재합니다 — 저장 시 덮어씁니다.
+                                        같은 ID의 쿼리가 이미 존재합니다 — 저장 시 덮어씁니다.
                                     </p>
                                 )}
                                 {newSqlIdValid && !newSqlIdAlreadyExists && (
                                     <p className='sql-id-hint ok'>
-                                        저장 시 sql/{trimmedNewSqlId}.sql 파일이 생성됩니다.
+                                        저장 시 설정 DB에 <code>{trimmedNewSqlId}</code> 쿼리가 등록됩니다.
                                     </p>
                                 )}
                             </div>
 
                             <div className='sql-summary-group'>
                                 <label className='sql-summary-label'>
-                                    저장 경로
+                                    저장 위치
                                 </label>
                                 <div className='sql-endpoint-summary'>
                                     <span className='sql-summary-value'>
-                                        ./sql/{trimmedNewSqlId || "<id>"}.sql
+                                        설정 DB · monigrid_sql_queries.{trimmedNewSqlId || "<id>"}
                                     </span>
                                 </div>
                             </div>
@@ -634,8 +644,8 @@ const SqlEditorModal = ({ open, onClose }) => {
                         {saving
                             ? "저장 중..."
                             : mode === "create"
-                              ? "새 SQL 파일 저장"
-                              : "서버 SQL 저장"}
+                              ? "새 SQL 쿼리 저장"
+                              : "SQL 저장"}
                     </button>
                 </div>
 
@@ -644,15 +654,15 @@ const SqlEditorModal = ({ open, onClose }) => {
                         <div className='sql-save-confirm-dialog'>
                             <h4>
                                 {mode === "create"
-                                    ? "새 SQL 파일 생성"
+                                    ? "새 SQL 쿼리 등록"
                                     : "SQL 변경 저장"}
                             </h4>
                             <p>
                                 {mode === "create"
                                     ? newSqlIdAlreadyExists
-                                        ? `같은 이름의 파일이 존재합니다. sql/${trimmedNewSqlId}.sql 을 덮어씁니까?`
-                                        : `sql/${trimmedNewSqlId}.sql 파일을 새로 생성하시겠습니까?`
-                                    : "변경된 SQL을 서버 파일에 저장하시겠습니까? 저장 후 다음 API 호출부터 즉시 반영됩니다."}
+                                        ? `같은 ID의 쿼리가 설정 DB에 존재합니다. '${trimmedNewSqlId}' 을(를) 덮어씁니까?`
+                                        : `'${trimmedNewSqlId}' 쿼리를 설정 DB에 새로 등록하시겠습니까?`
+                                    : "변경된 SQL을 설정 DB에 저장하시겠습니까? 저장 후 다음 API 호출부터 모든 노드에 즉시 반영됩니다."}
                             </p>
                             <div className='sql-save-confirm-actions'>
                                 <button

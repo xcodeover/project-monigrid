@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Use npm only — yarn.lock has been removed; ignore it so a stray
+# `yarn install` doesn't re-introduce a parallel lockfile.
+yarn.lock
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

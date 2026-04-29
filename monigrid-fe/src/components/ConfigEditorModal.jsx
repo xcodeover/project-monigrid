@@ -1,6 +1,15 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { configService } from "../services/api";
+import PasswordInput from "./PasswordInput";
+import MonitorTargetsTab from "./MonitorTargetsTab";
+import {
+    IconChevronRight,
+    IconClose,
+    IconCopy,
+    IconPlus,
+    IconTrash,
+} from "./icons";
 import "./ConfigEditorModal.css";
 
 /* ── Section metadata for the config editor ────────────────────── */
@@ -17,17 +26,54 @@ const LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"];
 
 const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
 
+// "status" → "status-2", "ms-sql-123" → "ms-sql-124". Mirrors the pattern used
+// by the server-resource widget so the copy UX feels consistent across modals.
+const incrementLabel = (label) => {
+    const text = String(label || "");
+    const m = text.match(/^(.*?)(\d+)$/);
+    if (m) return m[1] + (parseInt(m[2], 10) + 1);
+    return text ? `${text}-2` : "";
+};
+
+const nextAvailable = (label, existing) => {
+    let candidate = incrementLabel(label);
+    while (candidate && existing.has(candidate)) {
+        candidate = incrementLabel(candidate);
+    }
+    return candidate;
+};
+
+const insertAfter = (arr, idx, item) => [
+    ...arr.slice(0, idx + 1),
+    item,
+    ...arr.slice(idx + 1),
+];
+
+// Shift index-keyed collapsed-state map so entries after `idx` move down by one,
+// and mark the newly inserted slot (idx+1) as expanded.
+const shiftCollapsedForInsert = (prev, idx) => {
+    const next = {};
+    Object.keys(prev).forEach((k) => {
+        const i = Number(k);
+        if (i <= idx) next[i] = prev[k];
+        else next[i + 1] = prev[k];
+    });
+    next[idx + 1] = false;
+    return next;
+};
+
 /* ── Sub-components ────────────────────────────────────────────── */
 
-const ConnectionEditor = ({ conn, index, onChange, onRemove, collapsed, onToggle }) => {
+const ConnectionEditor = ({ conn, index, onChange, onRemove, onDuplicate, collapsed, onToggle }) => {
     const update = (field, value) => onChange(index, { ...conn, [field]: value });
     return (
         <div className={`cfg-card ${collapsed ? "cfg-card-collapsed" : ""}`}>
             <div className="cfg-card-header" onClick={onToggle} style={{ cursor: "pointer" }}>
-                <span className={`cfg-card-chevron ${collapsed ? "" : "open"}`}>&#9654;</span>
+                <span className={`cfg-card-chevron ${collapsed ? "" : "open"}`}><IconChevronRight size={12} /></span>
                 <span className="cfg-card-title">{conn.id || `Connection ${index + 1}`}</span>
                 <span className="cfg-card-badge">{OS_TYPE_LABELS[conn.db_type] || conn.db_type}</span>
-                <button type="button" className="cfg-remove-btn" onClick={(e) => { e.stopPropagation(); onRemove(index); }} title="삭제">✕</button>
+                <button type="button" className="cfg-duplicate-btn" onClick={(e) => { e.stopPropagation(); onDuplicate(index); }} title="복제"><IconCopy size={14} /></button>
+                <button type="button" className="cfg-remove-btn" onClick={(e) => { e.stopPropagation(); onRemove(index); }} title="삭제"><IconTrash size={14} /></button>
             </div>
             {!collapsed && (
                 <div className="cfg-card-body">
@@ -54,7 +100,7 @@ const ConnectionEditor = ({ conn, index, onChange, onRemove, collapsed, onToggle
                             <input type="text" value={conn.username || ""} onChange={(e) => update("username", e.target.value)} />
                         </label>
                         <label><span>비밀번호</span>
-                            <input type="password" value={conn.password || ""} onChange={(e) => update("password", e.target.value)} />
+                            <PasswordInput value={conn.password || ""} onChange={(e) => update("password", e.target.value)} />
                         </label>
                     </div>
                 </div>
@@ -63,19 +109,20 @@ const ConnectionEditor = ({ conn, index, onChange, onRemove, collapsed, onToggle
     );
 };
 
-const ApiEndpointEditor = ({ api, index, connectionIds, onChange, onRemove, collapsed, onToggle }) => {
+const ApiEndpointEditor = ({ api, index, connectionIds, onChange, onRemove, onDuplicate, collapsed, onToggle }) => {
     const update = (field, value) => onChange(index, { ...api, [field]: value });
     return (
         <div className={`cfg-card ${collapsed ? "cfg-card-collapsed" : ""}`}>
             <div className="cfg-card-header" onClick={onToggle} style={{ cursor: "pointer" }}>
-                <span className={`cfg-card-chevron ${collapsed ? "" : "open"}`}>&#9654;</span>
+                <span className={`cfg-card-chevron ${collapsed ? "" : "open"}`}><IconChevronRight size={12} /></span>
                 <label className="cfg-toggle" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={api.enabled ?? false} onChange={(e) => update("enabled", e.target.checked)} />
                     <span className="cfg-toggle-slider" />
                 </label>
                 <span className="cfg-card-title">{api.id || `API ${index + 1}`}</span>
                 <span className="cfg-card-badge">{api.rest_api_path || "/"}</span>
-                <button type="button" className="cfg-remove-btn" onClick={(e) => { e.stopPropagation(); onRemove(index); }} title="삭제">✕</button>
+                <button type="button" className="cfg-duplicate-btn" onClick={(e) => { e.stopPropagation(); onDuplicate(index); }} title="복제"><IconCopy size={14} /></button>
+                <button type="button" className="cfg-remove-btn" onClick={(e) => { e.stopPropagation(); onRemove(index); }} title="삭제"><IconTrash size={14} /></button>
             </div>
             {!collapsed && (
                 <div className="cfg-card-body">
@@ -278,6 +325,16 @@ export default function ConfigEditorModal({ open, onClose }) {
             { id: "", db_type: "oracle", jdbc_driver_class: "oracle.jdbc.OracleDriver", jdbc_url: "", username: "", password: "" },
         ]);
     };
+    const handleConnectionDuplicate = (idx) => {
+        setConnections((prev) => {
+            const src = prev[idx];
+            if (!src) return prev;
+            const existingIds = new Set(prev.map((c) => c.id).filter(Boolean));
+            const dup = { ...src, id: nextAvailable(src.id, existingIds) };
+            return insertAfter(prev, idx, dup);
+        });
+        setCollapsedConns((prev) => shiftCollapsedForInsert(prev, idx));
+    };
 
     /* ── api helpers ──────────────────────── */
     const connectionIds = connections.map((c) => c.id).filter(Boolean);
@@ -302,6 +359,21 @@ export default function ConfigEditorModal({ open, onClose }) {
             { id: "", rest_api_path: "/api/", connection_id: connectionIds[0] || "", refresh_interval_sec: 5, enabled: true, sql_id: "" },
         ]);
     };
+    const handleApiDuplicate = (idx) => {
+        setApis((prev) => {
+            const src = prev[idx];
+            if (!src) return prev;
+            const existingIds = new Set(prev.map((a) => a.id).filter(Boolean));
+            const existingPaths = new Set(prev.map((a) => a.rest_api_path).filter(Boolean));
+            const dup = {
+                ...src,
+                id: nextAvailable(src.id, existingIds),
+                rest_api_path: nextAvailable(src.rest_api_path, existingPaths),
+            };
+            return insertAfter(prev, idx, dup);
+        });
+        setCollapsedApis((prev) => shiftCollapsedForInsert(prev, idx));
+    };
 
     if (!open) return null;
 
@@ -325,10 +397,10 @@ export default function ConfigEditorModal({ open, onClose }) {
             >
                 <div className="settings-popup-header">
                     <div>
-                        <h5>백엔드 설정 (config.json)</h5>
-                        <p>서버, DB 연결, API 엔드포인트 설정을 관리합니다.</p>
+                        <h5>백엔드 설정</h5>
+                        <p>서버, DB 연결, 데이터 API 설정을 관리합니다. 저장 시 설정 DB에 기록되어 모든 A-A 노드에 즉시 반영됩니다.</p>
                     </div>
-                    <button type="button" className="close-settings-btn" onClick={onClose}>✕</button>
+                    <button type="button" className="close-settings-btn" onClick={onClose} aria-label="닫기"><IconClose size={16} /></button>
                 </div>
 
                 {/* ── Tab bar ────────────────────────────── */}
@@ -337,7 +409,9 @@ export default function ConfigEditorModal({ open, onClose }) {
                         { key: "server", label: "서버" },
                         { key: "auth", label: "인증" },
                         { key: "connections", label: "DB 연결" },
-                        { key: "apis", label: "API 엔드포인트" },
+                        { key: "apis", label: "데이터 API" },
+                        { key: "serverTargets", label: "서버 리소스" },
+                        { key: "networkTargets", label: "네트워크 체크" },
                         { key: "logging", label: "로깅" },
                         { key: "advanced", label: "고급" },
                     ].map((tab) => (
@@ -406,7 +480,7 @@ export default function ConfigEditorModal({ open, onClose }) {
                                             <input type="text" value={auth.username || ""} onChange={(e) => setAuth((p) => ({ ...p, username: e.target.value }))} />
                                         </label>
                                         <label><span>Password</span>
-                                            <input type="password" value={auth.password || ""} onChange={(e) => setAuth((p) => ({ ...p, password: e.target.value }))} />
+                                            <PasswordInput value={auth.password || ""} onChange={(e) => setAuth((p) => ({ ...p, password: e.target.value }))} />
                                         </label>
                                     </div>
                                 </div>
@@ -417,14 +491,16 @@ export default function ConfigEditorModal({ open, onClose }) {
                                 <div className="cfg-section">
                                     <div className="cfg-section-header">
                                         <span>DB 연결 ({connections.length}개)</span>
-                                        <button type="button" className="cfg-add-btn" onClick={handleConnectionAdd}>＋ 추가</button>
+                                        <button type="button" className="cfg-add-btn" onClick={handleConnectionAdd}><IconPlus size={14} /> 추가</button>
                                     </div>
                                     {connections.length === 0 ? (
                                         <div className="cfg-empty">등록된 연결이 없습니다.</div>
                                     ) : (
                                         connections.map((conn, i) => (
                                             <ConnectionEditor key={i} conn={conn} index={i}
-                                                onChange={handleConnectionChange} onRemove={handleConnectionRemove}
+                                                onChange={handleConnectionChange}
+                                                onRemove={handleConnectionRemove}
+                                                onDuplicate={handleConnectionDuplicate}
                                                 collapsed={!!collapsedConns[i]}
                                                 onToggle={() => setCollapsedConns((p) => ({ ...p, [i]: !p[i] }))}
                                             />
@@ -437,21 +513,33 @@ export default function ConfigEditorModal({ open, onClose }) {
                             {activeTab === "apis" && (
                                 <div className="cfg-section">
                                     <div className="cfg-section-header">
-                                        <span>API 엔드포인트 ({apis.length}개)</span>
-                                        <button type="button" className="cfg-add-btn" onClick={handleApiAdd}>＋ 추가</button>
+                                        <span>데이터 API ({apis.length}개)</span>
+                                        <button type="button" className="cfg-add-btn" onClick={handleApiAdd}><IconPlus size={14} /> 추가</button>
                                     </div>
                                     {apis.length === 0 ? (
                                         <div className="cfg-empty">등록된 API가 없습니다.</div>
                                     ) : (
                                         apis.map((api, i) => (
                                             <ApiEndpointEditor key={i} api={api} index={i} connectionIds={connectionIds}
-                                                onChange={handleApiChange} onRemove={handleApiRemove}
+                                                onChange={handleApiChange}
+                                                onRemove={handleApiRemove}
+                                                onDuplicate={handleApiDuplicate}
                                                 collapsed={!!collapsedApis[i]}
                                                 onToggle={() => setCollapsedApis((p) => ({ ...p, [i]: !p[i] }))}
                                             />
                                         ))
                                     )}
                                 </div>
+                            )}
+
+                            {/* ── Server targets tab ──────── */}
+                            {activeTab === "serverTargets" && (
+                                <MonitorTargetsTab targetType="server_resource" />
+                            )}
+
+                            {/* ── Network targets tab ─────── */}
+                            {activeTab === "networkTargets" && (
+                                <MonitorTargetsTab targetType="network" />
                             )}
 
                             {/* ── Logging tab ─────────────── */}

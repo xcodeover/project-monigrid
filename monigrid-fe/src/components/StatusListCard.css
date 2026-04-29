@@ -80,6 +80,17 @@
     gap: 3px;
     max-height: 100%;
     overflow: auto;
+    padding: 6px 8px;
+}
+
+.status-list-compact {
+    gap: 1px;
+    padding: 4px 6px;
+}
+
+.status-list-wide {
+    gap: 4px;
+    padding: 8px 10px;
 }
 
 .status-list-item {
@@ -87,11 +98,48 @@
     align-items: center;
     gap: 7px;
     padding: 4px 8px;
+    height: 28px;
+    min-height: 28px;
+    max-height: 28px;
     border-radius: 6px;
     background: rgba(15, 29, 43, 0.78);
     border: 1px solid rgba(124, 151, 171, 0.15);
     min-width: 0;
     overflow: hidden;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+.status-list-item.mode-compact {
+    gap: 4px;
+    padding: 0 5px;
+    height: 24px;
+    min-height: 24px;
+    max-height: 24px;
+}
+
+.status-list-item.mode-wide {
+    gap: 12px;
+    padding: 0 10px;
+    height: 32px;
+    min-height: 32px;
+    max-height: 32px;
+}
+
+.status-list-pill {
+    font-size: 10px;
+    padding: 2px 5px;
+    flex-shrink: 0;
+}
+
+.mode-compact .status-list-pill {
+    font-size: 9px;
+    padding: 1px 4px;
+}
+
+.mode-wide .status-list-pill {
+    font-size: 11px;
+    padding: 2px 7px;
 }
 
 .status-list-label {
@@ -101,8 +149,19 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+}
+
+.mode-compact .status-list-label {
+    font-size: 0.68rem;
+    flex: 1;
+}
+
+.mode-wide .status-list-label {
+    font-size: 0.82rem;
+    max-width: 32%;
     flex-shrink: 0;
-    max-width: 28%;
 }
 
 .status-list-url {
@@ -116,12 +175,28 @@
     text-align: right;
 }
 
+.mode-wide .status-list-url {
+    font-size: 0.74rem;
+}
+
 .status-list-latency {
     font-size: 0.72rem;
     font-weight: 600;
     color: #9ab0bf;
     white-space: nowrap;
     flex-shrink: 0;
+    min-width: 46px;
+    text-align: right;
+}
+
+.mode-compact .status-list-latency {
+    font-size: 0.62rem;
+    min-width: 32px;
+}
+
+.mode-wide .status-list-latency {
+    font-size: 0.78rem;
+    min-width: 56px;
 }
 
 .status-list-empty,

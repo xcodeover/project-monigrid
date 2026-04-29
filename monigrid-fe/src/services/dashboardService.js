@@ -322,6 +322,108 @@ export const configService = {
     },
 };
 
+// ── Monitor targets & snapshots (BE-centralized collection) ──────────────────
+
+export const monitorService = {
+    listTargets: async () => {
+        const response = await apiClient.get("/dashboard/monitor-targets");
+        return response.data;
+    },
+
+    createTarget: async (body) => {
+        const response = await apiClient.post("/dashboard/monitor-targets", body);
+        return response.data;
+    },
+
+    updateTarget: async (id, body) => {
+        const response = await apiClient.put(
+            `/dashboard/monitor-targets/${encodeURIComponent(id)}`,
+            body,
+        );
+        return response.data;
+    },
+
+    deleteTarget: async (id) => {
+        const response = await apiClient.delete(
+            `/dashboard/monitor-targets/${encodeURIComponent(id)}`,
+        );
+        return response.data;
+    },
+
+    /**
+     * Fetch latest collected snapshots for given target ids.
+     * @param {string[]} [ids]  optional; omit to fetch all
+     */
+    getSnapshot: async (ids) => {
+        const query = Array.isArray(ids) && ids.length > 0
+            ? `?ids=${encodeURIComponent(ids.join(","))}`
+            : "";
+        const response = await apiClient.get(`/dashboard/monitor-snapshot${query}`);
+        return response.data;
+    },
+
+    refreshTarget: async (id) => {
+        const response = await apiClient.post(
+            `/dashboard/monitor-snapshot/${encodeURIComponent(id)}/refresh`,
+        );
+        return response.data;
+    },
+};
+
+// ── Admin user management (admin only) ────────────────────────────────────
+
+export const adminUserService = {
+    list: async () => {
+        const response = await apiClient.get("/admin/users");
+        return response.data?.users || [];
+    },
+
+    create: async ({ username, password, role = "user", displayName = null, enabled = true }) => {
+        const response = await apiClient.post("/admin/users", {
+            username,
+            password,
+            role,
+            display_name: displayName,
+            enabled,
+        });
+        return response.data?.user;
+    },
+
+    update: async (username, patch) => {
+        const body = {};
+        if (patch.password !== undefined) body.password = patch.password;
+        if (patch.role !== undefined) body.role = patch.role;
+        if (patch.displayName !== undefined) body.display_name = patch.displayName;
+        if (patch.enabled !== undefined) body.enabled = patch.enabled;
+        const response = await apiClient.put(
+            `/admin/users/${encodeURIComponent(username)}`,
+            body,
+        );
+        return response.data?.user;
+    },
+
+    remove: async (username) => {
+        const response = await apiClient.delete(
+            `/admin/users/${encodeURIComponent(username)}`,
+        );
+        return response.data;
+    },
+};
+
+// ── User preferences (per-user widgets / layouts / thresholds) ──────────────
+
+export const preferencesService = {
+    get: async () => {
+        const response = await apiClient.get("/dashboard/me/preferences");
+        return response.data?.preferences || {};
+    },
+
+    save: async (preferences) => {
+        const response = await apiClient.put("/dashboard/me/preferences", { preferences });
+        return response.data?.preferences || preferences;
+    },
+};
+
 // ── Backward-compatible aggregate export (preserves existing imports) ─────────
 
 const dashboardService = {

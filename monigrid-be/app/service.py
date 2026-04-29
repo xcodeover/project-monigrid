@@ -15,33 +15,22 @@ which sub-service does the work:
 from __future__ import annotations
 
 import logging
-import os
-import sys
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .cache import EndpointCacheEntry
-from .config import ApiEndpointConfig, AppConfig, load_app_config
+from .config import ApiEndpointConfig, AppConfig
 from .db import DBConnectionPool, ensure_jvm_started
 from .db_health_service import DbHealthService
 from .endpoint_cache_manager import EndpointCacheManager
 from .jdbc_executor import JdbcQueryExecutor
 from .log_reader import LogReader
 from .logging_setup import _startup_log, configure_logging
+from .monitor_collector_manager import MonitorCollectorManager, MonitorSnapshot
+from .settings_store import SettingsStore, SqlRepository
 from .sql_editor_service import SqlEditorService
 from .utils import get_env
-
-
-def _resolve_sql_dir() -> str:
-    """Return the sql/ directory path.
-
-    - Dev mode : <repo_root>/sql/  (two levels up from this file)
-    - Frozen   : <exe_dir>/sql/    (beside the exe, editable without rebuild)
-    """
-    if getattr(sys, "frozen", False):
-        return os.path.join(os.path.dirname(sys.executable), "sql")
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sql")
 
 
 # NOTE: _normalize_db_type and _DIAGNOSTIC_SQL were moved to db_health_service.py
@@ -57,13 +46,16 @@ class MonitoringBackend:
 
     def __init__(
         self,
-        config_path: str,
+        *,
+        settings_store: SettingsStore,
+        config_reloader: Callable[[], AppConfig],
         logger: logging.Logger,
-        initial_config: AppConfig | None = None,
+        initial_config: AppConfig,
     ) -> None:
-        self.config_path = config_path
+        self.settings_store = settings_store
+        self._config_reloader = config_reloader
         self.logger = logger
-        self.config = initial_config or load_app_config(config_path)
+        self.config = initial_config
         self.executor = ThreadPoolExecutor(
             max_workers=self.config.thread_pool_size,
             thread_name_prefix="jdbc-worker",
@@ -76,7 +68,7 @@ class MonitoringBackend:
         # Use lambdas so the sub-services always observe the *current*
         # executor / db_pools / config — both `executor` and `db_pools`
         # are reassigned during reload().
-        sql_dir = _resolve_sql_dir()
+        self._sql_repository = SqlRepository(settings_store)
         self._db_health = DbHealthService(
             config_provider=lambda: self.config,
             executor_provider=lambda: self.executor,
@@ -84,7 +76,7 @@ class MonitoringBackend:
             logger=self.logger,
         )
         self._jdbc = JdbcQueryExecutor(
-            sql_dir=sql_dir,
+            sql_repository=self._sql_repository,
             config_provider=lambda: self.config,
             executor_provider=lambda: self.executor,
             pool_provider=lambda conn_id: self.db_pools[conn_id],
@@ -98,7 +90,7 @@ class MonitoringBackend:
             logger=self.logger,
         )
         self._sql_editor = SqlEditorService(
-            sql_dir=sql_dir,
+            sql_repository=self._sql_repository,
             config_provider=lambda: self.config,
             on_sql_updated=lambda endpoint, client_ip: self._cache_manager.refresh_endpoint_cache(
                 endpoint, source="sql-update", client_ip=client_ip, reset_connection=True,
@@ -106,6 +98,11 @@ class MonitoringBackend:
             logger=self.logger,
         )
         self._log_reader = LogReader(self.config.logging, self.logger)
+        self._monitor_collector = MonitorCollectorManager(
+            target_loader=self.settings_store.list_monitor_targets,
+            executor_provider=lambda: self.executor,
+            logger=self.logger,
+        )
 
         # Pre-start JVM once before any JDBC work begins, with all JDBC jars on classpath
         if self.config.connections:
@@ -119,6 +116,7 @@ class MonitoringBackend:
             except Exception as exc:
                 self.logger.error("JVM pre-start failed (will retry on first query): %s", exc)
         self._cache_manager.start()
+        self._monitor_collector.start()
         enabled_apis = [ep for ep in self.config.apis.values() if ep.enabled]
         _startup_log(
             self.logger,
@@ -136,6 +134,70 @@ class MonitoringBackend:
     def _stop_background_refreshers(self) -> None:
         # Kept for monigrid_be.py shutdown hook (still calls this name).
         self._cache_manager.stop()
+        self._monitor_collector.stop()
+
+    # ── Monitor collector (server-resource / network targets) ─────────────
+
+    def list_monitor_targets(self) -> list[dict[str, Any]]:
+        return self.settings_store.list_monitor_targets()
+
+    def get_monitor_target(self, target_id: str) -> dict[str, Any] | None:
+        return self.settings_store.get_monitor_target(target_id)
+
+    def upsert_monitor_target(self, item: dict[str, Any]) -> dict[str, Any]:
+        stored = self.settings_store.upsert_monitor_target(item)
+        # New / updated targets need the collector to re-schedule.
+        self._monitor_collector.reload()
+        return stored
+
+    def delete_monitor_target(self, target_id: str) -> None:
+        self.settings_store.delete_monitor_target(target_id)
+        self._monitor_collector.reload()
+
+    def get_monitor_snapshot(self, target_id: str) -> MonitorSnapshot | None:
+        return self._monitor_collector.get_snapshot(target_id)
+
+    def snapshot_monitor_entries(self) -> dict[str, MonitorSnapshot]:
+        return self._monitor_collector.snapshot_entries()
+
+    def refresh_monitor_target(self, target_id: str) -> MonitorSnapshot | None:
+        return self._monitor_collector.refresh_target(target_id)
+
+    # ── Per-user preferences (widget layouts, thresholds, column order) ───
+
+    def get_user_preferences(self, username: str) -> dict[str, Any]:
+        return self.settings_store.get_user_preferences(username) or {}
+
+    def save_user_preferences(
+        self, username: str, value: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.settings_store.save_user_preferences(username, value)
+
+    # ── Users (admin-managed directory) ──────────────────────────────────
+
+    def list_users(self) -> list[dict[str, Any]]:
+        return self.settings_store.list_users()
+
+    def get_user(self, username: str) -> dict[str, Any] | None:
+        return self.settings_store.get_user(username)
+
+    def create_user(self, **kwargs: Any) -> dict[str, Any]:
+        return self.settings_store.create_user(**kwargs)
+
+    def update_user(self, username: str, **kwargs: Any) -> dict[str, Any]:
+        return self.settings_store.update_user(username, **kwargs)
+
+    def delete_user(self, username: str) -> None:
+        self.settings_store.delete_user(username)
+        # Drop that user's saved UI prefs too so a recreated account starts clean.
+        self.settings_store.delete_user_preferences(username)
+
+    def has_admin_user(self) -> bool:
+        return self.settings_store.count_admin_users() > 0
+
+    def get_user_credentials(self, username: str) -> tuple[str, str, bool] | None:
+        """Return (password_hash, role, enabled) for the username, or None."""
+        return self.settings_store._get_user_hash(username)
 
     def get_cached_endpoint_entry(self, api_id: str) -> EndpointCacheEntry | None:
         return self._cache_manager.get_cached_endpoint_entry(api_id)
@@ -270,45 +332,60 @@ class MonitoringBackend:
             pool.close_all()
 
     def reload(self) -> None:
-        new_config = load_app_config(self.config_path)
+        new_config = self._config_reloader()
         old_executor = self.executor
+        # 구 풀을 별도 변수로 보관해야 한다. 그렇지 않으면 self.db_pools 가
+        # 새 dict 로 재할당된 뒤 구 풀들의 close 시점이 모호해지고, 최악의
+        # 경우 in-flight 잡이 닫힌 커넥션을 참조하는 race 가 생긴다.
+        old_pools = self.db_pools
 
         self._stop_background_refreshers()
 
-        # 1) 새 executor부터 준비 — in-flight 작업들이 구 executor에서 종료되길 기다리는
-        #    동안에도 새 요청을 처리할 수 있도록 executor 교체를 먼저 한다.
+        # 1) 새 executor + 새 풀을 모두 미리 준비한다.
         new_executor = ThreadPoolExecutor(
             max_workers=new_config.thread_pool_size,
             thread_name_prefix="jdbc-worker",
         )
-        self.executor = new_executor
+        new_pools = {
+            conn_id: DBConnectionPool(max_size=int(get_env("DB_POOL_SIZE", "5")))
+            for conn_id in new_config.connections
+        }
 
-        # 2) 구 executor를 gracefully drain.
-        #    wait=True로 기다려야 한다: wait=False면 구 executor에 제출된 in-flight
-        #    _execute_jdbc 잡들이 이후 _close_all_pools() 로 닫힌 커넥션을 참조하게
-        #    되어 예외가 튀고, 최악의 경우 JDBC 리소스가 정리되지 않은 채 남는다.
+        # 2) Atomic swap: 새 요청은 이 시점부터 새 executor + 새 풀을 본다.
+        #    sub-services 는 lambda provider 를 통해 self.executor / self.db_pools
+        #    를 매번 lookup 하므로 swap 직후 자동 반영된다.
+        self.executor = new_executor
+        self.db_pools = new_pools
+
+        # 3) 구 executor 를 gracefully drain.
+        #    wait=True 로 기다려야 한다: in-flight _execute_jdbc 잡은 자신이 시작
+        #    시점에 잡아둔 구 풀의 connection 으로 finally 정리(return/discard)
+        #    까지 마쳐야 한다. 이 단계가 끝나기 전에 구 풀을 닫으면 close 된
+        #    커넥션을 또 close 하는 race 가 생긴다.
         try:
             old_executor.shutdown(wait=True, cancel_futures=True)
         except TypeError:
-            # Python 3.8 호환 (cancel_futures는 3.9+)
+            # Python 3.8 호환 (cancel_futures 는 3.9+)
             old_executor.shutdown(wait=True)
 
-        # 3) 이제 구 풀을 안전하게 닫는다 (in-flight 잡이 없음이 보장됨).
-        self._close_all_pools()
+        # 4) 이제 in-flight 잡이 없음이 보장되므로 구 풀을 안전하게 닫는다.
+        for pool in old_pools.values():
+            pool.close_all()
 
         configure_logging(new_config.logging)
         self.logger = logging.getLogger("monitoring_backend")
         self.config = new_config
         self._cache_manager.clear()
-        self.db_pools = {
-            conn_id: DBConnectionPool(max_size=int(get_env("DB_POOL_SIZE", "5")))
-            for conn_id in new_config.connections
-        }
         # LogReader holds a snapshot of logging-config (directory / file_prefix);
         # DbHealthService / JdbcQueryExecutor / EndpointCacheManager read
         # config/executor/pools via providers so they need no refresh.
         self._log_reader.update_logging_config(new_config.logging)
         self._cache_manager.start()
+        # Monitor targets are owned by the settings DB, not AppConfig, so
+        # a config reload doesn't change which targets are active — but
+        # the collector threads were stopped by _stop_background_refreshers
+        # above, so we need to restart them.
+        self._monitor_collector.reload()
 
         enabled_apis = [ep for ep in new_config.apis.values() if ep.enabled]
         _startup_log(

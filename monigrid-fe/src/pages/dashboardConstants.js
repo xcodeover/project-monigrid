@@ -16,10 +16,6 @@ export const MIN_REFRESH_INTERVAL_SEC =
 export const MAX_REFRESH_INTERVAL_SEC =
     Math.max(MIN_REFRESH_INTERVAL_SEC, Number(import.meta.env.VITE_MAX_REFRESH_INTERVAL_SEC) || 3600);
 export const DEFAULT_WIDGET_FONT_SIZE = 13;
-export const DEFAULT_CONTENT_ZOOM = 100;
-export const MIN_CONTENT_ZOOM = 50;
-export const MAX_CONTENT_ZOOM = 150;
-export const ZOOM_STEP = 10;
 export const GRID_COLUMNS = 12;
 
 export const WIDGET_TYPE_TABLE = "table";

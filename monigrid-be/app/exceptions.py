@@ -6,7 +6,10 @@ class SqlFileNotFoundError(Exception):
     """Raised when a .sql file referenced by sql_id cannot be found."""
 
     def __init__(self, sql_id: str, sql_path: str) -> None:
-        super().__init__(f"SQL 파일을 찾을 수 없습니다: {sql_id}.sql")
+        # Keep the message English so log aggregators / non-Korean operators
+        # can read it without character-set surprises. The FE shows its own
+        # localised message based on the response code.
+        super().__init__(f"SQL file not found: {sql_id}.sql")
         self.sql_id = sql_id
         self.sql_path = sql_path
 

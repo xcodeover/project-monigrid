@@ -6,12 +6,57 @@ hitting browser CORS restrictions. Both endpoints delegate to
 """
 from __future__ import annotations
 
+import ipaddress
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
 
 from flask import jsonify, request
 
 from app.auth import require_auth
 from app.http_health_checker import check_http_url
+
+
+# Hard cap on URL length — anything longer is almost certainly an attack
+# payload (path-traversal, header injection) rather than a real endpoint.
+_MAX_URL_LEN = 2048
+_ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+# Operators in tightly-segmented networks can flip this to "1" to refuse
+# private/loopback targets entirely (an SSRF defense that's only safe when
+# you don't need to monitor anything internal).
+_BLOCK_PRIVATE = (os.environ.get("HEALTHCHECK_BLOCK_PRIVATE", "0").strip() == "1")
+
+
+def _validate_target_url(target_url: str) -> str | None:
+    """Return None if URL is acceptable, or a short error string otherwise.
+
+    Always rejects: file://, gopher://, javascript: and similar schemes that
+    have no business being proxied through an HTTP-only checker — these
+    were the original SSRF vectors. http/https are accepted regardless of
+    target host because this is a monitoring tool that legitimately probes
+    LAN services; flip HEALTHCHECK_BLOCK_PRIVATE=1 to lock that down.
+    """
+    if not target_url:
+        return "url is required"
+    if len(target_url) > _MAX_URL_LEN:
+        return f"url is too long (max {_MAX_URL_LEN})"
+    try:
+        parsed = urlparse(target_url)
+    except ValueError:
+        return "url is malformed"
+    if parsed.scheme.lower() not in _ALLOWED_SCHEMES:
+        return "url scheme must be http or https"
+    if not parsed.hostname:
+        return "url must include a host"
+    if _BLOCK_PRIVATE:
+        try:
+            ip = ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            ip = None
+        if ip is not None and (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved):
+            return "private or loopback hosts are not allowed"
+    return None
 
 
 def _clamp_timeout(value, default: float = 10.0) -> float:
@@ -36,8 +81,9 @@ def register(app, backend, limiter) -> None:
         """
         request_json = request.get_json(silent=True) or {}
         target_url = str(request_json.get("url", "")).strip()
-        if not target_url:
-            return jsonify({"message": "url is required"}), 400
+        validation_error = _validate_target_url(target_url)
+        if validation_error:
+            return jsonify({"message": validation_error}), 400
         timeout_sec = _clamp_timeout(request_json.get("timeout"), default=10.0)
         return jsonify(check_http_url(target_url, timeout_sec)), 200
 
@@ -60,10 +106,11 @@ def register(app, backend, limiter) -> None:
         def _check_one(item):
             target_url = str(item.get("url", "")).strip()
             item_id = item.get("id", target_url)
-            if not target_url:
+            validation_error = _validate_target_url(target_url)
+            if validation_error:
                 return {
                     "id": item_id, "ok": False, "httpStatus": None,
-                    "responseTimeMs": 0, "body": None, "error": "url is required",
+                    "responseTimeMs": 0, "body": None, "error": validation_error,
                 }
             timeout_sec = _clamp_timeout(item.get("timeout"), default=10.0)
             result = check_http_url(target_url, timeout_sec)
