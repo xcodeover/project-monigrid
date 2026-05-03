@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 from .cache import EndpointCacheEntry
 from .config import ApiEndpointConfig, AppConfig
-from .db import DBConnectionPool, ensure_jvm_started
+from .db import DBConnectionPool, ensure_jvm_started, jvm_classpath_missing
 from .db_health_service import DbHealthService
 from .endpoint_cache_manager import EndpointCacheManager
 from .jdbc_executor import JdbcQueryExecutor
@@ -333,6 +333,28 @@ class MonitoringBackend:
 
     def reload(self) -> None:
         new_config = self._config_reloader()
+
+        # JPype only honours the classpath given at startJVM time. If the
+        # operator added a connection pointing at a jar that wasn't loaded
+        # on this process's start, every query against that connection
+        # will throw ClassNotFoundException until the BE is restarted —
+        # surface that loudly here so the operator doesn't have to grep
+        # for the cryptic JVM error.
+        new_jars = list(dict.fromkeys(
+            jar
+            for conn in new_config.connections.values()
+            for jar in conn.jdbc_jars
+        ))
+        missing_jars = jvm_classpath_missing(new_jars)
+        if missing_jars:
+            self.logger.error(
+                "Reload introduced JDBC jars not on the running JVM classpath — "
+                "queries against the new connections will fail with "
+                "ClassNotFoundException until the BE process is restarted. "
+                "missing=%s",
+                missing_jars,
+            )
+
         old_executor = self.executor
         # 구 풀을 별도 변수로 보관해야 한다. 그렇지 않으면 self.db_pools 가
         # 새 dict 로 재할당된 뒤 구 풀들의 close 시점이 모호해지고, 최악의

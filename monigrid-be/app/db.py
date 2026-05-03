@@ -18,6 +18,11 @@ except ImportError:
 
 _jvm_lock = threading.Lock()
 _jvm_started = False
+# Records which jar paths were on the JVM classpath at startJVM time. JPype
+# can't extend a running JVM's classpath, so reload() compares its desired
+# jars against this set to detect drivers that would silently 404 with
+# `ClassNotFoundException` until the process restarts.
+_jvm_classpath: set[str] = set()
 _logger = logging.getLogger("monitoring_backend")
 
 # Transient connect failures (DB restart, brief network blip) heal on their
@@ -53,6 +58,8 @@ def ensure_jvm_started(
             return
         if jpype.isJVMStarted():
             _jvm_started = True
+            if classpath:
+                _jvm_classpath.update(classpath)
             _logger.info("JVM already running (started externally), skipping jpype.startJVM")
             return
 
@@ -82,14 +89,27 @@ def ensure_jvm_started(
                 convertStrings=True,
             )
             _jvm_started = True
+            _jvm_classpath.update(cp_entries)
             _logger.info("JVM started successfully")
         except OSError as e:
             if "already started" in str(e).lower() or "JVM is already started" in str(e):
                 _jvm_started = True
+                _jvm_classpath.update(cp_entries)
                 _logger.warning("JVM start raised OSError but JVM is running: %s", e)
             else:
                 _logger.error("Failed to start JVM: %s", e)
                 raise
+
+
+def jvm_classpath_missing(jars: list[str]) -> list[str]:
+    """Return the subset of `jars` that is NOT on the running JVM's classpath.
+
+    Used by reload() to detect newly-added JDBC drivers that the running
+    JVM cannot pick up — JPype starts the JVM exactly once and won't extend
+    its classpath at runtime, so anything missing here will throw
+    `ClassNotFoundException` on first use and require a process restart.
+    """
+    return [j for j in jars if j and j not in _jvm_classpath]
 
 
 class DBConnectionPool:
