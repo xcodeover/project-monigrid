@@ -85,6 +85,13 @@ const PUSH_DEBOUNCE_MS = 400;
 let pushTimer = null;
 let pushPromise = Promise.resolve();
 let serverSyncEnabled = false;
+// While the post-login pull is in flight, `serverSyncEnabled` is false, so
+// a user mutation in that window would normally be a no-op for queueServerPush
+// AND its in-memory state would be clobbered when the server response is
+// applied via set(). These flags let the sync path detect that conflict and
+// preserve the user's local edits (local wins, push to server).
+let _syncInFlight = false;
+let _dirtyDuringSync = false;
 
 const setServerSyncEnabled = (enabled) => {
     serverSyncEnabled = !!enabled;
@@ -101,6 +108,7 @@ const snapshotForServer = (state) => ({
 });
 
 const queueServerPush = () => {
+    if (_syncInFlight) _dirtyDuringSync = true;
     if (!serverSyncEnabled) return;
     if (pushTimer) clearTimeout(pushTimer);
     pushTimer = setTimeout(() => {
@@ -275,6 +283,8 @@ export const useDashboardStore = create((set) => ({
      * login from another device sees the same layout.
      */
     syncPreferencesFromServer: async () => {
+        _syncInFlight = true;
+        _dirtyDuringSync = false;
         try {
             const remote = await preferencesService.get();
             const hasRemote = remote && (
@@ -283,6 +293,17 @@ export const useDashboardStore = create((set) => ({
                 remote.dashboardSettings
             );
             if (hasRemote) {
+                // The user may have mutated state while we were waiting on
+                // the server (add widget / drag layout). Their edits are
+                // already in localStorage + in-memory; clobbering them with
+                // the server snapshot would silently drop the new widget.
+                // Detect that and prefer local — push it up to make the
+                // server eventually consistent.
+                if (_dirtyDuringSync) {
+                    setServerSyncEnabled(true);
+                    queueServerPush();
+                    return { source: "local-wins" };
+                }
                 const remoteWidgets = Array.isArray(remote.widgets) ? remote.widgets : null;
                 const remoteLayouts = remote.layouts && typeof remote.layouts === "object"
                     ? remote.layouts : {};
@@ -327,6 +348,8 @@ export const useDashboardStore = create((set) => ({
                 console.warn("[dashboardStore] preferences sync failed:", err?.message || err);
             }
             return { source: "local", error: err };
+        } finally {
+            _syncInFlight = false;
         }
     },
 
