@@ -74,6 +74,28 @@ const widgetNeedsFreshData = (widget) => {
     return getEnabledCriteriaColumns(criteria).length > 0;
 };
 
+// Stable string hash (mulberry-ish, FNV-1a in spirit). Used to compute a
+// deterministic per-widget phase shift so 30 widgets sharing a 5s interval
+// don't all fire on the same tick — that "thundering herd" filled the
+// browser's per-host connection budget (6) and queued the tail behind it,
+// stretching tail latency past the next interval and tripping in-flight
+// guards. Deterministic (vs Math.random) keeps phases stable across reloads.
+const stringHash = (s) => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return Math.abs(h);
+};
+
+// Spread starts across 30% of the interval (capped at 1.5s so the user's
+// first paint isn't visibly delayed for long-interval widgets).
+const computeStartDelayMs = (widgetId, intervalSec) => {
+    const windowMs = Math.min(1500, Math.floor(intervalSec * 300));
+    if (windowMs <= 0) return 0;
+    return stringHash(String(widgetId || "")) % windowMs;
+};
+
 const scheduleKeyFor = (widget) => {
     const intervalSec = clampIntervalSec(widget.refreshIntervalSec ?? 5);
     // status-list now keys on the registered http_status target id list — the
@@ -263,7 +285,6 @@ const useWidgetApiData = (widgets) => {
             }
 
             scheduleKeyRef.current[widget.id] = key;
-            fetchWidget(widget);
             // Resolve the widget from widgetsRef on every tick instead of
             // capturing it in the closure: a setting edit (criteria, table
             // formatting, etc.) won't change the schedule key but still
@@ -271,10 +292,19 @@ const useWidgetApiData = (widgets) => {
             // would keep the old settings until the user toggles something
             // that does invalidate the schedule key.
             const widgetId = widget.id;
-            timersRef.current[widgetId] = setInterval(() => {
+            const startDelay = computeStartDelayMs(widgetId, intervalSec);
+            const tick = () => {
                 const latest = widgetsRef.current.find((w) => w.id === widgetId);
                 if (latest) fetchWidget(latest);
-            }, intervalSec * 1000);
+            };
+            // Phase the first fetch via setTimeout, then start the interval
+            // from that offset so subsequent ticks inherit the per-widget
+            // phase. clearInterval/clearTimeout share an ID space in
+            // browsers, so the cleanup paths can clear either kind safely.
+            timersRef.current[widgetId] = setTimeout(() => {
+                tick();
+                timersRef.current[widgetId] = setInterval(tick, intervalSec * 1000);
+            }, startDelay);
         });
 
         // Only clean up all timers on full unmount (not on every widgets change)
