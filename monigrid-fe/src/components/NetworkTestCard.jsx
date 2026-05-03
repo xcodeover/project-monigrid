@@ -23,6 +23,9 @@ import {
     toGridSize,
     toUserSize,
 } from "./widgetUtils.js";
+
+const NETWORK_TEST_COMPACT_THRESHOLD_USER = 3;
+const NETWORK_TEST_NORMAL_THRESHOLD_USER = 6;
 import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./NetworkTestCard.css";
@@ -127,8 +130,14 @@ const NetworkTestCard = ({
     const [snapshotTargets, setSnapshotTargets] = useState([]);
     const targets = useSnapshot ? snapshotTargets : legacyTargets;
 
-    const widgetW = currentSize?.w ?? 4;
-    const displayMode = widgetW <= 3 ? "compact" : widgetW <= 6 ? "normal" : "wide";
+    // 그리드 해상도 doubling 이후 기준이 어긋나지 않도록 user-unit 으로 비교.
+    const userW = toUserSize(currentSize?.w ?? 8);
+    const displayMode =
+        userW <= NETWORK_TEST_COMPACT_THRESHOLD_USER
+            ? "compact"
+            : userW <= NETWORK_TEST_NORMAL_THRESHOLD_USER
+              ? "normal"
+              : "wide";
 
     /* ── per-target state map ────────────────────────────────────── */
     const [targetStates, setTargetStates] = useState({});

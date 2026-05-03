@@ -18,6 +18,9 @@ import {
     toGridSize,
     toUserSize,
 } from "./widgetUtils.js";
+
+const STATUS_LIST_COMPACT_THRESHOLD_USER = 3;
+const STATUS_LIST_NORMAL_THRESHOLD_USER = 6;
 import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./StatusListCard.css";
@@ -74,9 +77,15 @@ const StatusListCard = ({
     const failCount = Number(data?.failCount || 0);
 
     // NetworkTestCard와 동일한 폭 기반 모드 분기.
-    // compact(≤3)에서는 URL/latency 라벨을 숨겨 한 줄 텍스트만 남긴다.
-    const widgetW = currentSize?.w ?? 4;
-    const displayMode = widgetW <= 3 ? "compact" : widgetW <= 6 ? "normal" : "wide";
+    // compact(≤3 user units)에서는 URL/latency 라벨을 숨겨 한 줄 텍스트만 남긴다.
+    // 그리드 해상도가 12→24 로 doubling 되었으므로 비교는 user-unit 기준으로 한다.
+    const userW = toUserSize(currentSize?.w ?? 8);
+    const displayMode =
+        userW <= STATUS_LIST_COMPACT_THRESHOLD_USER
+            ? "compact"
+            : userW <= STATUS_LIST_NORMAL_THRESHOLD_USER
+              ? "normal"
+              : "wide";
 
     useEffect(() => {
         setSizeDraft({

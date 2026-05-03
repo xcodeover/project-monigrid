@@ -29,6 +29,7 @@ import ServerRow from "./ServerRow";
 import ServerDetailPopup from "./ServerDetailPopup";
 import ServerResourceSettingsModal from "./ServerResourceSettingsModal";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
+import { toUserSize } from "./widgetUtils.js";
 import {
     sortAlertsFirst,
     useAutoScrollTopOnDataChange,
@@ -72,13 +73,19 @@ const ServerResourceCard = ({
     const servers = useSnapshot ? snapshotServers : legacyServers;
 
     /* ── display mode based on grid width ────────────────────────── */
-    const widgetW = currentSize?.w ?? 4;
+    // Compare in user units (1.0 = old 12-col cell, post-migration 2 grid cells)
+    // so the breakpoints stay stable across grid-resolution changes. The
+    // server-resource row packs label + host + 3 metric bars + values; with
+    // half-unit sizing operators frequently size these widgets at 3.5–4.0
+    // user units where the metrics start overlapping in "normal" mode, so the
+    // compact/mini cutoffs are bumped slightly compared to the other widgets.
+    const userW = toUserSize(currentSize?.w ?? 8);
     const displayMode =
-        widgetW <= 2
+        userW <= 2.5
             ? "mini"
-            : widgetW <= 3
+            : userW <= 4
               ? "compact"
-              : widgetW <= 6
+              : userW <= 7
                 ? "normal"
                 : "wide";
 

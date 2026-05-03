@@ -103,7 +103,7 @@
 
 /* server name */
 .srv-row-label {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     color: var(--text-primary, #e2e8f0);
     white-space: nowrap;
@@ -111,19 +111,23 @@
     text-overflow: ellipsis;
     flex-shrink: 1;
     max-width: 25%;
-    min-width: 40px;
+    min-width: 36px;
 }
 
 .mode-compact .srv-row-label {
-    font-size: 11px;
+    font-size: 10px;
     max-width: 30%;
-    min-width: 24px;
+    min-width: 22px;
 }
 
 .mode-mini .srv-row-label {
-    font-size: 10px;
+    font-size: 9px;
     max-width: 28%;
-    min-width: 18px;
+    min-width: 16px;
+}
+
+.mode-wide .srv-row-label {
+    font-size: 12px;
 }
 
 /* host address */
@@ -168,7 +172,7 @@
 .srv-row-metrics {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
     flex: 1;
     min-width: 0;
     justify-content: flex-end;
@@ -182,6 +186,10 @@
 
 .mode-mini .srv-row-metrics {
     gap: 2px;
+}
+
+.mode-wide .srv-row-metrics {
+    gap: 10px;
 }
 
 .srv-metric {
@@ -201,7 +209,7 @@
 }
 
 .srv-metric-label {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     color: var(--text-secondary, #94a3b8);
     white-space: nowrap;
@@ -210,11 +218,15 @@
 }
 
 .mode-compact .srv-metric-label {
-    font-size: 9px;
+    font-size: 8px;
 }
 
 .mode-mini .srv-metric-label {
-    font-size: 8px;
+    font-size: 7px;
+}
+
+.mode-wide .srv-metric-label {
+    font-size: 11px;
 }
 
 /* inline bar */
@@ -235,8 +247,8 @@
 }
 
 .srv-inline-bar-track {
-    width: 40px;
-    min-width: 14px;
+    width: 32px;
+    min-width: 12px;
     height: 6px;
     background: rgba(255, 255, 255, 0.06);
     border-radius: 3px;
@@ -272,10 +284,10 @@
 }
 
 .srv-inline-bar-val {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     white-space: nowrap;
-    min-width: 36px;
+    min-width: 32px;
     text-align: right;
     flex-shrink: 0;
 }
@@ -290,13 +302,18 @@
 }
 
 .mode-compact .srv-inline-bar-val {
-    font-size: 10px;
-    min-width: 26px;
+    font-size: 9px;
+    min-width: 24px;
 }
 
 .mode-mini .srv-inline-bar-val {
-    font-size: 9px;
-    min-width: 22px;
+    font-size: 8px;
+    min-width: 20px;
+}
+
+.mode-wide .srv-inline-bar-val {
+    font-size: 12px;
+    min-width: 38px;
 }
 
 /* ── Empty / loading states ──────────────────────────────────────── */
