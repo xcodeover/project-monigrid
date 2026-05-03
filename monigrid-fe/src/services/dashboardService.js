@@ -24,14 +24,15 @@ export const dataService = {
     /**
      * @param {string|null} _apiId  (호환성을 위해 유지, 사용 안 함)
      * @param {string} endpoint     호출할 경로/URL
-     * @param {{fresh?: boolean}} [options]  fresh=true 면 백엔드 캐시를 우회 (?fresh=1).
-     *        criteria 기반 알람처럼 실시간성이 필요한 폴링에서 사용.
+     * @param {{fresh?: boolean, signal?: AbortSignal}} [options]
+     *        fresh=true 면 백엔드 캐시를 우회 (?fresh=1).
+     *        signal 은 AbortController.signal — 위젯 제거 시 in-flight 응답을 끊는다.
      */
     getApiData: async (_apiId, endpoint, options = {}) => {
         const url = options?.fresh
             ? `${endpoint}${endpoint.includes("?") ? "&" : "?"}fresh=1`
             : endpoint;
-        const response = await apiClient.get(url);
+        const response = await apiClient.get(url, { signal: options?.signal });
         return response.data;
     },
 
@@ -90,15 +91,16 @@ const needsProxy = (url) =>
     !isElectron() && isCrossOrigin(url) && !isOurBackendUrl(url);
 
 export const healthService = {
-    checkEndpointHealth: async (endpoint) => {
+    checkEndpointHealth: async (endpoint, { signal } = {}) => {
         // In web mode, use the backend proxy for cross-origin URLs to avoid CORS
         if (needsProxy(endpoint)) {
             const startedAt = Date.now();
             try {
-                const response = await apiClient.post("/dashboard/health-check-proxy", {
-                    url: endpoint,
-                    timeout: 10,
-                });
+                const response = await apiClient.post(
+                    "/dashboard/health-check-proxy",
+                    { url: endpoint, timeout: 10 },
+                    { signal },
+                );
                 return {
                     httpStatus: response.data.httpStatus,
                     ok: response.data.ok === true,
@@ -119,7 +121,7 @@ export const healthService = {
         }
 
         const startedAt = Date.now();
-        const response = await apiClient.get(endpoint, { validateStatus: () => true });
+        const response = await apiClient.get(endpoint, { validateStatus: () => true, signal });
         return {
             httpStatus: response.status,
             ok: response.status === 200,
@@ -353,12 +355,13 @@ export const monitorService = {
     /**
      * Fetch latest collected snapshots for given target ids.
      * @param {string[]} [ids]  optional; omit to fetch all
+     * @param {{signal?: AbortSignal}} [options]
      */
-    getSnapshot: async (ids) => {
+    getSnapshot: async (ids, { signal } = {}) => {
         const query = Array.isArray(ids) && ids.length > 0
             ? `?ids=${encodeURIComponent(ids.join(","))}`
             : "";
-        const response = await apiClient.get(`/dashboard/monitor-snapshot${query}`);
+        const response = await apiClient.get(`/dashboard/monitor-snapshot${query}`, { signal });
         return response.data;
     },
 

@@ -25,6 +25,10 @@ const useApiData = (endpoint, interval = null) => {
 
     // Bumped on every (endpoint) change so stale responses can be ignored.
     const epochRef = useRef(0);
+    // Holds the current AbortController so endpoint changes / unmount can
+    // cancel the in-flight request body instead of letting it download to
+    // completion and parse JSON before being dropped by the epoch guard.
+    const controllerRef = useRef(null);
 
     const fetchData = useCallback(
         async (attempt = 1) => {
@@ -35,6 +39,13 @@ const useApiData = (endpoint, interval = null) => {
 
             const myEpoch = epochRef.current;
 
+            // Abort any prior in-flight request for this hook instance.
+            if (controllerRef.current) {
+                try { controllerRef.current.abort(); } catch { /* ignore */ }
+            }
+            const controller = new AbortController();
+            controllerRef.current = controller;
+
             setData((prev) => {
                 if (prev === null) setLoading(true);
                 else setRefreshing(true);
@@ -42,12 +53,17 @@ const useApiData = (endpoint, interval = null) => {
             });
 
             try {
-                const response = await dashboardService.getApiData("", endpoint);
+                const response = await dashboardService.getApiData("", endpoint, {
+                    signal: controller.signal,
+                });
                 if (myEpoch !== epochRef.current) return; // stale, drop
                 setData(response);
                 setError(null);
             } catch (err) {
                 if (myEpoch !== epochRef.current) return; // stale, drop
+                if (controller.signal.aborted || err?.name === "CanceledError" || err?.code === "ERR_CANCELED") {
+                    return; // intentional abort, leave state alone
+                }
                 if (isRetryable(err) && attempt < MAX_RETRIES) {
                     await sleep(RETRY_DELAY * Math.pow(2, attempt - 1));
                     if (myEpoch !== epochRef.current) return;
@@ -90,6 +106,10 @@ const useApiData = (endpoint, interval = null) => {
             // Cleanup also bumps the epoch so the unmount window doesn't
             // setState on a dead component.
             epochRef.current += 1;
+            if (controllerRef.current) {
+                try { controllerRef.current.abort(); } catch { /* ignore */ }
+                controllerRef.current = null;
+            }
         };
     }, [endpoint, interval, fetchData]);
 

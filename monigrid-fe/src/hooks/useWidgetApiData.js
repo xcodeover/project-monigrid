@@ -98,6 +98,10 @@ const useWidgetApiData = (widgets) => {
     const timersRef = useRef({});
     const scheduleKeyRef = useRef({});
     const inFlightRef = useRef({});
+    // Per-widget AbortController so that widget removal / hook unmount
+    // doesn't leave dead requests downloading the body and parsing JSON
+    // (which still happens after epoch guards drop the result).
+    const controllersRef = useRef({});
     const widgetsRef = useRef(widgets);
     const resultsRef = useRef(results);
 
@@ -118,6 +122,10 @@ const useWidgetApiData = (widgets) => {
             return inFlightRef.current[widgetId];
         }
 
+        const controller = new AbortController();
+        controllersRef.current[widgetId] = controller;
+        const signal = controller.signal;
+
         const intervalSec = clampIntervalSec(widget.refreshIntervalSec ?? 5);
         const requestStartedAt = Date.now();
         const hasPreviousData = resultsRef.current[widgetId]?.data != null;
@@ -130,18 +138,19 @@ const useWidgetApiData = (widgets) => {
 
         const fetchPromise = (() => {
             if (widgetType === "health-check") {
-                return healthService.checkEndpointHealth(widget.endpoint);
+                return healthService.checkEndpointHealth(widget.endpoint, { signal });
             }
             if (widgetType === "status-list") {
                 // Hit the BE-shared monitor-snapshot cache instead of the
                 // per-request proxy fan-out. Multiple users staring at the
                 // same dashboard now share one collector per target.
                 return monitorService
-                    .getSnapshot(widget.targetIds)
+                    .getSnapshot(widget.targetIds, { signal })
                     .then(transformMonitorSnapshotToStatusList);
             }
             return dataService.getApiData(widgetId, widget.endpoint, {
                 fresh: widgetNeedsFreshData(widget),
+                signal,
             });
         })()
             .then((data) => {
@@ -190,6 +199,13 @@ const useWidgetApiData = (widgets) => {
                 }));
             })
             .catch((error) => {
+                // AbortController-driven cancellations: keep the previous
+                // result and just clear the in-flight slot. Surfacing
+                // "Request aborted" as a widget error would flash the
+                // alarm UI on every widget removal.
+                if (signal.aborted || error?.name === "CanceledError" || error?.code === "ERR_CANCELED") {
+                    return;
+                }
                 setResults((prev) => ({
                     ...prev,
                     [widgetId]: {
@@ -205,6 +221,9 @@ const useWidgetApiData = (widgets) => {
                 setLoadingMap((prev) => ({ ...prev, [widgetId]: false }));
                 setRefreshingMap((prev) => ({ ...prev, [widgetId]: false }));
                 delete inFlightRef.current[widgetId];
+                if (controllersRef.current[widgetId] === controller) {
+                    delete controllersRef.current[widgetId];
+                }
             });
 
         inFlightRef.current[widgetId] = fetchPromise;
@@ -221,6 +240,11 @@ const useWidgetApiData = (widgets) => {
                 delete timersRef.current[widgetId];
                 delete scheduleKeyRef.current[widgetId];
                 delete inFlightRef.current[widgetId];
+                const controller = controllersRef.current[widgetId];
+                if (controller) {
+                    controller.abort();
+                    delete controllersRef.current[widgetId];
+                }
             }
         });
 
@@ -260,9 +284,13 @@ const useWidgetApiData = (widgets) => {
     useEffect(() => {
         return () => {
             Object.values(timersRef.current).forEach(clearInterval);
+            Object.values(controllersRef.current).forEach((c) => {
+                try { c.abort(); } catch { /* ignore */ }
+            });
             timersRef.current = {};
             scheduleKeyRef.current = {};
             inFlightRef.current = {};
+            controllersRef.current = {};
         };
     }, []);
 
