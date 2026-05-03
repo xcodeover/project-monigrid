@@ -8,6 +8,7 @@ incremental tailing.
 from __future__ import annotations
 
 import logging
+from collections import deque
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -68,13 +69,32 @@ class LogReader:
             )
             if log_file.exists():
                 try:
+                    # readlines() used to materialise the entire daily log
+                    # (potentially hundreds of MB) just to slice the tail.
+                    # Stream line-by-line into a fixed-size deque so memory
+                    # stays bounded by max_lines regardless of file size.
+                    total = 0
+                    tail: deque[str] = deque(maxlen=max_lines)
                     with open(log_file, "r", encoding="utf-8") as f:
-                        lines = [line.rstrip("\n") for line in f.readlines()]
-                        previous_count = max(0, int(log_cursor.get(date_key, 0)))
-                        if previous_count > len(lines):
-                            previous_count = 0
-                        collected_lines.extend(lines[previous_count:])
-                        next_cursor[date_key] = len(lines)
+                        for line in f:
+                            total += 1
+                            tail.append(line.rstrip("\n"))
+                    previous_count = max(0, int(log_cursor.get(date_key, 0)))
+                    if previous_count > total:
+                        previous_count = 0
+                    # tail covers lines [total - len(tail), total). If the
+                    # cursor sits inside that window, drop the already-seen
+                    # head of the tail; otherwise hand back the whole tail
+                    # (older unseen lines were going to be trimmed by the
+                    # final [-max_lines:] anyway).
+                    tail_start = total - len(tail)
+                    skip_in_tail = max(0, previous_count - tail_start)
+                    if skip_in_tail:
+                        tail_lines = list(tail)[skip_in_tail:]
+                    else:
+                        tail_lines = list(tail)
+                    collected_lines.extend(tail_lines)
+                    next_cursor[date_key] = total
                 except Exception as error:
                     self._logger.error("Failed to read log file '%s': %s", log_file, error)
             else:
