@@ -56,9 +56,19 @@ class MonitoringBackend:
         self._config_reloader = config_reloader
         self.logger = logger
         self.config = initial_config
-        self.executor = ThreadPoolExecutor(
+        # Two pools so JDBC work isn't held hostage by IO-bound monitor
+        # probes (SSH handshakes, HTTP health checks, ICMP/TCP probes) that
+        # can each pin a worker for hundreds of ms. The monitor pool is
+        # half-sized — its consumers are bursty (startup batch) but most
+        # work runs in dedicated per-target refresh threads, so a smaller
+        # pool just keeps the startup parallelism reasonable.
+        self.jdbc_executor = ThreadPoolExecutor(
             max_workers=self.config.thread_pool_size,
             thread_name_prefix="jdbc-worker",
+        )
+        self.monitor_executor = ThreadPoolExecutor(
+            max_workers=max(2, self.config.thread_pool_size // 2),
+            thread_name_prefix="monitor-worker",
         )
         self.db_pools: dict[str, DBConnectionPool] = {
             conn_id: DBConnectionPool(max_size=int(get_env("DB_POOL_SIZE", "5")))
@@ -66,25 +76,25 @@ class MonitoringBackend:
         }
         # ── Sub-services (façade pattern) ──────────────────────────────
         # Use lambdas so the sub-services always observe the *current*
-        # executor / db_pools / config — both `executor` and `db_pools`
-        # are reassigned during reload().
+        # executor / db_pools / config — both `jdbc_executor` /
+        # `monitor_executor` and `db_pools` are reassigned during reload().
         self._sql_repository = SqlRepository(settings_store)
         self._db_health = DbHealthService(
             config_provider=lambda: self.config,
-            executor_provider=lambda: self.executor,
+            executor_provider=lambda: self.jdbc_executor,
             pool_provider=lambda conn_id: self.db_pools[conn_id],
             logger=self.logger,
         )
         self._jdbc = JdbcQueryExecutor(
             sql_repository=self._sql_repository,
             config_provider=lambda: self.config,
-            executor_provider=lambda: self.executor,
+            executor_provider=lambda: self.jdbc_executor,
             pool_provider=lambda conn_id: self.db_pools[conn_id],
             logger=self.logger,
         )
         self._cache_manager = EndpointCacheManager(
             config_provider=lambda: self.config,
-            executor_provider=lambda: self.executor,
+            executor_provider=lambda: self.jdbc_executor,
             query_runner=self._jdbc.run_query,
             connection_resetter=self.reset_connections,
             logger=self.logger,
@@ -100,7 +110,7 @@ class MonitoringBackend:
         self._log_reader = LogReader(self.config.logging, self.logger)
         self._monitor_collector = MonitorCollectorManager(
             target_loader=self.settings_store.list_monitor_targets,
-            executor_provider=lambda: self.executor,
+            executor_provider=lambda: self.monitor_executor,
             logger=self.logger,
         )
 
@@ -358,7 +368,8 @@ class MonitoringBackend:
                 missing_jars,
             )
 
-        old_executor = self.executor
+        old_jdbc_executor = self.jdbc_executor
+        old_monitor_executor = self.monitor_executor
         # 구 풀을 별도 변수로 보관해야 한다. 그렇지 않으면 self.db_pools 가
         # 새 dict 로 재할당된 뒤 구 풀들의 close 시점이 모호해지고, 최악의
         # 경우 in-flight 잡이 닫힌 커넥션을 참조하는 race 가 생긴다.
@@ -367,9 +378,13 @@ class MonitoringBackend:
         self._stop_background_refreshers()
 
         # 1) 새 executor + 새 풀을 모두 미리 준비한다.
-        new_executor = ThreadPoolExecutor(
+        new_jdbc_executor = ThreadPoolExecutor(
             max_workers=new_config.thread_pool_size,
             thread_name_prefix="jdbc-worker",
+        )
+        new_monitor_executor = ThreadPoolExecutor(
+            max_workers=max(2, new_config.thread_pool_size // 2),
+            thread_name_prefix="monitor-worker",
         )
         new_pools = {
             conn_id: DBConnectionPool(max_size=int(get_env("DB_POOL_SIZE", "5")))
@@ -377,9 +392,11 @@ class MonitoringBackend:
         }
 
         # 2) Atomic swap: 새 요청은 이 시점부터 새 executor + 새 풀을 본다.
-        #    sub-services 는 lambda provider 를 통해 self.executor / self.db_pools
-        #    를 매번 lookup 하므로 swap 직후 자동 반영된다.
-        self.executor = new_executor
+        #    sub-services 는 lambda provider 를 통해 self.jdbc_executor /
+        #    self.monitor_executor / self.db_pools 를 매번 lookup 하므로
+        #    swap 직후 자동 반영된다.
+        self.jdbc_executor = new_jdbc_executor
+        self.monitor_executor = new_monitor_executor
         self.db_pools = new_pools
 
         # 3) 구 executor 를 gracefully drain.
@@ -387,11 +404,12 @@ class MonitoringBackend:
         #    시점에 잡아둔 구 풀의 connection 으로 finally 정리(return/discard)
         #    까지 마쳐야 한다. 이 단계가 끝나기 전에 구 풀을 닫으면 close 된
         #    커넥션을 또 close 하는 race 가 생긴다.
-        try:
-            old_executor.shutdown(wait=True, cancel_futures=True)
-        except TypeError:
-            # Python 3.8 호환 (cancel_futures 는 3.9+)
-            old_executor.shutdown(wait=True)
+        for executor in (old_jdbc_executor, old_monitor_executor):
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except TypeError:
+                # Python 3.8 호환 (cancel_futures 는 3.9+)
+                executor.shutdown(wait=True)
 
         # 4) 이제 in-flight 잡이 없음이 보장되므로 구 풀을 안전하게 닫는다.
         for pool in old_pools.values():
