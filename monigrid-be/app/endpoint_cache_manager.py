@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Callable
@@ -54,6 +54,13 @@ class EndpointCacheManager:
         self._cache_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
+        # Coalesces concurrent on-demand cache misses for the same api_id —
+        # without this, N simultaneous first-callers each fired their own
+        # JDBC query against an endpoint that nobody had primed yet, multi-
+        # plying load. Owner thread runs the refresh and resolves the Future;
+        # peers wait on .result(). Lock guards the dict, not the refresh.
+        self._in_flight: dict[str, Future] = {}
+        self._in_flight_lock = threading.Lock()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -328,7 +335,40 @@ class EndpointCacheManager:
                 "Cache MISS apiId=%s path=%s — refreshing on-demand clientIp=%s",
                 endpoint.api_id, endpoint.rest_api_path, client_ip,
             )
-        refreshed_entry = self.refresh_endpoint_cache(endpoint, source="on-demand", client_ip=client_ip)
+
+        api_id = endpoint.api_id
+        is_owner = False
+        with self._in_flight_lock:
+            fut = self._in_flight.get(api_id)
+            if fut is None:
+                fut = Future()
+                self._in_flight[api_id] = fut
+                is_owner = True
+
+        if is_owner:
+            try:
+                refreshed_entry = self.refresh_endpoint_cache(
+                    endpoint, source="on-demand", client_ip=client_ip,
+                )
+                fut.set_result(refreshed_entry)
+            except BaseException as exc:
+                # refresh_endpoint_cache normally swallows query errors into an
+                # entry, but JVM/library failures could escape — propagate to
+                # waiters so they don't hang indefinitely.
+                fut.set_exception(exc)
+                raise
+            finally:
+                with self._in_flight_lock:
+                    self._in_flight.pop(api_id, None)
+            refreshed_entry = fut.result()
+        else:
+            if self._logger.isEnabledFor(logging.DEBUG):
+                self._logger.debug(
+                    "Cache MISS coalesced apiId=%s — waiting on in-flight refresh clientIp=%s",
+                    api_id, client_ip,
+                )
+            refreshed_entry = fut.result()
+
         if refreshed_entry.data is not None:
             return refreshed_entry.data
 
