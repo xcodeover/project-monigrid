@@ -24,9 +24,11 @@ practical. Only Oracle / MariaDB / MS-SQL are supported.
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -354,11 +356,26 @@ def _oracle_table_exists(cur, table: str) -> bool:
 # ─── SettingsStore ────────────────────────────────────────────────────────────
 
 
+def _sync(method):
+    # Single JDBC connection is shared across collector threads, the cache
+    # refresh loop, and Flask workers — concurrent cursors on it raised
+    # `Connection is busy` / `ResultSet already closed`. RLock serializes
+    # public ops so multi-statement sequences stay atomic against peers.
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class SettingsStore:
     """Owns the JDBC connection to the settings DB and all read/write ops.
 
-    Not thread-safe at the connection level — callers hold a process-wide
-    store and should serialize writes. Reads use short-lived cursors.
+    All public methods serialize on `self._lock` (RLock) so that the single
+    JDBC connection is not addressed by two cursors simultaneously. Helpers
+    that are only invoked from already-locked methods (`_cursor`, `_upsert`,
+    `_set_meta`, `_execute_simple`, etc.) intentionally skip the decorator —
+    RLock would let them re-enter, but the extra wrapping is unnecessary.
     """
 
     def __init__(
@@ -370,6 +387,7 @@ class SettingsStore:
         self._cfg = settings_db
         self._logger = logger
         self._conn: Any = None
+        self._lock = threading.RLock()
         # Tracks whether `connect()` was ever successfully called. Without
         # this, the "you forgot to call connect()" guard in
         # `_ensure_connection_alive` would fire whenever a reconnect attempt
@@ -379,6 +397,7 @@ class SettingsStore:
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
+    @_sync
     def connect(self) -> None:
         if jaydebeapi is None:
             raise RuntimeError("jaydebeapi is required for settings DB access")
@@ -399,6 +418,7 @@ class SettingsStore:
             pass
         self._ever_connected = True
 
+    @_sync
     def close(self) -> None:
         if self._conn is None:
             return
@@ -465,6 +485,7 @@ class SettingsStore:
         self._ensure_connection_alive()
         return self._conn.cursor()
 
+    @_sync
     def commit(self) -> None:
         """Public commit hook for callers that perform writes via this store.
 
@@ -483,6 +504,7 @@ class SettingsStore:
 
     # ── bootstrap ─────────────────────────────────────────────────────────
 
+    @_sync
     def is_bootstrapped(self) -> bool:
         cur = self._cursor()
         try:
@@ -500,6 +522,7 @@ class SettingsStore:
             except Exception:
                 pass
 
+    @_sync
     def create_schema(self) -> None:
         """Create all monigrid_* tables if missing. Idempotent."""
         for stmt in _ddl_statements(self._cfg.db_type):
@@ -524,6 +547,7 @@ class SettingsStore:
             except Exception:
                 pass
 
+    @_sync
     def seed_from_config(self, config_dict: dict[str, Any], sql_files_dir: str) -> None:
         """First-run seed: write all config sections + sql/*.sql into the DB."""
         self.save_scalar_sections(config_dict)
@@ -558,6 +582,7 @@ class SettingsStore:
         "global_jdbc_jars",
     )
 
+    @_sync
     def save_scalar_sections(self, config_dict: dict[str, Any]) -> None:
         for section in self._KV_SECTIONS:
             if section in config_dict:
@@ -574,6 +599,7 @@ class SettingsStore:
             values={"value": value_json},
         )
 
+    @_sync
     def load_scalar_sections(self) -> dict[str, Any]:
         cur = self._cursor()
         try:
@@ -597,6 +623,7 @@ class SettingsStore:
 
     # ── connections ───────────────────────────────────────────────────────
 
+    @_sync
     def replace_connections(self, connections: Iterable[dict[str, Any]]) -> None:
         self._execute_simple("DELETE FROM monigrid_connections")
         for item in connections:
@@ -632,6 +659,7 @@ class SettingsStore:
             except Exception:
                 pass
 
+    @_sync
     def load_connections(self) -> list[dict[str, Any]]:
         cur = self._cursor()
         try:
@@ -679,6 +707,7 @@ class SettingsStore:
 
     # ── apis ──────────────────────────────────────────────────────────────
 
+    @_sync
     def replace_apis(self, apis: Iterable[dict[str, Any]]) -> None:
         self._execute_simple("DELETE FROM monigrid_apis")
         for item in apis:
@@ -709,6 +738,7 @@ class SettingsStore:
             except Exception:
                 pass
 
+    @_sync
     def load_apis(self) -> list[dict[str, Any]]:
         cur = self._cursor()
         try:
@@ -738,6 +768,7 @@ class SettingsStore:
 
     # ── SQL queries ───────────────────────────────────────────────────────
 
+    @_sync
     def seed_sql_files(self, sql_files_dir: str) -> None:
         """Import every *.sql file under sql_files_dir into monigrid_sql_queries."""
         if not os.path.isdir(sql_files_dir):
@@ -751,6 +782,7 @@ class SettingsStore:
                 content = f.read()
             self.upsert_sql(sql_id, content)
 
+    @_sync
     def upsert_sql(self, sql_id: str, content: str) -> None:
         self._upsert(
             table="monigrid_sql_queries",
@@ -760,6 +792,7 @@ class SettingsStore:
             also_set_updated_at=True,
         )
 
+    @_sync
     def get_sql(self, sql_id: str) -> str | None:
         cur = self._cursor()
         try:
@@ -777,6 +810,7 @@ class SettingsStore:
             return None
         return _read_clob(row[0])
 
+    @_sync
     def list_sql_ids(self) -> list[dict[str, Any]]:
         cur = self._cursor()
         try:
@@ -789,6 +823,7 @@ class SettingsStore:
                 pass
         return [{"sqlId": str(row[0])} for row in rows]
 
+    @_sync
     def delete_sql(self, sql_id: str) -> None:
         cur = self._cursor()
         try:
@@ -808,6 +843,7 @@ class SettingsStore:
     # maintain this list from the admin UI.
     _MONITOR_TARGET_TYPES = ("server_resource", "network", "http_status")
 
+    @_sync
     def list_monitor_targets(self) -> list[dict[str, Any]]:
         cur = self._cursor()
         try:
@@ -823,6 +859,7 @@ class SettingsStore:
                 pass
         return [_row_to_monitor_target(row) for row in rows]
 
+    @_sync
     def get_monitor_target(self, target_id: str) -> dict[str, Any] | None:
         cur = self._cursor()
         try:
@@ -839,6 +876,7 @@ class SettingsStore:
                 pass
         return _row_to_monitor_target(row) if row else None
 
+    @_sync
     def upsert_monitor_target(self, item: dict[str, Any]) -> dict[str, Any]:
         target_id = str(item.get("id") or "").strip()
         if not target_id:
@@ -875,6 +913,7 @@ class SettingsStore:
         assert stored is not None
         return stored
 
+    @_sync
     def delete_monitor_target(self, target_id: str) -> None:
         cur = self._cursor()
         try:
@@ -898,6 +937,7 @@ class SettingsStore:
     # on each UI change would be painful. If the stored JSON can't parse
     # we return it as-is under a `raw` key so the FE can recover.
 
+    @_sync
     def get_user_preferences(self, username: str) -> dict[str, Any] | None:
         key = _normalize_username(username)
         if not key:
@@ -925,6 +965,7 @@ class SettingsStore:
         except json.JSONDecodeError:
             return {"raw": text}
 
+    @_sync
     def save_user_preferences(self, username: str, value: dict[str, Any]) -> dict[str, Any]:
         key = _normalize_username(username)
         if not key:
@@ -942,6 +983,7 @@ class SettingsStore:
         self._conn.commit()
         return value
 
+    @_sync
     def delete_user_preferences(self, username: str) -> None:
         key = _normalize_username(username)
         if not key:
@@ -968,6 +1010,7 @@ class SettingsStore:
     # env creds can't bypass DB-managed accounts.
     _USER_ROLES = ("admin", "user")
 
+    @_sync
     def count_admin_users(self) -> int:
         cur = self._cursor()
         try:
@@ -985,6 +1028,7 @@ class SettingsStore:
             except Exception:
                 pass
 
+    @_sync
     def list_users(self) -> list[dict[str, Any]]:
         cur = self._cursor()
         try:
@@ -1000,6 +1044,7 @@ class SettingsStore:
                 pass
         return [_row_to_user(row) for row in rows]
 
+    @_sync
     def get_user(self, username: str) -> dict[str, Any] | None:
         key = _normalize_username(username)
         if not key:
@@ -1019,6 +1064,7 @@ class SettingsStore:
                 pass
         return _row_to_user(row) if row else None
 
+    @_sync
     def _get_user_hash(self, username: str) -> tuple[str, str, bool] | None:
         """Return (password_hash, role, enabled) for the username, or None."""
         key = _normalize_username(username)
@@ -1041,6 +1087,7 @@ class SettingsStore:
         hash_text = _read_clob(row[0])
         return hash_text, str(row[1] or "user"), bool(row[2])
 
+    @_sync
     def create_user(
         self,
         *,
@@ -1084,6 +1131,7 @@ class SettingsStore:
         assert stored is not None
         return stored
 
+    @_sync
     def update_user(
         self,
         username: str,
@@ -1135,6 +1183,7 @@ class SettingsStore:
         assert stored is not None
         return stored
 
+    @_sync
     def delete_user(self, username: str) -> None:
         key = _normalize_username(username)
         if not key:
@@ -1151,6 +1200,7 @@ class SettingsStore:
 
     # ── full config dict (the shape FE/config.py expects) ─────────────────
 
+    @_sync
     def load_config_dict(self) -> dict[str, Any]:
         """Assemble a dict identical in shape to the original config.json."""
         result: dict[str, Any] = {}
@@ -1160,6 +1210,7 @@ class SettingsStore:
         result["apis"] = self.load_apis()
         return result
 
+    @_sync
     def save_config_dict(self, config_dict: dict[str, Any]) -> None:
         """Persist a full config.json-shaped dict back to the DB.
 
