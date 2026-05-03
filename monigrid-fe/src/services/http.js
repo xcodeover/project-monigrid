@@ -194,6 +194,16 @@ const _pathOf = (urlOrPath) => {
     }
 };
 
+// Drops paths whose back-off window has already expired. Called on every
+// new 429 (a slow path anyway) so the map stays roughly proportional to
+// the number of currently-rate-limited paths instead of accumulating an
+// entry per unique path the session has ever been throttled on.
+const _sweepRateLimitMap = (now) => {
+    for (const [path, until] of _rateLimitByPath) {
+        if (until <= now) _rateLimitByPath.delete(path);
+    }
+};
+
 const _waitForRateLimit = (config) => {
     const now = Date.now();
     const path = _pathOf(config?.url);
@@ -235,9 +245,15 @@ apiClient.interceptors.request.use(
 // while ensuring Zustand state is wiped in step with localStorage.
 
 let _onUnauthorized = null;
+// Token-expiry bursts produce 30+ concurrent 401s (one per polling widget).
+// Without a latch, the unauthorized handler ran 30 times — each pass mutated
+// Zustand stores and reassigned window.location. Latch is reset by
+// registerUnauthorizedHandler so a fresh login re-arms naturally.
+let _unauthorizedLatched = false;
 
 export const registerUnauthorizedHandler = (handler) => {
     _onUnauthorized = typeof handler === "function" ? handler : null;
+    _unauthorizedLatched = false;
 };
 
 apiClient.interceptors.response.use(
@@ -247,8 +263,10 @@ apiClient.interceptors.response.use(
         // same path wait. If we can't parse a URL out of the failing config,
         // fall back to the legacy global window so we still slow the storm.
         if (error.response?.status === 429) {
+            const now = Date.now();
+            _sweepRateLimitMap(now);
             const waitMs = parseRetryAfterMs(error) || RATE_LIMIT_WAIT_MS;
-            const resumeAt = Date.now() + waitMs;
+            const resumeAt = now + waitMs;
             const path = _pathOf(error.config?.url);
             if (path) {
                 const prev = _rateLimitByPath.get(path) || 0;
@@ -260,7 +278,8 @@ apiClient.interceptors.response.use(
 
         const requestUrl = String(error.config?.url ?? "");
         const isLoginRequest = requestUrl.includes("/auth/login");
-        if (error.response?.status === 401 && !isLoginRequest) {
+        if (error.response?.status === 401 && !isLoginRequest && !_unauthorizedLatched) {
+            _unauthorizedLatched = true;
             // Clear both keys: leaving USER behind means the next page render
             // would briefly show stale username/role until App reads it again.
             localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
