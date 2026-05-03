@@ -120,11 +120,33 @@ install_global_exception_hooks(backend.logger)
 
 # ── Flask app factory ─────────────────────────────────────────────────────────
 
+# Operators set CORS_ALLOWED_ORIGINS to a comma-separated allowlist
+# (e.g. "https://dash.example.com,https://ops.example.com"). Empty / unset
+# falls back to wildcard so existing deploys keep working, but production
+# without an explicit list logs a warning so it's visible in the boot log.
+def _resolve_allowed_origins() -> list[str]:
+    raw = os.environ.get("CORS_ALLOWED_ORIGINS", "").strip()
+    if not raw:
+        env = (os.environ.get("FLASK_ENV") or "").strip().lower()
+        if env != "development":
+            logging.getLogger("monitoring_backend").warning(
+                "CORS_ALLOWED_ORIGINS not set; falling back to '*'. Set this "
+                "env var to a comma-separated allowlist before exposing the "
+                "BE on a shared network.",
+            )
+        return ["*"]
+    items = [item.strip() for item in raw.split(",")]
+    return [item for item in items if item]
+
+
+_ALLOWED_ORIGINS = _resolve_allowed_origins()
+_ALLOW_WILDCARD = _ALLOWED_ORIGINS == ["*"]
+
 app = Flask(__name__)
 
 CORS(
     app,
-    resources={r"/*": {"origins": "*"}},
+    resources={r"/*": {"origins": _ALLOWED_ORIGINS}},
     supports_credentials=False,
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
@@ -139,11 +161,34 @@ limiter = Limiter(
 
 # ── Middleware ────────────────────────────────────────────────────────────────
 
+def _resolve_response_origin(request_origin: str | None) -> str | None:
+    """Return the origin string to echo in Access-Control-Allow-Origin.
+
+    Returns None when the request origin is not allowed, in which case no
+    CORS headers should be set — the browser then refuses the response.
+    """
+    if _ALLOW_WILDCARD:
+        return "*"
+    if request_origin and request_origin in _ALLOWED_ORIGINS:
+        return request_origin
+    return None
+
+
 @app.after_request
 def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    # Mirror flask-cors behaviour but explicitly so the manual preflight
+    # handler below sees the same logic. Without this, flask-cors's headers
+    # were silently overwritten with a hard-coded wildcard.
+    allowed = _resolve_response_origin(request.headers.get("Origin"))
+    if allowed is not None:
+        response.headers["Access-Control-Allow-Origin"] = allowed
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        if not _ALLOW_WILDCARD:
+            # Caches must key on Origin when the response varies per origin,
+            # otherwise an intermediary could serve one origin's response
+            # to another.
+            response.headers["Vary"] = "Origin"
     return response
 
 
