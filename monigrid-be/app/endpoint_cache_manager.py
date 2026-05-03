@@ -134,14 +134,23 @@ class EndpointCacheManager:
                 api_id, endpoint.refresh_interval_sec,
             )
         while not self._stop_event.wait(endpoint.refresh_interval_sec):
-            # Reload the endpoint each tick: a config edit may have changed
-            # the interval, the SQL id, or even disabled/removed this api.
-            endpoint = self._config_provider().apis.get(api_id)
-            if endpoint is None or not endpoint.enabled:
-                break
-            if self._logger.isEnabledFor(logging.DEBUG):
-                self._logger.debug("Scheduler tick apiId=%s", api_id)
-            self.refresh_endpoint_cache(endpoint, source="scheduler", client_ip="scheduler")
+            # Settings DB blips, config_provider raising, or any other
+            # unexpected error here would otherwise propagate out of the
+            # loop and kill the scheduler thread, leaving the endpoint
+            # silently un-refreshed (a partial outage with no visible
+            # signal). Catch broadly so the thread survives transient
+            # faults; the next iteration's wait() provides the cooldown.
+            try:
+                endpoint = self._config_provider().apis.get(api_id)
+                if endpoint is None or not endpoint.enabled:
+                    break
+                if self._logger.isEnabledFor(logging.DEBUG):
+                    self._logger.debug("Scheduler tick apiId=%s", api_id)
+                self.refresh_endpoint_cache(endpoint, source="scheduler", client_ip="scheduler")
+            except Exception:
+                self._logger.exception(
+                    "Scheduler tick failed apiId=%s — thread surviving", api_id,
+                )
         if self._logger.isEnabledFor(logging.DEBUG):
             self._logger.debug("Scheduler thread exited apiId=%s", api_id)
 
