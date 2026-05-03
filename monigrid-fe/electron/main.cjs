@@ -14,6 +14,11 @@ function createWindow() {
             preload: path.join(__dirname, "preload.cjs"),
             contextIsolation: true,
             nodeIntegration: false,
+            // Renderer runs in OS-level sandbox so a compromised page can't
+            // touch the filesystem or spawn processes via Electron primitives.
+            // The preload only uses contextBridge which is sandbox-compatible.
+            sandbox: true,
+            webSecurity: true,
         },
     });
 
