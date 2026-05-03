@@ -38,18 +38,22 @@ monigrid-fe와 연동되는 Python 기반 모니터링 백엔드입니다.
 
 - **설정 DB 기반 REST API 라우팅** — `monigrid_apis` 테이블의 `rest_api_path` 로 동적 엔드포인트 생성
 - **설정 DB 기반 SQL 쿼리 실행** — `monigrid_sql_queries.content` 를 읽어 JDBC 로 실행
-- **DB 연결 풀** — 스레드 안전한 JDBC 커넥션 풀 관리
-- **설정 DB 자동 재연결** — 유휴 연결이 서버 측(`wait_timeout` 등)에서 끊겨도 커서 발급 시 `Connection.isValid(2)` 로 확인 후 자동 재연결
-- **백그라운드 캐시 자동 갱신** — 엔드포인트별 주기적 캐시 리프레시 (데몬 스레드)
+- **DB 연결 풀** — 스레드 안전한 JDBC 커넥션 풀 관리. 풀에서 커넥션을 꺼낼 때 `Connection.isValid(2)` 로 stale 여부를 검증하고, 새 커넥션 생성 시 백오프 재시도(기본 3회) 로 일시적 네트워크 단절을 흡수합니다.
+- **설정 DB 자동 재연결** — 설정 DB 연결이 서버 측(`wait_timeout` 등)에서 끊겨도 다음 호출 시 lazy retry 로 재연결 (한 번 실패해도 다음 호출에서 다시 시도).
+- **백그라운드 캐시 자동 갱신** — 엔드포인트별 주기적 캐시 리프레시 (데몬 스레드). 매 tick 마다 엔드포인트 카탈로그를 재조회하여 `refresh_interval_sec` / SQL / 활성화 변경이 즉시 반영됩니다.
 - **기동 시 캐시 워밍업** — 서버 시작 시 모든 활성 엔드포인트의 DB 쿼리를 병렬 실행하여 캐시 사전 적재
 
 ### 인증 & 보안
 
 - **JWT 로그인/인증** — `POST /auth/login`으로 토큰 발급, 모든 API에 `Bearer` 토큰 필요
-- **DB 기반 사용자 계정** — `monigrid_users` 테이블에 bcrypt 해시(비용 12) 로 비밀번호 저장, admin/user 역할을 통해 권한 구분
+- **DB 기반 사용자 계정** — `monigrid_users` 테이블에 bcrypt 해시(비용 12) 로 비밀번호 저장, admin/user 역할을 통해 권한 구분. 사용자명/비밀번호/표시 이름은 길이 상한이 적용됩니다.
 - **환경변수 부트스트랩 로그인** — `AUTH_USERNAME`/`AUTH_PASSWORD` 환경변수는 `monigrid_users` 에 admin 계정이 하나도 없을 때만 사용 가능. DB 에 admin 이 한 명이라도 생기면 환경변수 로그인은 자동 차단됩니다(마스터 잠금 방지).
-- **관리자 전용 API** — SQL Editor, 사용자 관리, 모니터 타겟 생성/수정/삭제 등 민감 작업은 admin 권한만 허용
+- **관리자 전용 API** — SQL Editor, 사용자 관리, 모니터 타겟 생성/수정/삭제, `reload-config`, 전체 캐시 리프레시 / 강제 reset_connection 등 민감 작업은 admin 권한만 허용 (단일 엔드포인트 캐시 리프레시는 일반 사용자 허용)
 - **사용자 자기보호 불변식** — admin 이 자기 계정을 삭제·비활성·다운그레이드 할 수 없도록 admin_user_routes 에서 차단
+- **에러 메시지 일반화** — 외부 응답에는 내부 예외 문자열 대신 일반화된 메시지를 반환하여 스택/내부 상세 노출을 방지 (자세한 내용은 로그 파일에서 확인)
+- **WMI / SSH 명령 안전화** — 원격 실행은 argv list + `shell=False` 로만 호출되어 자격증명/호스트가 셸 인자로 합쳐지지 않습니다.
+- **Health-check 프록시 SSRF 방어** — URL 스킴(http/https)·길이 검증, 환경변수 `HEALTHCHECK_BLOCK_PRIVATE` 로 사설 IP 차단 옵션
+- **per-endpoint 429 격리** — 한 위젯/엔드포인트의 429 가 다른 엔드포인트 폴링을 막지 않도록 endpoint 별로 cooldown 맵을 유지
 - **Rate Limiting** — Flask-Limiter 기반 요청 제한 (기본 100/분)
 
 ### 네트워크 & 서버 모니터링
@@ -67,9 +71,9 @@ monigrid-fe와 연동되는 Python 기반 모니터링 백엔드입니다.
 
 ### 운영 편의
 
-- **설정 핫 리로드** — `POST /dashboard/reload-config`로 서버 재시작 없이 설정 반영
-- **SQL Editor** — 대시보드에서 설정 DB의 SQL 쿼리 조회·수정 (관리자 전용, SELECT만 허용; MariaDB/MSSQL 은 `FROM` 없는 SELECT 허용, Oracle 만 `FROM DUAL` 요구)
-- **모니터 타겟 중앙 수집** — 서버 리소스·네트워크 타겟을 `monigrid_monitor_targets` 에 등록하면 BE 의 단일 백그라운드 수집기가 주기적으로 실행, 모든 브라우저가 `/dashboard/monitor-snapshot` 으로 동일 스냅샷 조회 (폴링 부하를 BE 에 1회 집중)
+- **설정 핫 리로드** — `POST /dashboard/reload-config`로 서버 재시작 없이 설정 반영. 새 executor + 새 풀을 atomic swap 한 후 구 executor 를 drain → 구 풀을 닫는 순서로 동작하여 진행 중이던 쿼리가 끊기지 않습니다.
+- **SQL Editor** — 대시보드에서 설정 DB의 SQL 쿼리 조회·수정 (관리자 전용, SELECT만 허용; MariaDB/MSSQL 은 `FROM` 없는 SELECT 허용, Oracle 만 `FROM DUAL` 요구). 변경 로그는 쿼리 전문 대신 `sha256` prefix 만 기록합니다.
+- **모니터 타겟 중앙 수집** — 서버 리소스 / 네트워크 / HTTP 상태(API 상태 리스트) 타겟을 `monigrid_monitor_targets` 에 등록하면 BE 의 단일 백그라운드 수집기가 주기적으로 실행, 모든 브라우저가 `/dashboard/monitor-snapshot` 으로 동일 스냅샷 조회 (폴링 부하를 BE 에 1회 집중). 수집 루프는 매 tick 마다 타겟 카탈로그를 다시 읽어 `interval_sec` 변경이 즉시 반영됩니다.
 - **사용자별 환경설정** — 위젯 레이아웃·임계값·알람 설정 등을 `monigrid_user_preferences` 에 저장하여 계정 단위로 복원 (`/dashboard/me/preferences`)
 - **설정 DB 이관 스크립트** — `migrate_settings_db.py` 로 Oracle / MariaDB / MSSQL 간 monigrid_* 테이블을 그대로 복사
 - **일자별 로그 파일** — 자동 생성 및 보관 기간 자동 정리
@@ -330,7 +334,7 @@ python exe_api_smoke_test.py
 | `monigrid_connections` | DB 연결 카탈로그 (`connections[]`) |
 | `monigrid_apis` | REST API 엔드포인트 카탈로그 (`apis[]`) |
 | `monigrid_sql_queries` | `sql_id` → SQL 본문 (CLOB/LONGTEXT/NVARCHAR(MAX)) |
-| `monigrid_monitor_targets` | BE 중앙 수집기용 타겟 카탈로그 (서버 리소스 / 네트워크) |
+| `monigrid_monitor_targets` | BE 중앙 수집기용 타겟 카탈로그 (서버 리소스 / 네트워크 / HTTP 상태) |
 | `monigrid_user_preferences` | 사용자별 UI 환경설정 JSON |
 | `monigrid_users` | 로그인 계정 — bcrypt 해시 + role(admin/user) + enabled |
 
@@ -539,15 +543,16 @@ curl -X POST http://127.0.0.1:5000/auth/login \
 
 ### 10.3 운영 관리
 
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| GET | `/health` | 서버 상태 및 로드된 API 수 (인증 불필요) |
-| GET | `/dashboard/endpoints` | 활성화된 엔드포인트 목록 |
-| POST | `/dashboard/reload-config` | 설정 재적재 (무중단) |
-| GET | `/dashboard/cache/status` | 캐시 상태 (갱신 시각, 행 수, 오류) |
-| POST | `/dashboard/cache/refresh` | 캐시 즉시 갱신 |
-| GET | `/dashboard/config` | config.json 조회 (관리자 전용) |
-| PUT | `/dashboard/config` | config.json 수정 및 핫 리로드 (관리자 전용) |
+| 메서드 | 경로 | 권한 | 설명 |
+|--------|------|------|------|
+| GET | `/health` | 불필요 | 인증 없이 status+timestamp 만 반환 (저비용 헬스 프로브) |
+| GET | `/dashboard/health` | auth | 버전 / 활성 엔드포인트 수 등 상세 상태 |
+| GET | `/dashboard/endpoints` | auth | 활성화된 엔드포인트 목록 |
+| POST | `/dashboard/reload-config` | admin | 설정 재적재 (무중단) — atomic swap 으로 진행 중 쿼리 보호 |
+| GET | `/dashboard/cache/status` | auth | 캐시 상태 (갱신 시각, 행 수, 오류) |
+| POST | `/dashboard/cache/refresh` | auth(단일) / admin(전체·reset_connection) | 캐시 즉시 갱신 |
+| GET | `/dashboard/config` | admin | 설정 조회 |
+| PUT | `/dashboard/config` | admin | 설정 수정 및 핫 리로드 |
 
 **캐시 리프레시 요청 예시:**
 
@@ -603,7 +608,7 @@ curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
 
 ### 10.7 모니터 타겟 (중앙 수집)
 
-브라우저에서 개별 위젯이 서버 리소스 / 네트워크 테스트 요청을 보내는 대신, BE 의 단일 수집기가 타겟 카탈로그를 주기적으로 실행하여 결과를 메모리에 캐시합니다.
+브라우저에서 개별 위젯이 서버 리소스 / 네트워크 테스트 / HTTP 상태 요청을 보내는 대신, BE 의 단일 수집기가 타겟 카탈로그를 주기적으로 실행하여 결과를 메모리에 캐시합니다.
 
 | 메서드 | 경로 | 권한 | 설명 |
 |--------|------|------|------|
@@ -614,7 +619,15 @@ curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
 | GET    | `/dashboard/monitor-snapshot?ids=a,b,c` | auth | 최신 스냅샷 조회 (ids 생략 시 전체) |
 | POST   | `/dashboard/monitor-snapshot/<id>/refresh` | auth | 해당 타겟 즉시 재수집 |
 
-타겟 `type` 은 `server_resource` 또는 `network` 이며, `spec` 에는 각 수집기에 전달할 파라미터(host, username, password, port 등) 가 들어갑니다.
+타겟 `type` 은 다음 세 가지 중 하나이며, `spec` 에는 각 수집기에 전달할 파라미터가 들어갑니다.
+
+| type | 용도 | 주요 spec 키 |
+|------|------|--------------|
+| `server_resource` | CPU/MEM/DISK 수집 (SSH / WMI / WinRM) | `os_type`, `host`, `username`, `password`, `port`, `domain`, `transport` |
+| `network` | Ping / Telnet 진단 | `type`(`ping`/`telnet`), `host`, `port`(telnet), `timeout` |
+| `http_status` | API 상태 리스트용 HTTP GET 프로브 | `url`(필수), `timeout_sec`(1~30, 기본 10) |
+
+> `http_status` 타겟은 v2.3+ 에서 추가되었습니다. 기존에 위젯이 직접 호출하던 `/dashboard/health-check-proxy-batch` fan-out 을 대체하므로, 같은 URL 을 보는 브라우저가 100개여도 BE 가 1회만 외부 호출을 수행합니다. 위젯 측의 자동 마이그레이션은 없으며, 새 카드로 다시 등록해야 합니다 (자세한 내용은 `monitor_collector_manager.py` 의 `_collect_one`).
 
 ### 10.8 DB 성능 진단
 
@@ -813,7 +826,7 @@ curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
 |----------|------|
 | `start_date` | 시작일 (YYYY-MM-DD) |
 | `end_date` | 종료일 (YYYY-MM-DD) |
-| `max_lines` | 최대 행 수 (기본 1000) |
+| `max_lines` | 최대 행 수 (기본 1000, 1~10000 으로 clamp) |
 | `cursor` | 페이지네이션 커서 |
 | `follow_latest` | `true`이면 최신 로그부터 |
 
