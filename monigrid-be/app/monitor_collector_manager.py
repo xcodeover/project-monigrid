@@ -148,6 +148,20 @@ class MonitorCollectorManager:
         clear_ssh_pool()
         self.start()
 
+    def forget_target(self, target_id: str) -> None:
+        """Drop a deleted target's snapshot + memoised entry.
+
+        Defensive companion to ``reload()`` on delete: even if a future
+        refactor short-circuits the full reload, this guarantees the
+        snapshot dict no longer carries the dead id (the FE would otherwise
+        keep rendering its zero-state card) and the doomed refresh thread
+        exits cleanly on its next tick once it observes the missing entry.
+        """
+        with self._snapshot_lock:
+            self._snapshots.pop(target_id, None)
+        with self._targets_lock:
+            self._targets_by_id.pop(target_id, None)
+
     # ── public API ────────────────────────────────────────────────────────
 
     def snapshot_entries(self) -> dict[str, MonitorSnapshot]:

@@ -152,6 +152,9 @@ class MonitoringBackend:
 
     def delete_monitor_target(self, target_id: str) -> None:
         self.settings_store.delete_monitor_target(target_id)
+        # Surgical cleanup before the full reload — keeps the in-memory
+        # snapshot consistent even if reload() is later short-circuited.
+        self._monitor_collector.forget_target(target_id)
         self._monitor_collector.reload()
 
     def get_monitor_snapshot(self, target_id: str) -> MonitorSnapshot | None:
