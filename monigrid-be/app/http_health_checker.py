@@ -34,12 +34,19 @@ def _check_with_requests(target_url: str, timeout_sec: float) -> dict[str, Any]:
     try:
         with _warnings.catch_warnings():
             _warnings.filterwarnings("ignore", category=InsecureRequestWarning)
+            # stream=True: a 1GB target would otherwise materialise the whole
+            # body in collector memory just to slice the first 4kB. Pull only
+            # the first chunk via iter_content; the `with` closes the conn.
             with requests.get(
-                target_url, timeout=timeout_sec, verify=False, allow_redirects=True, stream=False,
+                target_url, timeout=timeout_sec, verify=False, allow_redirects=True, stream=True,
             ) as resp:
                 elapsed_ms = int((_time.monotonic() - started) * 1000)
                 try:
-                    body = resp.text[:_BODY_BYTES_LIMIT]
+                    chunk = next(
+                        resp.iter_content(chunk_size=_BODY_BYTES_LIMIT, decode_unicode=False),
+                        b"",
+                    )
+                    body = chunk.decode("utf-8", errors="replace") if chunk else ""
                 except Exception:
                     body = None
                 status_code = resp.status_code
