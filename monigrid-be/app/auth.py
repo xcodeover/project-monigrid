@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from typing import Callable
@@ -26,7 +27,16 @@ def _resolve_jwt_secret() -> str:
     global _jwt_key_warned
     secret = get_env("JWT_SECRET_KEY", _DEFAULT_JWT_SECRET) or _DEFAULT_JWT_SECRET
     if len(secret.encode("utf-8")) < _MIN_JWT_KEY_BYTES:
-        # 보안 경고: 32바이트 미만 키는 HS256에 부적합. 기본값으로 대체한다.
+        # Production startups must abort instead of silently falling back to a
+        # public default — that fallback would let anyone holding the source
+        # forge tokens. Development still gets a single-shot warning so local
+        # `.env` setup remains friction-free.
+        if (os.environ.get("FLASK_ENV") or "").strip().lower() != "development":
+            raise RuntimeError(
+                f"JWT_SECRET_KEY must be at least {_MIN_JWT_KEY_BYTES} bytes "
+                "in non-development environments. Set FLASK_ENV=development "
+                "to bypass for local use, or generate a strong secret."
+            )
         if not _jwt_key_warned:
             logging.getLogger("monitoring_backend").warning(
                 "JWT_SECRET_KEY is shorter than %d bytes; falling back to a safe default. "
