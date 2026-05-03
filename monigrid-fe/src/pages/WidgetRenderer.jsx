@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { Component, memo } from "react";
 import ApiCard from "../components/ApiCard";
 import HealthCheckCard from "../components/HealthCheckCard";
 import LineChartCard from "../components/LineChartCard";
@@ -21,6 +21,78 @@ import {
     WIDGET_TYPE_STATUS_LIST,
 } from "./dashboardConstants";
 
+// React only catches render-time errors via an Error Boundary. Without one,
+// a single widget throwing (BigInt in JSON.stringify, recharts NaN, etc.)
+// unmounts the entire dashboard. This boundary scopes the blast to one tile.
+class WidgetErrorBoundary extends Component {
+    constructor(props) {
+        super(props);
+        this.state = { error: null };
+    }
+
+    static getDerivedStateFromError(error) {
+        return { error };
+    }
+
+    componentDidCatch(error, info) {
+        // eslint-disable-next-line no-console
+        console.error(
+            "[WidgetErrorBoundary]",
+            this.props.widgetId,
+            error,
+            info,
+        );
+    }
+
+    handleReset = () => {
+        this.setState({ error: null });
+    };
+
+    render() {
+        if (this.state.error) {
+            return (
+                <div
+                    className='api-card'
+                    role='alert'
+                    style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 8,
+                        padding: 12,
+                        textAlign: "center",
+                    }}
+                >
+                    <div style={{ fontWeight: 600 }}>
+                        {this.props.title || "위젯"}
+                    </div>
+                    <div>위젯 렌더링 오류, 새로고침을 권장합니다.</div>
+                    <div
+                        style={{
+                            fontSize: "0.8em",
+                            opacity: 0.7,
+                            wordBreak: "break-word",
+                        }}
+                    >
+                        {String(
+                            this.state.error?.message || this.state.error,
+                        )}
+                    </div>
+                    <button
+                        type='button'
+                        onClick={this.handleReset}
+                        style={{ padding: "4px 10px" }}
+                    >
+                        재시도
+                    </button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
 /**
  * Widget renderer extracted from DashboardPage (SRP).
  *
@@ -28,7 +100,7 @@ import {
  * type and forwards the appropriate props. Owns no state — every
  * callback comes from the parent DashboardPage.
  */
-const WidgetRenderer = ({
+const WidgetRendererInner = ({
     widget,
     currentLayout,
     apiData,
@@ -279,4 +351,15 @@ const _propsAreEqual = (prev, next) =>
     prev.isRefreshing === next.isRefreshing &&
     prev.widgetFontSize === next.widgetFontSize;
 
-export default memo(WidgetRenderer, _propsAreEqual);
+const MemoWidgetRendererInner = memo(WidgetRendererInner, _propsAreEqual);
+
+const WidgetRenderer = (props) => (
+    <WidgetErrorBoundary
+        widgetId={props.widget?.id}
+        title={props.widget?.title}
+    >
+        <MemoWidgetRendererInner {...props} />
+    </WidgetErrorBoundary>
+);
+
+export default WidgetRenderer;
