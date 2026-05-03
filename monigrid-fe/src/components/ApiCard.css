@@ -321,16 +321,34 @@
 .close-settings-btn {
     width: 32px;
     height: 32px;
+    padding: 0;
     border: 1px solid rgba(148, 163, 184, 0.12);
     background: transparent;
     color: var(--text-secondary);
     border-radius: 10px;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    line-height: 1;
+    transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.close-settings-btn > svg {
+    display: block;
 }
 
 .close-settings-btn:hover {
     color: var(--text-primary);
     border-color: rgba(25, 160, 255, 0.28);
+    background: rgba(25, 160, 255, 0.06);
+}
+
+.close-settings-btn:focus-visible {
+    outline: none;
+    border-color: rgba(25, 160, 255, 0.45);
+    box-shadow: 0 0 0 2px rgba(25, 160, 255, 0.18);
 }
 
 .settings-popup-body {
