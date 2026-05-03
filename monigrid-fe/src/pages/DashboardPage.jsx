@@ -303,14 +303,30 @@ const DashboardPage = () => {
         });
     }, [results, dashboardWidgets, reportWidgetStatus]);
 
-    // Intentionally not memoised: `layouts` is replaced with a new object
-    // reference on every save (react-grid-layout's onDragStop fires many
-    // times per gesture), so the previous useMemo deps changed almost as
-    // often as the parent re-rendered. The memo had cache-miss overhead
-    // without ever serving a hit. `normalizeWidgetLayout` is a cheap
-    // O(widgets) map of small objects.
-    const gridLayout = dashboardWidgets.map((widget) =>
-        normalizeWidgetLayout(widget, layouts[widget.id]),
+    // Memoised so the responsiveLayouts object below stays stable across
+    // re-renders that don't touch the widget set or saved layout map (the
+    // common case — polling results updating). `layouts` only changes
+    // when the user finishes a drag/resize (onDragStop/onResizeStop), so
+    // the dep array hits in steady state.
+    const gridLayout = useMemo(
+        () => dashboardWidgets.map((widget) =>
+            normalizeWidgetLayout(widget, layouts[widget.id]),
+        ),
+        [dashboardWidgets, layouts],
+    );
+
+    // ResponsiveGridLayout does shallow-equals on `layouts`; rebuilding the
+    // {lg, md, sm, xs, xxs} object every render forced an internal layout
+    // recomputation against 30+ children even when nothing visible changed.
+    const responsiveLayouts = useMemo(
+        () => ({
+            lg: gridLayout,
+            md: gridLayout,
+            sm: gridLayout,
+            xs: gridLayout,
+            xxs: gridLayout,
+        }),
+        [gridLayout],
     );
 
     const handleLogout = () => {
@@ -734,13 +750,7 @@ const DashboardPage = () => {
                     ) : (
                         <ResponsiveGridLayout
                             className='api-grid'
-                            layouts={{
-                                lg: gridLayout,
-                                md: gridLayout,
-                                sm: gridLayout,
-                                xs: gridLayout,
-                                xxs: gridLayout,
-                            }}
+                            layouts={responsiveLayouts}
                             breakpoints={{
                                 lg: 1200,
                                 md: 996,
