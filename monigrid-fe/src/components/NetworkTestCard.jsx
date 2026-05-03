@@ -102,6 +102,118 @@ const TargetRow = ({ target, state, displayMode }) => {
     );
 };
 
+/* ── Settings modal (lazy-mounted) ───────────────────────────────────
+   Lifted out so the draft state + sync useEffects + MonitorTargetPicker
+   only mount while the modal is open. Previously these ran on every poll
+   re-render of every NetworkTestCard, multiplied by widget count.
+   ──────────────────────────────────────────────────────────────────── */
+const NetworkTestSettingsModal = ({
+    open,
+    onClose,
+    title,
+    targetIds,
+    currentSize,
+    sizeBounds,
+    refreshIntervalSec,
+    onSizeChange,
+    onRefreshIntervalChange,
+    onWidgetMetaChange,
+    onWidgetConfigChange,
+}) => {
+    const [sizeDraft, setSizeDraft] = useState({
+        w: currentSize?.w ?? 4,
+        h: currentSize?.h ?? 5,
+    });
+    const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 10);
+    const [titleDraft, setTitleDraft] = useState(title);
+    const [selectedTargetIdsDraft, setSelectedTargetIdsDraft] = useState(
+        () => [...targetIds],
+    );
+
+    useEffect(() => {
+        setSizeDraft({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 });
+    }, [currentSize?.w, currentSize?.h]);
+    useEffect(() => {
+        setIntervalDraft(refreshIntervalSec ?? 10);
+    }, [refreshIntervalSec]);
+    useEffect(() => { setTitleDraft(title); }, [title]);
+
+    const handleSizeApply = () => {
+        const w = clamp(sizeDraft.w, sizeBounds?.minW ?? MIN_WIDGET_W, sizeBounds?.maxW ?? MAX_WIDGET_W, currentSize?.w ?? 8);
+        const h = clamp(sizeDraft.h, sizeBounds?.minH ?? MIN_WIDGET_H, sizeBounds?.maxH ?? MAX_WIDGET_H, currentSize?.h ?? 5);
+        setSizeDraft({ w, h });
+        onSizeChange(w, h);
+    };
+
+    const handleIntervalApply = () => {
+        const v = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, 10);
+        setIntervalDraft(v);
+        onRefreshIntervalChange(v);
+    };
+
+    const handleTitleApply = () => {
+        const t = titleDraft.trim();
+        if (t && t !== title) onWidgetMetaChange?.({ title: t });
+    };
+
+    const handleSaveTargets = () => {
+        onWidgetConfigChange?.({ targetIds: selectedTargetIdsDraft });
+        onClose?.();
+    };
+
+    return (
+        <WidgetSettingsModal
+            open={open}
+            onClose={onClose}
+            title='네트워크 테스트 위젯 설정'
+            subtitle={title}
+            closeOnBackdropClick={false}
+        >
+            <div className="settings-section">
+                <h6>위젯 정보</h6>
+                <div className="size-editor widget-meta-editor">
+                    <label>
+                        Title
+                        <input type="text" value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)} />
+                    </label>
+                    <button type="button" className="size-preset-btn" onClick={handleTitleApply}>적용</button>
+                </div>
+            </div>
+            <div className="settings-inline-row">
+                <div className="settings-section">
+                    <h6>위젯 크기</h6>
+                    <div className="size-editor widget-size-editor">
+                        <label>Width<input type="number" min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)} max={toUserSize(sizeBounds?.maxW ?? MAX_WIDGET_W)} step={SIZE_STEP} value={toUserSize(sizeDraft.w)} onChange={(e) => setSizeDraft((p) => ({ ...p, w: toGridSize(e.target.value) }))} /></label>
+                        <label>Height<input type="number" min={sizeBounds?.minH ?? MIN_WIDGET_H} max={sizeBounds?.maxH ?? MAX_WIDGET_H} value={sizeDraft.h} onChange={(e) => setSizeDraft((p) => ({ ...p, h: e.target.value }))} /></label>
+                        <button type="button" className="size-preset-btn" onClick={handleSizeApply}>적용</button>
+                    </div>
+                </div>
+                <div className="settings-section refresh-interval-section">
+                    <h6>갱신 주기 (초)</h6>
+                    <div className="refresh-interval-editor">
+                        <label className="refresh-interval-input-label"><span>Interval</span><input type="number" min={MIN_REFRESH_INTERVAL_SEC} max={MAX_REFRESH_INTERVAL_SEC} value={intervalDraft} onChange={(e) => setIntervalDraft(e.target.value)} /></label>
+                        <button type="button" className="size-preset-btn" onClick={handleIntervalApply}>적용</button>
+                    </div>
+                </div>
+            </div>
+            <div className="settings-section srv-list-section">
+                <div className="srv-list-header">
+                    <h6>대상 선택 ({selectedTargetIdsDraft.length}개)</h6>
+                </div>
+                <MonitorTargetPicker
+                    targetType="network"
+                    selectedIds={selectedTargetIdsDraft}
+                    onChange={setSelectedTargetIdsDraft}
+                />
+            </div>
+            <div className="srv-settings-footer">
+                <button type="button" className="size-preset-btn" onClick={onClose}>취소</button>
+                <button type="button" className="size-preset-btn srv-save-btn" onClick={handleSaveTargets}>저장 ({selectedTargetIdsDraft.length}개)</button>
+            </div>
+        </WidgetSettingsModal>
+    );
+};
+
 /* ══════════════════════════════════════════════════════════════════
    Main component
    ══════════════════════════════════════════════════════════════════ */
@@ -345,43 +457,9 @@ const NetworkTestCard = ({
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    /* ── settings draft state ────────────────────────────────────── */
-    const [sizeDraft, setSizeDraft] = useState({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 });
-    const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 10);
-    const [titleDraft, setTitleDraft] = useState(title);
-    const [selectedTargetIdsDraft, setSelectedTargetIdsDraft] = useState([]);
-
-    useEffect(() => { setSizeDraft({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 }); }, [currentSize?.w, currentSize?.h]);
-    useEffect(() => { setIntervalDraft(refreshIntervalSec ?? 10); }, [refreshIntervalSec]);
-    useEffect(() => { setTitleDraft(title); }, [title]);
-
     const openSettings = useCallback(() => {
-        setSelectedTargetIdsDraft([...targetIds]);
         setShowSettings(true);
-    }, [targetIds]);
-
-    const handleSizeApply = () => {
-        const w = clamp(sizeDraft.w, sizeBounds?.minW ?? MIN_WIDGET_W, sizeBounds?.maxW ?? MAX_WIDGET_W, currentSize?.w ?? 8);
-        const h = clamp(sizeDraft.h, sizeBounds?.minH ?? MIN_WIDGET_H, sizeBounds?.maxH ?? MAX_WIDGET_H, currentSize?.h ?? 5);
-        setSizeDraft({ w, h });
-        onSizeChange(w, h);
-    };
-
-    const handleIntervalApply = () => {
-        const v = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, 10);
-        setIntervalDraft(v);
-        onRefreshIntervalChange(v);
-    };
-
-    const handleTitleApply = () => {
-        const t = titleDraft.trim();
-        if (t && t !== title) onWidgetMetaChange?.({ title: t });
-    };
-
-    const handleSaveTargets = () => {
-        onWidgetConfigChange?.({ targetIds: selectedTargetIdsDraft });
-        setShowSettings(false);
-    };
+    }, []);
 
     const lastChecked = useMemo(() => {
         let latest = null;
@@ -390,63 +468,6 @@ const NetworkTestCard = ({
         });
         return latest;
     }, [targetStates]);
-
-    /* ── render: settings popup ──────────────────────────────────── */
-    // closeOnBackdropClick=false — 사용자가 대상 picker 에 입력한 draft 가
-    // 바깥쪽 오클릭으로 날아가는 것을 방지한다.
-    // 자체 footer (취소 / 저장 N개) 를 children 으로 그대로 두어 동적
-    // 라벨과 srv-save-btn 스타일을 보존한다.
-    const settingsPopup = (
-        <WidgetSettingsModal
-            open={showSettings}
-            onClose={() => setShowSettings(false)}
-            title='네트워크 테스트 위젯 설정'
-            subtitle={title}
-            closeOnBackdropClick={false}
-        >
-                    <div className="settings-section">
-                        <h6>위젯 정보</h6>
-                        <div className="size-editor widget-meta-editor">
-                            <label>
-                                Title
-                                <input type="text" value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)} />
-                            </label>
-                            <button type="button" className="size-preset-btn" onClick={handleTitleApply}>적용</button>
-                        </div>
-                    </div>
-                    <div className="settings-inline-row">
-                        <div className="settings-section">
-                            <h6>위젯 크기</h6>
-                            <div className="size-editor widget-size-editor">
-                                <label>Width<input type="number" min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)} max={toUserSize(sizeBounds?.maxW ?? MAX_WIDGET_W)} step={SIZE_STEP} value={toUserSize(sizeDraft.w)} onChange={(e) => setSizeDraft((p) => ({ ...p, w: toGridSize(e.target.value) }))} /></label>
-                                <label>Height<input type="number" min={sizeBounds?.minH ?? MIN_WIDGET_H} max={sizeBounds?.maxH ?? MAX_WIDGET_H} value={sizeDraft.h} onChange={(e) => setSizeDraft((p) => ({ ...p, h: e.target.value }))} /></label>
-                                <button type="button" className="size-preset-btn" onClick={handleSizeApply}>적용</button>
-                            </div>
-                        </div>
-                        <div className="settings-section refresh-interval-section">
-                            <h6>갱신 주기 (초)</h6>
-                            <div className="refresh-interval-editor">
-                                <label className="refresh-interval-input-label"><span>Interval</span><input type="number" min={MIN_REFRESH_INTERVAL_SEC} max={MAX_REFRESH_INTERVAL_SEC} value={intervalDraft} onChange={(e) => setIntervalDraft(e.target.value)} /></label>
-                                <button type="button" className="size-preset-btn" onClick={handleIntervalApply}>적용</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="settings-section srv-list-section">
-                        <div className="srv-list-header">
-                            <h6>대상 선택 ({selectedTargetIdsDraft.length}개)</h6>
-                        </div>
-                        <MonitorTargetPicker
-                            targetType="network"
-                            selectedIds={selectedTargetIdsDraft}
-                            onChange={setSelectedTargetIdsDraft}
-                        />
-                    </div>
-                <div className="srv-settings-footer">
-                    <button type="button" className="size-preset-btn" onClick={() => setShowSettings(false)}>취소</button>
-                    <button type="button" className="size-preset-btn srv-save-btn" onClick={handleSaveTargets}>저장 ({selectedTargetIdsDraft.length}개)</button>
-                </div>
-        </WidgetSettingsModal>
-    );
 
     /* ── render: main widget ─────────────────────────────────────── */
     return (
@@ -487,7 +508,21 @@ const NetworkTestCard = ({
                 </div>
             </div>
 
-            {settingsPopup}
+            {showSettings && (
+                <NetworkTestSettingsModal
+                    open
+                    onClose={() => setShowSettings(false)}
+                    title={title}
+                    targetIds={targetIds}
+                    currentSize={currentSize}
+                    sizeBounds={sizeBounds}
+                    refreshIntervalSec={refreshIntervalSec}
+                    onSizeChange={onSizeChange}
+                    onRefreshIntervalChange={onRefreshIntervalChange}
+                    onWidgetMetaChange={onWidgetMetaChange}
+                    onWidgetConfigChange={onWidgetConfigChange}
+                />
+            )}
 
             <div className="api-card-content">
                 {targets.length === 0 ? (

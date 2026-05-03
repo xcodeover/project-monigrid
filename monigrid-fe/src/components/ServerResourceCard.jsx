@@ -38,11 +38,103 @@ import "./ApiCard.css";
 import "./ServerResourceCard.css";
 
 /**
+ * Lazy-mounted draft buffer + handler bag for ServerResourceSettingsModal.
+ * Lives outside ServerResourceCard so the parent doesn't carry 4 useStates
+ * and 3 sync effects that re-run on every poll while the modal is closed.
+ */
+const ServerResourceSettingsContainer = ({
+    open,
+    onClose,
+    title,
+    targetIds,
+    currentSize,
+    sizeBounds,
+    refreshIntervalSec,
+    onSizeChange,
+    onRefreshIntervalChange,
+    onWidgetMetaChange,
+    onWidgetConfigChange,
+}) => {
+    const [sizeDraft, setSizeDraft] = useState({
+        w: currentSize?.w ?? 4,
+        h: currentSize?.h ?? 5,
+    });
+    const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 30);
+    const [titleDraft, setTitleDraft] = useState(title);
+    const [selectedTargetIdsDraft, setSelectedTargetIdsDraft] = useState(
+        () => [...targetIds],
+    );
+
+    useEffect(() => {
+        setSizeDraft({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 });
+    }, [currentSize?.w, currentSize?.h]);
+    useEffect(() => {
+        setIntervalDraft(refreshIntervalSec ?? 30);
+    }, [refreshIntervalSec]);
+    useEffect(() => { setTitleDraft(title); }, [title]);
+
+    const handleSizeApply = () => {
+        const w = clamp(
+            sizeDraft.w,
+            sizeBounds?.minW ?? MIN_WIDGET_W,
+            sizeBounds?.maxW ?? MAX_WIDGET_W,
+            currentSize?.w ?? 8,
+        );
+        const h = clamp(
+            sizeDraft.h,
+            sizeBounds?.minH ?? MIN_WIDGET_H,
+            sizeBounds?.maxH ?? MAX_WIDGET_H,
+            currentSize?.h ?? 5,
+        );
+        setSizeDraft({ w, h });
+        onSizeChange(w, h);
+    };
+
+    const handleIntervalApply = () => {
+        const v = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, 30);
+        setIntervalDraft(v);
+        onRefreshIntervalChange(v);
+    };
+
+    const handleTitleApply = () => {
+        const t = titleDraft.trim();
+        if (t && t !== title) onWidgetMetaChange?.({ title: t });
+    };
+
+    const handleSaveTargets = () => {
+        onWidgetConfigChange?.({ targetIds: selectedTargetIdsDraft });
+        onClose?.();
+    };
+
+    return (
+        <ServerResourceSettingsModal
+            open={open}
+            title={title}
+            onClose={onClose}
+            titleDraft={titleDraft}
+            onTitleDraftChange={setTitleDraft}
+            onTitleApply={handleTitleApply}
+            sizeDraft={sizeDraft}
+            sizeBounds={sizeBounds}
+            onSizeDraftChange={setSizeDraft}
+            onSizeApply={handleSizeApply}
+            intervalDraft={intervalDraft}
+            onIntervalDraftChange={setIntervalDraft}
+            onIntervalApply={handleIntervalApply}
+            selectedTargetIds={selectedTargetIdsDraft}
+            onSelectedTargetIdsChange={setSelectedTargetIdsDraft}
+            onSave={handleSaveTargets}
+        />
+    );
+};
+
+/**
  * Container for the multi-server resource monitor widget.
  *
- * Owns: server polling, per-server state, history accumulation, settings
- * draft state, alarm reporting. All visual sub-components are stateless
- * and live in their own files (SRP).
+ * Owns: server polling, per-server state, history accumulation, alarm
+ * reporting. Settings draft state lives in ServerResourceSettingsContainer
+ * which only mounts while the modal is open. All visual sub-components are
+ * stateless and live in their own files (SRP).
  */
 const ServerResourceCard = ({
     title,
@@ -421,63 +513,9 @@ const ServerResourceCard = ({
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    /* ── settings draft state ────────────────────────────────────── */
-    const [sizeDraft, setSizeDraft] = useState({
-        w: currentSize?.w ?? 4,
-        h: currentSize?.h ?? 5,
-    });
-    const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 30);
-    const [titleDraft, setTitleDraft] = useState(title);
-    const [selectedTargetIdsDraft, setSelectedTargetIdsDraft] = useState([]);
-
-    useEffect(() => {
-        setSizeDraft({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 5 });
-    }, [currentSize?.w, currentSize?.h]);
-    useEffect(() => {
-        setIntervalDraft(refreshIntervalSec ?? 30);
-    }, [refreshIntervalSec]);
-    useEffect(() => {
-        setTitleDraft(title);
-    }, [title]);
-
     const openSettings = useCallback(() => {
-        setSelectedTargetIdsDraft([...targetIds]);
         setShowSettings(true);
-    }, [targetIds]);
-
-    /* ── settings handlers ───────────────────────────────────────── */
-    const handleSizeApply = () => {
-        const w = clamp(
-            sizeDraft.w,
-            sizeBounds?.minW ?? MIN_WIDGET_W,
-            sizeBounds?.maxW ?? MAX_WIDGET_W,
-            currentSize?.w ?? 8,
-        );
-        const h = clamp(
-            sizeDraft.h,
-            sizeBounds?.minH ?? MIN_WIDGET_H,
-            sizeBounds?.maxH ?? MAX_WIDGET_H,
-            currentSize?.h ?? 5,
-        );
-        setSizeDraft({ w, h });
-        onSizeChange(w, h);
-    };
-
-    const handleIntervalApply = () => {
-        const v = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, 30);
-        setIntervalDraft(v);
-        onRefreshIntervalChange(v);
-    };
-
-    const handleTitleApply = () => {
-        const t = titleDraft.trim();
-        if (t && t !== title) onWidgetMetaChange?.({ title: t });
-    };
-
-    const handleSaveTargets = () => {
-        onWidgetConfigChange?.({ targetIds: selectedTargetIdsDraft });
-        setShowSettings(false);
-    };
+    }, []);
 
     /* ── summary info ────────────────────────────────────────────── */
     const lastUpdated = useMemo(() => {
@@ -585,24 +623,21 @@ const ServerResourceCard = ({
                 </div>
             </div>
 
-            <ServerResourceSettingsModal
-                open={showSettings}
-                title={title}
-                onClose={() => setShowSettings(false)}
-                titleDraft={titleDraft}
-                onTitleDraftChange={setTitleDraft}
-                onTitleApply={handleTitleApply}
-                sizeDraft={sizeDraft}
-                sizeBounds={sizeBounds}
-                onSizeDraftChange={setSizeDraft}
-                onSizeApply={handleSizeApply}
-                intervalDraft={intervalDraft}
-                onIntervalDraftChange={setIntervalDraft}
-                onIntervalApply={handleIntervalApply}
-                selectedTargetIds={selectedTargetIdsDraft}
-                onSelectedTargetIdsChange={setSelectedTargetIdsDraft}
-                onSave={handleSaveTargets}
-            />
+            {showSettings && (
+                <ServerResourceSettingsContainer
+                    open
+                    onClose={() => setShowSettings(false)}
+                    title={title}
+                    targetIds={targetIds}
+                    currentSize={currentSize}
+                    sizeBounds={sizeBounds}
+                    refreshIntervalSec={refreshIntervalSec}
+                    onSizeChange={onSizeChange}
+                    onRefreshIntervalChange={onRefreshIntervalChange}
+                    onWidgetMetaChange={onWidgetMetaChange}
+                    onWidgetConfigChange={onWidgetConfigChange}
+                />
+            )}
             {detailServer && (
                 <ServerDetailPopup
                     server={detailServer}

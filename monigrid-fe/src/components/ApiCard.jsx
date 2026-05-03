@@ -26,6 +26,122 @@ import ApiCardSettingsModal from "./ApiCardSettingsModal";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
 import "./ApiCard.css";
 
+/**
+ * Lazy draft buffer for ApiCardSettingsModal.
+ *
+ * Lifts size / interval / title / endpoint drafts + their 4 sync effects
+ * out of ApiCard so they only mount while the modal is open. ApiCard still
+ * owns column / criteria / widths state because those are tied to the
+ * table render and have to live in the parent regardless.
+ */
+const ApiCardSettingsContainer = ({
+    open,
+    onClose,
+    title,
+    endpoint,
+    currentSize,
+    sizeBounds,
+    refreshIntervalSec,
+    onSizeChange,
+    onRefreshIntervalChange,
+    onWidgetMetaChange,
+    // Column / criteria props are forwarded through unchanged; their state
+    // lives in the parent.
+    orderedColumns,
+    visibleColumns,
+    localColumnWidths,
+    draggingColumn,
+    dragOverColumn,
+    onColumnToggle,
+    onColumnWidthChange,
+    onColumnDragStart,
+    onColumnDragEnd,
+    onColumnDragOver,
+    onColumnDropEvent,
+    availableColumns,
+    criteriaMap,
+    onCriteriaChange,
+}) => {
+    const [sizeDraft, setSizeDraft] = useState({
+        w: currentSize?.w ?? 4,
+        h: currentSize?.h ?? 4,
+    });
+    const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 5);
+    const [titleDraft, setTitleDraft] = useState(title);
+    const [endpointDraft, setEndpointDraft] = useState(endpoint);
+
+    useEffect(() => {
+        setSizeDraft({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 4 });
+    }, [currentSize?.w, currentSize?.h]);
+    useEffect(() => { setIntervalDraft(refreshIntervalSec ?? 5); }, [refreshIntervalSec]);
+    useEffect(() => { setTitleDraft(title); }, [title]);
+    useEffect(() => { setEndpointDraft(endpoint); }, [endpoint]);
+
+    const handleSizeApply = () => {
+        const minW = sizeBounds?.minW ?? MIN_WIDGET_W;
+        const maxW = sizeBounds?.maxW ?? MAX_WIDGET_W;
+        const minH = sizeBounds?.minH ?? MIN_WIDGET_H;
+        const maxH = sizeBounds?.maxH ?? MAX_WIDGET_H;
+        const nextWidth = clamp(sizeDraft.w, minW, maxW, currentSize?.w ?? minW);
+        const nextHeight = clamp(sizeDraft.h, minH, maxH, currentSize?.h ?? minH);
+        setSizeDraft({ w: nextWidth, h: nextHeight });
+        onSizeChange(nextWidth, nextHeight);
+    };
+
+    const handleIntervalApply = () => {
+        const nextInterval = clamp(
+            intervalDraft,
+            MIN_REFRESH_INTERVAL_SEC,
+            MAX_REFRESH_INTERVAL_SEC,
+            MIN_REFRESH_INTERVAL_SEC,
+        );
+        setIntervalDraft(nextInterval);
+        onRefreshIntervalChange(nextInterval);
+    };
+
+    const handleWidgetMetaApply = () => {
+        const nextTitle = titleDraft.trim();
+        const nextEndpoint = endpointDraft.trim();
+        if (!nextTitle || !nextEndpoint) return;
+        if (nextTitle === title && nextEndpoint === endpoint) return;
+        onWidgetMetaChange?.({ title: nextTitle, endpoint: nextEndpoint });
+    };
+
+    return (
+        <ApiCardSettingsModal
+            open={open}
+            title={title}
+            onClose={onClose}
+            titleDraft={titleDraft}
+            endpointDraft={endpointDraft}
+            onTitleDraftChange={setTitleDraft}
+            onEndpointDraftChange={setEndpointDraft}
+            onWidgetMetaApply={handleWidgetMetaApply}
+            sizeDraft={sizeDraft}
+            sizeBounds={sizeBounds}
+            onSizeDraftChange={setSizeDraft}
+            onSizeApply={handleSizeApply}
+            intervalDraft={intervalDraft}
+            onIntervalDraftChange={setIntervalDraft}
+            onIntervalApply={handleIntervalApply}
+            orderedColumns={orderedColumns}
+            visibleColumns={visibleColumns}
+            localColumnWidths={localColumnWidths}
+            draggingColumn={draggingColumn}
+            dragOverColumn={dragOverColumn}
+            onColumnToggle={onColumnToggle}
+            onColumnWidthChange={onColumnWidthChange}
+            onColumnDragStart={onColumnDragStart}
+            onColumnDragEnd={onColumnDragEnd}
+            onColumnDragOver={onColumnDragOver}
+            onColumnDropEvent={onColumnDropEvent}
+            availableColumns={availableColumns}
+            criteriaMap={criteriaMap}
+            onCriteriaChange={onCriteriaChange}
+        />
+    );
+};
+
 const ApiCard = ({
     title,
     endpoint,
@@ -46,16 +162,12 @@ const ApiCard = ({
     onTableSettingsChange,
 }) => {
     const [showSettings, setShowSettings] = useState(false);
-    const [sizeDraft, setSizeDraft] = useState({ w: 4, h: 4 });
-    const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 5);
     const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
     const [selectedRow, setSelectedRow] = useState(null);
     const [clipboardRow, setClipboardRow] = useState(null);
     const [showAlertsOnly, setShowAlertsOnly] = useState(false);
     const [draggingColumn, setDraggingColumn] = useState(null);
     const [dragOverColumn, setDragOverColumn] = useState(null);
-    const [titleDraft, setTitleDraft] = useState(title);
-    const [endpointDraft, setEndpointDraft] = useState(endpoint);
 
     const dataRows = useMemo(() => normalizeData(data), [data]);
     const detectedColumns = useMemo(() => getAllColumns(data), [data]);
@@ -117,29 +229,10 @@ const ApiCard = ({
             : availableColumns;
 
     useEffect(() => {
-        setSizeDraft({
-            w: currentSize?.w ?? 4,
-            h: currentSize?.h ?? 4,
-        });
-    }, [currentSize?.w, currentSize?.h]);
-
-    useEffect(() => {
-        setIntervalDraft(refreshIntervalSec ?? 5);
-    }, [refreshIntervalSec]);
-
-    useEffect(() => {
         if (data != null) {
             setLastUpdatedAt(new Date());
         }
     }, [data]);
-
-    useEffect(() => {
-        setTitleDraft(title);
-    }, [title]);
-
-    useEffect(() => {
-        setEndpointDraft(endpoint);
-    }, [endpoint]);
 
     const columnWidths = tableSettings?.columnWidths ?? {};
     const [localColumnWidths, setLocalColumnWidths] = useState(columnWidths);
@@ -331,52 +424,6 @@ const ApiCard = ({
         }, 300);
     }, [criteriaMap, onTableSettingsChange]);
 
-    const handleSizeApply = () => {
-        const minW = sizeBounds?.minW ?? MIN_WIDGET_W;
-        const maxW = sizeBounds?.maxW ?? MAX_WIDGET_W;
-        const minH = sizeBounds?.minH ?? MIN_WIDGET_H;
-        const maxH = sizeBounds?.maxH ?? MAX_WIDGET_H;
-
-        const nextWidth = clamp(
-            sizeDraft.w,
-            minW,
-            maxW,
-            currentSize?.w ?? minW,
-        );
-        const nextHeight = clamp(
-            sizeDraft.h,
-            minH,
-            maxH,
-            currentSize?.h ?? minH,
-        );
-
-        setSizeDraft({ w: nextWidth, h: nextHeight });
-        onSizeChange(nextWidth, nextHeight);
-    };
-
-    const handleIntervalApply = () => {
-        const nextInterval = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, MIN_REFRESH_INTERVAL_SEC);
-        setIntervalDraft(nextInterval);
-        onRefreshIntervalChange(nextInterval);
-    };
-
-    const handleWidgetMetaApply = () => {
-        const nextTitle = titleDraft.trim();
-        const nextEndpoint = endpointDraft.trim();
-        if (!nextTitle || !nextEndpoint) {
-            return;
-        }
-
-        if (nextTitle === title && nextEndpoint === endpoint) {
-            return;
-        }
-
-        onWidgetMetaChange?.({
-            title: nextTitle,
-            endpoint: nextEndpoint,
-        });
-    };
-
     // Ctrl+C: 단일 클릭으로 선택된 행을 헤더 포함 TSV로 클립보드에 복사
     useEffect(() => {
         const handleKeyDown = (e) => {
@@ -511,37 +558,34 @@ const ApiCard = ({
                 </div>
             </div>
 
-            <ApiCardSettingsModal
-                open={showSettings}
-                title={title}
-                onClose={() => setShowSettings(false)}
-                titleDraft={titleDraft}
-                endpointDraft={endpointDraft}
-                onTitleDraftChange={setTitleDraft}
-                onEndpointDraftChange={setEndpointDraft}
-                onWidgetMetaApply={handleWidgetMetaApply}
-                sizeDraft={sizeDraft}
-                sizeBounds={sizeBounds}
-                onSizeDraftChange={setSizeDraft}
-                onSizeApply={handleSizeApply}
-                intervalDraft={intervalDraft}
-                onIntervalDraftChange={setIntervalDraft}
-                onIntervalApply={handleIntervalApply}
-                orderedColumns={orderedColumns}
-                visibleColumns={visibleColumns}
-                localColumnWidths={localColumnWidths}
-                draggingColumn={draggingColumn}
-                dragOverColumn={dragOverColumn}
-                onColumnToggle={handleColumnToggle}
-                onColumnWidthChange={handleColumnWidthChange}
-                onColumnDragStart={handleColumnDragStart}
-                onColumnDragEnd={handleColumnDragEnd}
-                onColumnDragOver={handleColumnDragOver}
-                onColumnDropEvent={handleColumnDropEvent}
-                availableColumns={availableColumns}
-                criteriaMap={criteriaMap}
-                onCriteriaChange={handleCriteriaChange}
-            />
+            {showSettings && (
+                <ApiCardSettingsContainer
+                    open
+                    onClose={() => setShowSettings(false)}
+                    title={title}
+                    endpoint={endpoint}
+                    currentSize={currentSize}
+                    sizeBounds={sizeBounds}
+                    refreshIntervalSec={refreshIntervalSec}
+                    onSizeChange={onSizeChange}
+                    onRefreshIntervalChange={onRefreshIntervalChange}
+                    onWidgetMetaChange={onWidgetMetaChange}
+                    orderedColumns={orderedColumns}
+                    visibleColumns={visibleColumns}
+                    localColumnWidths={localColumnWidths}
+                    draggingColumn={draggingColumn}
+                    dragOverColumn={dragOverColumn}
+                    onColumnToggle={handleColumnToggle}
+                    onColumnWidthChange={handleColumnWidthChange}
+                    onColumnDragStart={handleColumnDragStart}
+                    onColumnDragEnd={handleColumnDragEnd}
+                    onColumnDragOver={handleColumnDragOver}
+                    onColumnDropEvent={handleColumnDropEvent}
+                    availableColumns={availableColumns}
+                    criteriaMap={criteriaMap}
+                    onCriteriaChange={handleCriteriaChange}
+                />
+            )}
             <ApiCardRowDetailModal
                 row={liveSelectedRow}
                 title={title}

@@ -14,6 +14,212 @@ import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./HealthCheckCard.css";
 
+// Lifted out of HealthCheckCard so the draft state + sync effects only mount
+// while the modal is open. With 30+ widgets on the dashboard, the previous
+// design ran 4 useStates and 4 sync effects per card on every poll re-render
+// even though no modal was visible.
+const HealthCheckSettingsModal = ({
+    open,
+    onClose,
+    title,
+    endpoint,
+    currentSize,
+    sizeBounds,
+    refreshIntervalSec,
+    onSizeChange,
+    onRefreshIntervalChange,
+    onWidgetMetaChange,
+}) => {
+    const [sizeDraft, setSizeDraft] = useState({
+        w: currentSize?.w ?? 4,
+        h: currentSize?.h ?? 4,
+    });
+    const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 5);
+    const [titleDraft, setTitleDraft] = useState(title);
+    const [endpointDraft, setEndpointDraft] = useState(endpoint);
+
+    useEffect(() => {
+        setSizeDraft({
+            w: currentSize?.w ?? 4,
+            h: currentSize?.h ?? 4,
+        });
+    }, [currentSize?.w, currentSize?.h]);
+
+    useEffect(() => {
+        setIntervalDraft(refreshIntervalSec ?? 5);
+    }, [refreshIntervalSec]);
+
+    useEffect(() => {
+        setTitleDraft(title);
+    }, [title]);
+
+    useEffect(() => {
+        setEndpointDraft(endpoint);
+    }, [endpoint]);
+
+    const handleSizeApply = () => {
+        const minW = sizeBounds?.minW ?? MIN_WIDGET_W;
+        const maxW = sizeBounds?.maxW ?? MAX_WIDGET_W;
+        const minH = sizeBounds?.minH ?? MIN_WIDGET_H;
+        const maxH = sizeBounds?.maxH ?? MAX_WIDGET_H;
+
+        const nextWidth = clamp(
+            sizeDraft.w,
+            minW,
+            maxW,
+            currentSize?.w ?? minW,
+        );
+        const nextHeight = clamp(
+            sizeDraft.h,
+            minH,
+            maxH,
+            currentSize?.h ?? minH,
+        );
+
+        setSizeDraft({ w: nextWidth, h: nextHeight });
+        onSizeChange(nextWidth, nextHeight);
+    };
+
+    const handleIntervalApply = () => {
+        const nextInterval = clamp(
+            intervalDraft,
+            MIN_REFRESH_INTERVAL_SEC,
+            MAX_REFRESH_INTERVAL_SEC,
+            MIN_REFRESH_INTERVAL_SEC,
+        );
+        setIntervalDraft(nextInterval);
+        onRefreshIntervalChange(nextInterval);
+    };
+
+    const handleWidgetMetaApply = () => {
+        const nextTitle = titleDraft.trim();
+        const nextEndpoint = endpointDraft.trim();
+        if (!nextTitle || !nextEndpoint) {
+            return;
+        }
+        // 상위(DashboardPage)에서 resolveEndpointWithBase 정규화를 거치므로
+        // 입력값이 prop과 동일해 보여도 항상 콜백을 호출해 변경을 보장한다.
+        onWidgetMetaChange?.({
+            title: nextTitle,
+            endpoint: nextEndpoint,
+        });
+        onClose?.();
+    };
+
+    return (
+        <WidgetSettingsModal
+            open={open}
+            onClose={onClose}
+            title='위젯 설정'
+            subtitle={title}
+        >
+            <div className='settings-section'>
+                <h6>위젯 정보</h6>
+                <div className='size-editor widget-meta-editor'>
+                    <label>
+                        Title
+                        <input
+                            type='text'
+                            value={titleDraft}
+                            onChange={(event) =>
+                                setTitleDraft(event.target.value)
+                            }
+                        />
+                    </label>
+                    <label>
+                        Endpoint
+                        <input
+                            type='text'
+                            value={endpointDraft}
+                            onChange={(event) =>
+                                setEndpointDraft(event.target.value)
+                            }
+                        />
+                    </label>
+                    <button
+                        type='button'
+                        className='size-preset-btn'
+                        onClick={handleWidgetMetaApply}
+                    >
+                        적용
+                    </button>
+                </div>
+            </div>
+
+            <div className='settings-inline-row'>
+                <div className='settings-section'>
+                    <h6>위젯 크기</h6>
+                    <div className='size-editor widget-size-editor'>
+                        <label>
+                            Width
+                            <input
+                                type='number'
+                                min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)}
+                                max={toUserSize(sizeBounds?.maxW ?? MAX_WIDGET_W)}
+                                step={SIZE_STEP}
+                                value={toUserSize(sizeDraft.w)}
+                                onChange={(event) =>
+                                    setSizeDraft((previousDraft) => ({
+                                        ...previousDraft,
+                                        w: toGridSize(event.target.value),
+                                    }))
+                                }
+                            />
+                        </label>
+                        <label>
+                            Height
+                            <input
+                                type='number'
+                                min={sizeBounds?.minH ?? MIN_WIDGET_H}
+                                max={sizeBounds?.maxH ?? MAX_WIDGET_H}
+                                value={sizeDraft.h}
+                                onChange={(event) =>
+                                    setSizeDraft((previousDraft) => ({
+                                        ...previousDraft,
+                                        h: event.target.value,
+                                    }))
+                                }
+                            />
+                        </label>
+                        <button
+                            type='button'
+                            className='size-preset-btn'
+                            onClick={handleSizeApply}
+                        >
+                            적용
+                        </button>
+                    </div>
+                </div>
+
+                <div className='settings-section refresh-interval-section'>
+                    <h6>체크 주기 (초)</h6>
+                    <div className='refresh-interval-editor'>
+                        <label className='refresh-interval-input-label'>
+                            <span>Interval</span>
+                            <input
+                                type='number'
+                                min={MIN_REFRESH_INTERVAL_SEC}
+                                max={MAX_REFRESH_INTERVAL_SEC}
+                                value={intervalDraft}
+                                onChange={(event) =>
+                                    setIntervalDraft(event.target.value)
+                                }
+                            />
+                        </label>
+                        <button
+                            type='button'
+                            className='size-preset-btn'
+                            onClick={handleIntervalApply}
+                        >
+                            적용
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </WidgetSettingsModal>
+    );
+};
+
 const HealthCheckCard = ({
     title,
     endpoint,
@@ -31,36 +237,13 @@ const HealthCheckCard = ({
     onWidgetMetaChange,
 }) => {
     const [showSettings, setShowSettings] = useState(false);
-    const [sizeDraft, setSizeDraft] = useState({ w: 4, h: 4 });
-    const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 5);
-    const [titleDraft, setTitleDraft] = useState(title);
-    const [endpointDraft, setEndpointDraft] = useState(endpoint);
     const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
-
-    useEffect(() => {
-        setSizeDraft({
-            w: currentSize?.w ?? 4,
-            h: currentSize?.h ?? 4,
-        });
-    }, [currentSize?.w, currentSize?.h]);
-
-    useEffect(() => {
-        setIntervalDraft(refreshIntervalSec ?? 5);
-    }, [refreshIntervalSec]);
 
     useEffect(() => {
         if (healthData != null) {
             setLastUpdatedAt(new Date());
         }
     }, [healthData]);
-
-    useEffect(() => {
-        setTitleDraft(title);
-    }, [title]);
-
-    useEffect(() => {
-        setEndpointDraft(endpoint);
-    }, [endpoint]);
 
     const formatInterval = (sec) => {
         if (sec >= 3600) return `every ${Math.floor(sec / 3600)}h`;
@@ -98,167 +281,6 @@ const HealthCheckCard = ({
 
         return `HTTP ${healthData.httpStatus}`;
     }, [error, healthData, loading]);
-
-    const handleSizeApply = () => {
-        const minW = sizeBounds?.minW ?? MIN_WIDGET_W;
-        const maxW = sizeBounds?.maxW ?? MAX_WIDGET_W;
-        const minH = sizeBounds?.minH ?? MIN_WIDGET_H;
-        const maxH = sizeBounds?.maxH ?? MAX_WIDGET_H;
-
-        const nextWidth = clamp(
-            sizeDraft.w,
-            minW,
-            maxW,
-            currentSize?.w ?? minW,
-        );
-        const nextHeight = clamp(
-            sizeDraft.h,
-            minH,
-            maxH,
-            currentSize?.h ?? minH,
-        );
-
-        setSizeDraft({ w: nextWidth, h: nextHeight });
-        onSizeChange(nextWidth, nextHeight);
-    };
-
-    const handleIntervalApply = () => {
-        const nextInterval = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, MIN_REFRESH_INTERVAL_SEC);
-        setIntervalDraft(nextInterval);
-        onRefreshIntervalChange(nextInterval);
-    };
-
-    const handleWidgetMetaApply = () => {
-        const nextTitle = titleDraft.trim();
-        const nextEndpoint = endpointDraft.trim();
-        if (!nextTitle || !nextEndpoint) {
-            return;
-        }
-
-        // 상위(DashboardPage)에서 resolveEndpointWithBase 정규화를 거치므로
-        // 입력값이 prop과 동일해 보여도 항상 콜백을 호출해 변경을 보장한다.
-        onWidgetMetaChange?.({
-            title: nextTitle,
-            endpoint: nextEndpoint,
-        });
-        setShowSettings(false);
-    };
-
-    // No global apply/cancel footer here: each section has its own
-    // per-section apply button so the user can save piece by piece. We pass
-    // `onApply={undefined}` so the shared modal wrapper omits the footer.
-    const settingsPopup = (
-        <WidgetSettingsModal
-            open={showSettings}
-            onClose={() => setShowSettings(false)}
-            title='위젯 설정'
-            subtitle={title}
-        >
-                    <div className='settings-section'>
-                        <h6>위젯 정보</h6>
-                        <div className='size-editor widget-meta-editor'>
-                            <label>
-                                Title
-                                <input
-                                    type='text'
-                                    value={titleDraft}
-                                    onChange={(event) =>
-                                        setTitleDraft(event.target.value)
-                                    }
-                                />
-                            </label>
-                            <label>
-                                Endpoint
-                                <input
-                                    type='text'
-                                    value={endpointDraft}
-                                    onChange={(event) =>
-                                        setEndpointDraft(event.target.value)
-                                    }
-                                />
-                            </label>
-                            <button
-                                type='button'
-                                className='size-preset-btn'
-                                onClick={handleWidgetMetaApply}
-                            >
-                                적용
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className='settings-inline-row'>
-                        <div className='settings-section'>
-                            <h6>위젯 크기</h6>
-                            <div className='size-editor widget-size-editor'>
-                                <label>
-                                    Width
-                                    <input
-                                        type='number'
-                                        min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)}
-                                        max={toUserSize(sizeBounds?.maxW ?? MAX_WIDGET_W)}
-                                        step={SIZE_STEP}
-                                        value={toUserSize(sizeDraft.w)}
-                                        onChange={(event) =>
-                                            setSizeDraft((previousDraft) => ({
-                                                ...previousDraft,
-                                                w: toGridSize(event.target.value),
-                                            }))
-                                        }
-                                    />
-                                </label>
-                                <label>
-                                    Height
-                                    <input
-                                        type='number'
-                                        min={sizeBounds?.minH ?? MIN_WIDGET_H}
-                                        max={sizeBounds?.maxH ?? MAX_WIDGET_H}
-                                        value={sizeDraft.h}
-                                        onChange={(event) =>
-                                            setSizeDraft((previousDraft) => ({
-                                                ...previousDraft,
-                                                h: event.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                                <button
-                                    type='button'
-                                    className='size-preset-btn'
-                                    onClick={handleSizeApply}
-                                >
-                                    적용
-                                </button>
-                            </div>
-                        </div>
-
-                        <div className='settings-section refresh-interval-section'>
-                            <h6>체크 주기 (초)</h6>
-                            <div className='refresh-interval-editor'>
-                                <label className='refresh-interval-input-label'>
-                                    <span>Interval</span>
-                                    <input
-                                        type='number'
-                                        min={MIN_REFRESH_INTERVAL_SEC}
-                                        max={MAX_REFRESH_INTERVAL_SEC}
-                                        value={intervalDraft}
-                                        onChange={(event) =>
-                                            setIntervalDraft(event.target.value)
-                                        }
-                                    />
-                                </label>
-                                <button
-                                    type='button'
-                                    className='size-preset-btn'
-                                    onClick={handleIntervalApply}
-                                >
-                                    적용
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-        </WidgetSettingsModal>
-    );
 
     return (
         <div className='api-card'>
@@ -323,7 +345,20 @@ const HealthCheckCard = ({
                 </div>
             </div>
 
-            {settingsPopup}
+            {showSettings && (
+                <HealthCheckSettingsModal
+                    open
+                    onClose={() => setShowSettings(false)}
+                    title={title}
+                    endpoint={endpoint}
+                    currentSize={currentSize}
+                    sizeBounds={sizeBounds}
+                    refreshIntervalSec={refreshIntervalSec}
+                    onSizeChange={onSizeChange}
+                    onRefreshIntervalChange={onRefreshIntervalChange}
+                    onWidgetMetaChange={onWidgetMetaChange}
+                />
+            )}
 
             <div className='api-card-content'>
                 <div className='health-widget-content'>
