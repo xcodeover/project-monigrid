@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { doesRowMatchCriteria, evaluateCriteria } from "../utils/helpers";
 import { useAutoScrollTopOnDataChange } from "../utils/widgetListHelpers";
 import "./DynamicTable.css";
@@ -57,7 +57,81 @@ const DynamicTable = ({
         return [];
     };
 
-    const dataArray = normalizeData(data);
+    // 폴링 결과가 같은 reference 로 들어오면 normalize / filter / sort 가
+    // 캐시 hit. 30개 테이블 × 분당 12회 폴링에서 매 렌더 100행 전체를 다시
+    // 정렬하던 비용을 제거한다.
+    const dataArray = useMemo(() => normalizeData(data), [data]);
+
+    const tableColumns = useMemo(() => {
+        if (columns) return columns;
+        const columnSet = new Set();
+        dataArray.forEach((row) => {
+            if (typeof row === "object") {
+                Object.keys(row).forEach((key) => {
+                    if (!key.startsWith("_")) columnSet.add(key);
+                });
+            }
+        });
+        return Array.from(columnSet);
+    }, [columns, dataArray]);
+
+    const filteredData = useMemo(
+        () => (showAlertsOnly
+            ? dataArray.filter((row) => doesRowMatchCriteria(row, criteria))
+            : dataArray),
+        [dataArray, showAlertsOnly, criteria],
+    );
+
+    const hasCriteria = useMemo(
+        () => Object.keys(criteria).some(
+            (col) =>
+                criteria[col]?.enabled &&
+                String(criteria[col]?.value ?? "").trim() !== "",
+        ),
+        [criteria],
+    );
+
+    const sortedData = useMemo(() => {
+        let working = [...filteredData];
+
+        // criteria 매칭 행을 상단으로 끌어올림
+        if (hasCriteria && !showAlertsOnly) {
+            working.sort((a, b) => {
+                const aMatch = doesRowMatchCriteria(a, criteria) ? 0 : 1;
+                const bMatch = doesRowMatchCriteria(b, criteria) ? 0 : 1;
+                return aMatch - bMatch;
+            });
+        }
+
+        if (sortConfig.key) {
+            // stable sort: criteria 그룹 내에서만 정렬
+            working.sort((a, b) => {
+                if (hasCriteria && !showAlertsOnly) {
+                    const aMatch = doesRowMatchCriteria(a, criteria) ? 0 : 1;
+                    const bMatch = doesRowMatchCriteria(b, criteria) ? 0 : 1;
+                    if (aMatch !== bMatch) return aMatch - bMatch;
+                }
+
+                const aValue = a[sortConfig.key];
+                const bValue = b[sortConfig.key];
+
+                if (aValue === null || aValue === undefined) return 1;
+                if (bValue === null || bValue === undefined) return -1;
+
+                if (typeof aValue === "string") {
+                    return sortConfig.direction === "asc"
+                        ? aValue.localeCompare(bValue)
+                        : bValue.localeCompare(aValue);
+                }
+
+                return sortConfig.direction === "asc"
+                    ? aValue - bValue
+                    : bValue - aValue;
+            });
+        }
+
+        return working.slice(0, maxRows);
+    }, [filteredData, sortConfig, criteria, showAlertsOnly, hasCriteria, maxRows]);
 
     if (loading) {
         return (
@@ -104,28 +178,6 @@ const DynamicTable = ({
         );
     }
 
-    // 컬럼 추출
-    const getAllColumns = () => {
-        if (columns) {
-            return columns;
-        }
-
-        const columnSet = new Set();
-        dataArray.forEach((row) => {
-            if (typeof row === "object") {
-                Object.keys(row).forEach((key) => {
-                    if (!key.startsWith("_")) {
-                        columnSet.add(key);
-                    }
-                });
-            }
-        });
-
-        return Array.from(columnSet);
-    };
-
-    const tableColumns = getAllColumns();
-
     // 정렬 기능
     const handleSort = (key) => {
         if (!sortable) return;
@@ -136,61 +188,6 @@ const DynamicTable = ({
         }
         setSortConfig({ key, direction });
     };
-
-    const filteredData = showAlertsOnly
-        ? dataArray.filter((row) => doesRowMatchCriteria(row, criteria))
-        : dataArray;
-
-    const hasCriteria = Object.keys(criteria).some(
-        (col) =>
-            criteria[col]?.enabled &&
-            String(criteria[col]?.value ?? "").trim() !== "",
-    );
-
-    // 데이터 정렬
-    const getSortedData = () => {
-        let working = [...filteredData];
-
-        // criteria 매칭 행을 상단으로 끌어올림
-        if (hasCriteria && !showAlertsOnly) {
-            working.sort((a, b) => {
-                const aMatch = doesRowMatchCriteria(a, criteria) ? 0 : 1;
-                const bMatch = doesRowMatchCriteria(b, criteria) ? 0 : 1;
-                return aMatch - bMatch;
-            });
-        }
-
-        if (sortConfig.key) {
-            // stable sort: criteria 그룹 내에서만 정렬
-            working.sort((a, b) => {
-                if (hasCriteria && !showAlertsOnly) {
-                    const aMatch = doesRowMatchCriteria(a, criteria) ? 0 : 1;
-                    const bMatch = doesRowMatchCriteria(b, criteria) ? 0 : 1;
-                    if (aMatch !== bMatch) return aMatch - bMatch;
-                }
-
-                const aValue = a[sortConfig.key];
-                const bValue = b[sortConfig.key];
-
-                if (aValue === null || aValue === undefined) return 1;
-                if (bValue === null || bValue === undefined) return -1;
-
-                if (typeof aValue === "string") {
-                    return sortConfig.direction === "asc"
-                        ? aValue.localeCompare(bValue)
-                        : bValue.localeCompare(aValue);
-                }
-
-                return sortConfig.direction === "asc"
-                    ? aValue - bValue
-                    : bValue - aValue;
-            });
-        }
-
-        return working.slice(0, maxRows);
-    };
-
-    const sortedData = getSortedData();
 
     if (filteredData.length === 0) {
         return (
