@@ -33,7 +33,7 @@ from typing import Any, Callable
 
 from .http_health_checker import check_http_url
 from .network_tester import run_network_test
-from .server_resource_collector import collect_server_resources
+from .server_resource_collector import collect_server_resources, clear_ssh_pool
 
 
 TargetLoader = Callable[[], list[dict[str, Any]]]
@@ -143,6 +143,9 @@ class MonitorCollectorManager:
         """Stop current threads, re-read targets, restart from scratch."""
         self.stop()
         self.clear()
+        # Drain SSH session pool — rotated credentials or removed targets
+        # would otherwise leave stale auth lingering across the reload.
+        clear_ssh_pool()
         self.start()
 
     # ── public API ────────────────────────────────────────────────────────

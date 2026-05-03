@@ -33,10 +33,121 @@ import logging
 import platform
 import re
 import subprocess
+import threading
+import time as _time
 from typing import Any
 
 
 _LocalCmd = subprocess.run  # alias to make tests easier to monkeypatch if needed
+
+
+# ── SSH session pool ──────────────────────────────────────────────────────────
+#
+# Without pooling, every collector tick opens and tears down an SSH session
+# (~200-500ms of paramiko handshake). At ~100 targets × 10s polling that
+# pegged the BE thread pool with handshakes and starved JDBC workers. The
+# pool keeps one session per (host, port, user) warm; idle entries are
+# evicted lazily on the next acquire after _SSH_IDLE_TIMEOUT_SEC, and
+# `clear_ssh_pool()` drains the whole table on collector reload so rotated
+# credentials never silently keep authenticating with the old session.
+
+_SSH_IDLE_TIMEOUT_SEC = 300
+
+_SSH_POOL_LOCK = threading.Lock()
+_SSH_POOL: dict[tuple[str, int, str], "_PooledSshSession"] = {}
+
+
+class _PooledSshSession:
+    """Long-lived paramiko SSHClient cached in the module-level pool."""
+
+    def __init__(self, host: str, port: int, username: str, password: str, timeout: int = 5):
+        import paramiko
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            host, port=port,
+            username=username, password=password,
+            timeout=timeout,
+        )
+        self._client = client
+        self._timeout = timeout
+        self.last_used = _time.monotonic()
+
+    def is_alive(self) -> bool:
+        try:
+            t = self._client.get_transport()
+            return bool(t and t.is_active())
+        except Exception:
+            return False
+
+    def run(self, cmd: str) -> str:
+        try:
+            self.last_used = _time.monotonic()
+            _, stdout, _err = self._client.exec_command(cmd, timeout=self._timeout)
+            return stdout.read().decode("utf-8", errors="replace").strip()
+        except Exception as e:
+            return f"ERROR: {e}"
+
+    def close(self) -> None:
+        try:
+            self._client.close()
+        except Exception:
+            pass
+
+
+def _ssh_pool_acquire(
+    host: str, port: int, username: str, password: str, timeout: int = 5,
+) -> tuple["_PooledSshSession | None", "str | None"]:
+    """Return a (session, error) pair; one of the two is always None."""
+    key = (host, port, username)
+    now = _time.monotonic()
+    drained: list[_PooledSshSession] = []
+    with _SSH_POOL_LOCK:
+        # Lazy idle sweep on every acquire keeps the pool small without a
+        # dedicated reaper thread.
+        for k, sess in list(_SSH_POOL.items()):
+            if now - sess.last_used > _SSH_IDLE_TIMEOUT_SEC:
+                drained.append(_SSH_POOL.pop(k))
+        cached = _SSH_POOL.get(key)
+        if cached is not None and cached.is_alive():
+            cached.last_used = now
+            for s in drained:
+                s.close()
+            return cached, None
+        if cached is not None:
+            drained.append(_SSH_POOL.pop(key))
+
+    for s in drained:
+        s.close()
+
+    # Handshake outside the lock — paramiko.connect can block 200ms+.
+    try:
+        session = _PooledSshSession(host, port, username, password, timeout)
+    except ImportError:
+        return None, "paramiko not installed (pip install paramiko)"
+    except Exception as e:
+        return None, str(e)
+
+    with _SSH_POOL_LOCK:
+        existing = _SSH_POOL.get(key)
+        if existing is not None and existing.is_alive():
+            # Lost the race against a peer thread; keep the older session.
+            session.close()
+            existing.last_used = _time.monotonic()
+            return existing, None
+        if existing is not None:
+            existing.close()
+        _SSH_POOL[key] = session
+    return session, None
+
+
+def clear_ssh_pool() -> None:
+    """Drain every cached SSH session. Call on monitor collector reload."""
+    with _SSH_POOL_LOCK:
+        sessions = list(_SSH_POOL.values())
+        _SSH_POOL.clear()
+    for s in sessions:
+        s.close()
 
 
 @contextlib.contextmanager
@@ -56,14 +167,13 @@ def _make_local_runner(timeout: int = 15):
 
 
 class _SshRunner:
-    """Reusable SSH connection — connects once, executes many commands, then closes.
+    """Pool adapter — borrows a session from `_SSH_POOL` for the ctx body.
 
-    Used as a context manager so the connection is always cleaned up:
-
-        with _SshRunner(host, port, user, pw) as run:
-            cpu  = run("top -bn1 ...")
-            mem  = run("cat /proc/meminfo")
-            disk = run("df -BG ...")
+    The original implementation opened a fresh SSHClient on every tick.
+    Now the underlying session is owned by the module-level pool and
+    survives across collector ticks; `__exit__` is a no-op so the pool
+    keeps the session for the next caller. `_connect_error` is preserved
+    so the existing collector code's early-exit guard still works.
     """
 
     def __init__(self, host: str, port: int, username: str, password: str, timeout: int = 5):
@@ -72,48 +182,33 @@ class _SshRunner:
         self._username = username
         self._password = password
         self._timeout = timeout
-        self._client = None
+        self._session: _PooledSshSession | None = None
+        self._connect_error: str | None = None
+        self._import_error = False
 
     def __enter__(self):
-        try:
-            import paramiko
-        except ImportError:
+        session, err = _ssh_pool_acquire(
+            self._host, self._port, self._username, self._password, self._timeout,
+        )
+        if err is not None and "paramiko not installed" in err:
             self._import_error = True
             return self
-        self._import_error = False
-        try:
-            self._client = paramiko.SSHClient()
-            self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            self._client.connect(
-                self._host, port=self._port,
-                username=self._username, password=self._password,
-                timeout=self._timeout,
-            )
-        except Exception as e:
-            self._connect_error = str(e)
-            self._client = None
-        else:
-            self._connect_error = None
+        self._session = session
+        self._connect_error = err
         return self
 
     def __exit__(self, *exc):
-        if self._client is not None:
-            try:
-                self._client.close()
-            except Exception:
-                pass
+        # Pool retains ownership; do not close the underlying session here.
         return False
 
     def __call__(self, cmd: str) -> str:
-        if getattr(self, "_import_error", False):
+        if self._import_error:
             return "ERROR: paramiko not installed (pip install paramiko)"
         if self._connect_error is not None:
             return f"ERROR: {self._connect_error}"
-        try:
-            _, stdout, _stderr = self._client.exec_command(cmd, timeout=self._timeout)
-            return stdout.read().decode("utf-8", errors="replace").strip()
-        except Exception as e:
-            return f"ERROR: {e}"
+        if self._session is None:
+            return "ERROR: ssh session unavailable"
+        return self._session.run(cmd)
 
 
 def _ps_encoded(script: str) -> str:
