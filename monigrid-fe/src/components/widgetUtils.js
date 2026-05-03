@@ -8,10 +8,36 @@
  * change the formatting / clamp behaviour.
  */
 
+import { SIZE_UNIT_SCALE } from "../pages/dashboardConstants";
+
 export const clamp = (value, min, max, fallback) => {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
     return Math.min(max, Math.max(min, Math.floor(n)));
+};
+
+// Convert a half-step "user size" (e.g. 1.5) into the integer grid units the
+// layout actually stores. Round to the nearest half-unit to keep stale typing
+// like "1.7" from drifting off-grid. Grid units are integers ≥ 1.
+export const toGridSize = (userValue) => {
+    const n = Number(userValue);
+    if (!Number.isFinite(n)) return 1;
+    return Math.max(1, Math.round(n * SIZE_UNIT_SCALE));
+};
+
+export const toUserSize = (gridValue) => {
+    const n = Number(gridValue);
+    if (!Number.isFinite(n)) return 0;
+    return n / SIZE_UNIT_SCALE;
+};
+
+// Half-step clamp for user-facing size inputs. Snaps to 0.5 increments and
+// keeps the value within [min, max]. min/max are in user units, not grid units.
+export const clampHalf = (userValue, min, max, fallback) => {
+    const n = Number(userValue);
+    if (!Number.isFinite(n)) return fallback;
+    const snapped = Math.round(n * SIZE_UNIT_SCALE) / SIZE_UNIT_SCALE;
+    return Math.min(max, Math.max(min, snapped));
 };
 
 export const formatInterval = (sec) => {

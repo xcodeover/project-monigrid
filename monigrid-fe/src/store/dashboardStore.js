@@ -1,9 +1,58 @@
 import { create } from "zustand";
 import { STORAGE_KEYS } from "./storageKeys.js";
 import { preferencesService } from "../services/dashboardService.js";
+import { LAYOUT_SCALE_VERSION } from "../pages/dashboardConstants.js";
 
 const DEFAULT_DASHBOARD_SETTINGS = {
     widgetFontSize: 13,
+    // Width-axis grid scale the layouts are stored at. We doubled the column
+    // count from 12 → 24 to support 0.5-unit sizing; layouts persisted before
+    // that bump need their x/w/minW/maxW values multiplied by 2 on load.
+    layoutScale: LAYOUT_SCALE_VERSION,
+};
+
+const _scaleLayout = (layout, factor) => {
+    if (!layout || typeof layout !== "object") return layout;
+    const next = { ...layout };
+    ["x", "w", "minW", "maxW"].forEach((key) => {
+        if (typeof next[key] === "number") next[key] = next[key] * factor;
+    });
+    return next;
+};
+
+/**
+ * Migrate persisted layouts/widgets to the current LAYOUT_SCALE_VERSION.
+ *
+ * Old prefs stored on the 12-col grid have w/x in half the value they would
+ * be on the new 24-col grid. We detect this by the missing/lower
+ * `dashboardSettings.layoutScale` flag and multiply by 2 once.
+ */
+const migrateLayouts = ({ widgets, layouts, dashboardSettings }) => {
+    const storedScale = Number(dashboardSettings?.layoutScale) || 1;
+    if (storedScale >= LAYOUT_SCALE_VERSION) {
+        return { widgets, layouts, dashboardSettings };
+    }
+    const factor = LAYOUT_SCALE_VERSION / storedScale;
+    const nextLayouts = layouts && typeof layouts === "object"
+        ? Object.fromEntries(
+              Object.entries(layouts).map(([k, v]) => [k, _scaleLayout(v, factor)]),
+          )
+        : layouts;
+    const nextWidgets = Array.isArray(widgets)
+        ? widgets.map((w) =>
+              w && w.defaultLayout
+                  ? { ...w, defaultLayout: _scaleLayout(w.defaultLayout, factor) }
+                  : w,
+          )
+        : widgets;
+    return {
+        widgets: nextWidgets,
+        layouts: nextLayouts,
+        dashboardSettings: {
+            ...(dashboardSettings || {}),
+            layoutScale: LAYOUT_SCALE_VERSION,
+        },
+    };
 };
 
 // ── Storage helpers (DRY) ─────────────────────────────────────────────────────
@@ -95,17 +144,28 @@ const flushPendingPush = async () => {
 
 // ── Initial state loader ──────────────────────────────────────────────────────
 
-const loadInitialState = () => ({
-    widgets: (() => {
-        const parsed = readJson(STORAGE_KEYS.WIDGETS, null);
-        return Array.isArray(parsed) ? parsed : null;
-    })(),
-    layouts: readJson(STORAGE_KEYS.LAYOUTS, {}),
-    dashboardSettings: {
+const loadInitialState = () => {
+    const widgetsRaw = readJson(STORAGE_KEYS.WIDGETS, null);
+    const widgets = Array.isArray(widgetsRaw) ? widgetsRaw : null;
+    const layouts = readJson(STORAGE_KEYS.LAYOUTS, {});
+    const dashboardSettings = {
         ...DEFAULT_DASHBOARD_SETTINGS,
         ...readJson(STORAGE_KEYS.DASHBOARD_SETTINGS, {}),
-    },
-});
+    };
+    const migrated = migrateLayouts({ widgets, layouts, dashboardSettings });
+    if (
+        Number(dashboardSettings.layoutScale) !==
+        Number(migrated.dashboardSettings.layoutScale)
+    ) {
+        // Persist the migrated form so the next session reads it directly.
+        if (migrated.widgets !== null) {
+            writeJson(STORAGE_KEYS.WIDGETS, migrated.widgets);
+        }
+        writeJson(STORAGE_KEYS.LAYOUTS, migrated.layouts);
+        writeJson(STORAGE_KEYS.DASHBOARD_SETTINGS, migrated.dashboardSettings);
+    }
+    return migrated;
+};
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
@@ -223,18 +283,37 @@ export const useDashboardStore = create((set) => ({
                 remote.dashboardSettings
             );
             if (hasRemote) {
-                const widgets = Array.isArray(remote.widgets) ? remote.widgets : null;
-                const layouts = remote.layouts && typeof remote.layouts === "object"
+                const remoteWidgets = Array.isArray(remote.widgets) ? remote.widgets : null;
+                const remoteLayouts = remote.layouts && typeof remote.layouts === "object"
                     ? remote.layouts : {};
-                const dashboardSettings = {
+                const remoteSettings = {
                     ...DEFAULT_DASHBOARD_SETTINGS,
                     ...(remote.dashboardSettings || {}),
                 };
+                // Apply the half-unit grid migration to anything coming from
+                // the server too — old A-A nodes / older clients may still be
+                // pushing 12-col-scale layouts.
+                const {
+                    widgets,
+                    layouts,
+                    dashboardSettings,
+                } = migrateLayouts({
+                    widgets: remoteWidgets,
+                    layouts: remoteLayouts,
+                    dashboardSettings: remoteSettings,
+                });
                 if (widgets !== null) writeJson(STORAGE_KEYS.WIDGETS, widgets);
                 writeJson(STORAGE_KEYS.LAYOUTS, layouts);
                 writeJson(STORAGE_KEYS.DASHBOARD_SETTINGS, dashboardSettings);
                 set({ widgets, layouts, dashboardSettings });
                 setServerSyncEnabled(true);
+                if (
+                    Number(remoteSettings.layoutScale) !==
+                    Number(dashboardSettings.layoutScale)
+                ) {
+                    // Push the migrated form back so we don't migrate again next sync.
+                    queueServerPush();
+                }
                 return { source: "server" };
             }
             // First login on this user — seed the server from localStorage.
@@ -278,12 +357,18 @@ export const useDashboardStore = create((set) => ({
         if (!config || typeof config !== "object") {
             throw new Error("유효하지 않은 설정 JSON입니다.");
         }
-        const widgets = Array.isArray(config.widgets) ? config.widgets : [];
-        const layouts = config.layouts && typeof config.layouts === "object" ? config.layouts : {};
-        const dashboardSettings = {
+        const importedWidgets = Array.isArray(config.widgets) ? config.widgets : [];
+        const importedLayouts = config.layouts && typeof config.layouts === "object" ? config.layouts : {};
+        const importedSettings = {
             ...DEFAULT_DASHBOARD_SETTINGS,
             ...(config.dashboardSettings ?? {}),
         };
+        // Imported configs from older versions still carry 12-col-scale layouts.
+        const { widgets, layouts, dashboardSettings } = migrateLayouts({
+            widgets: importedWidgets,
+            layouts: importedLayouts,
+            dashboardSettings: importedSettings,
+        });
         writeJson(STORAGE_KEYS.WIDGETS, widgets);
         writeJson(STORAGE_KEYS.LAYOUTS, layouts);
         writeJson(STORAGE_KEYS.DASHBOARD_SETTINGS, dashboardSettings);

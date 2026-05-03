@@ -13,7 +13,14 @@ import {
     normalizeData,
     reorderItems,
 } from "./apiCardHelpers";
-import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import {
+    MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_H,
+    MAX_WIDGET_W,
+    MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_H,
+    MIN_WIDGET_W,
+} from "../pages/dashboardConstants";
 import ApiCardRowDetailModal from "./ApiCardRowDetailModal";
 import ApiCardSettingsModal from "./ApiCardSettingsModal";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
@@ -325,10 +332,10 @@ const ApiCard = ({
     }, [criteriaMap, onTableSettingsChange]);
 
     const handleSizeApply = () => {
-        const minW = sizeBounds?.minW ?? 2;
-        const maxW = sizeBounds?.maxW ?? 12;
-        const minH = sizeBounds?.minH ?? 2;
-        const maxH = sizeBounds?.maxH ?? 24;
+        const minW = sizeBounds?.minW ?? MIN_WIDGET_W;
+        const maxW = sizeBounds?.maxW ?? MAX_WIDGET_W;
+        const minH = sizeBounds?.minH ?? MIN_WIDGET_H;
+        const maxH = sizeBounds?.maxH ?? MAX_WIDGET_H;
 
         const nextWidth = clamp(
             sizeDraft.w,

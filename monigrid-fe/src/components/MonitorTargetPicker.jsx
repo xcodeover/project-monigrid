@@ -10,7 +10,7 @@ import "./MonitorTargetPicker.css";
  *  2) 부모가 미리 로드한 목록을 주입 (presetTargets / presetError 사용): 추가 호출 없음
  *
  * @param {object} props
- * @param {"server_resource"|"network"} props.targetType  필터링할 모니터 대상 타입
+ * @param {"server_resource"|"network"|"http_status"} props.targetType  필터링할 모니터 대상 타입
  * @param {string[]} props.selectedIds                    현재 선택된 id 배열
  * @param {(ids: string[]) => void} props.onChange        선택 변경 콜백
  * @param {Array}    [props.presetTargets]                부모가 이미 로드한 목록(있으면 자체 로드 안함)
@@ -76,10 +76,19 @@ const MonitorTargetPicker = ({
         );
     }
     if (filtered.length === 0) {
+        const defaultEmptyHintByType = {
+            server_resource:
+                '등록된 대상이 없습니다. 백엔드 설정 → "서버 리소스" 탭에서 먼저 추가하세요.',
+            network:
+                '등록된 대상이 없습니다. 백엔드 설정 → "네트워크 체크" 탭에서 먼저 추가하세요.',
+            http_status:
+                '등록된 대상이 없습니다. 백엔드 설정 → "API 상태" 탭에서 먼저 추가하세요.',
+        };
         return (
             <div className="target-pick-hint">
                 {emptyHint ||
-                    '등록된 대상이 없습니다. 백엔드 설정 → "서버/네트워크 체크" 탭에서 먼저 추가하세요.'}
+                    defaultEmptyHintByType[targetType] ||
+                    "등록된 대상이 없습니다."}
             </div>
         );
     }
@@ -91,11 +100,13 @@ const MonitorTargetPicker = ({
                 const sub =
                     targetType === "server_resource"
                         ? `${t.spec?.os_type || "-"} · ${t.spec?.host || "-"}`
-                        : `${(t.spec?.type || "ping").toUpperCase()} · ${t.spec?.host || "-"}${
-                              t.spec?.type === "telnet" && t.spec?.port
-                                  ? `:${t.spec.port}`
-                                  : ""
-                          }`;
+                        : targetType === "http_status"
+                          ? `${t.spec?.url || "-"}`
+                          : `${(t.spec?.type || "ping").toUpperCase()} · ${t.spec?.host || "-"}${
+                                t.spec?.type === "telnet" && t.spec?.port
+                                    ? `:${t.spec.port}`
+                                    : ""
+                            }`;
                 return (
                     <label
                         key={t.id}

@@ -23,18 +23,31 @@ const NETWORK_TYPE_OPTIONS = [
     { value: "telnet", label: "Telnet (TCP)" },
 ];
 
-const buildEmpty = (targetType) => ({
-    _local: true,
-    id: `mt-${Date.now().toString(36)}`,
-    type: targetType,
-    label: "",
-    interval_sec: 30,
-    enabled: true,
-    spec:
-        targetType === "server_resource"
-            ? { os_type: "linux-generic", host: "" }
-            : { type: "ping", host: "" },
-});
+const HTTP_STATUS_DEFAULT_TIMEOUT_SEC = 10;
+
+const buildEmpty = (targetType) => {
+    const base = {
+        _local: true,
+        id: `mt-${Date.now().toString(36)}`,
+        type: targetType,
+        label: "",
+        interval_sec: 30,
+        enabled: true,
+    };
+    if (targetType === "server_resource") {
+        return { ...base, spec: { os_type: "linux-generic", host: "" } };
+    }
+    if (targetType === "network") {
+        return { ...base, spec: { type: "ping", host: "" } };
+    }
+    if (targetType === "http_status") {
+        return {
+            ...base,
+            spec: { url: "", timeout_sec: HTTP_STATUS_DEFAULT_TIMEOUT_SEC },
+        };
+    }
+    return { ...base, spec: {} };
+};
 
 // "db-01" → "db-02", "db" → "db-2" 식으로 끝의 숫자를 증가시키며,
 // 이미 존재하는 id 와 충돌하지 않을 때까지 반복한다.
@@ -78,6 +91,7 @@ const TargetCard = ({
 
     const isServer = target.type === "server_resource";
     const isNetwork = target.type === "network";
+    const isHttp = target.type === "http_status";
     const networkKind = target.spec?.type || "ping";
     const osType = target.spec?.os_type || "linux-generic";
     const showCreds = needsServerCreds(target);
@@ -107,7 +121,11 @@ const TargetCard = ({
                 <span className="cfg-card-title">
                     {target.label || target.id || "(이름 없음)"}
                 </span>
-                <span className="cfg-card-badge">{target.spec?.host || "-"}</span>
+                <span className="cfg-card-badge">
+                    {target.type === "http_status"
+                        ? target.spec?.url || "-"
+                        : target.spec?.host || "-"}
+                </span>
                 {target._local && <span className="cfg-card-badge">신규</span>}
                 {target._dirty && !target._local && (
                     <span className="cfg-card-badge">변경됨</span>
@@ -173,19 +191,21 @@ const TargetCard = ({
                                 }
                             />
                         </label>
-                        <label>
-                            <span>호스트</span>
-                            <input
-                                type="text"
-                                value={target.spec?.host || ""}
-                                onChange={(e) => updateSpec("host", e.target.value)}
-                                placeholder={
-                                    isServer
-                                        ? "192.168.0.10 or localhost"
-                                        : "192.168.0.10"
-                                }
-                            />
-                        </label>
+                        {!isHttp && (
+                            <label>
+                                <span>호스트</span>
+                                <input
+                                    type="text"
+                                    value={target.spec?.host || ""}
+                                    onChange={(e) => updateSpec("host", e.target.value)}
+                                    placeholder={
+                                        isServer
+                                            ? "192.168.0.10 or localhost"
+                                            : "192.168.0.10"
+                                    }
+                                />
+                            </label>
+                        )}
                     </div>
 
                     {isServer && (
@@ -308,6 +328,41 @@ const TargetCard = ({
                                     max="30"
                                     value={target.spec?.timeout || 5}
                                     onChange={(e) => updateSpec("timeout", e.target.value)}
+                                />
+                            </label>
+                        </fieldset>
+                    )}
+
+                    {isHttp && (
+                        <fieldset className="cfg-fieldset">
+                            <legend>API 상태 체크</legend>
+                            <label>
+                                <span>URL</span>
+                                <input
+                                    type="text"
+                                    value={target.spec?.url || ""}
+                                    onChange={(e) => updateSpec("url", e.target.value)}
+                                    placeholder="https://api.example.com/health"
+                                    spellCheck={false}
+                                    autoComplete="off"
+                                />
+                            </label>
+                            <label>
+                                <span>Timeout (초)</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="30"
+                                    value={
+                                        target.spec?.timeout_sec ??
+                                        HTTP_STATUS_DEFAULT_TIMEOUT_SEC
+                                    }
+                                    onChange={(e) =>
+                                        updateSpec(
+                                            "timeout_sec",
+                                            Number(e.target.value) || HTTP_STATUS_DEFAULT_TIMEOUT_SEC,
+                                        )
+                                    }
                                 />
                             </label>
                         </fieldset>
@@ -473,7 +528,13 @@ const MonitorTargetsTab = ({ targetType }) => {
         setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
 
     const headerLabel =
-        targetType === "server_resource" ? "서버 리소스" : "네트워크 체크";
+        targetType === "server_resource"
+            ? "서버 리소스"
+            : targetType === "network"
+              ? "네트워크 체크"
+              : targetType === "http_status"
+                ? "API 상태"
+                : "대상";
 
     return (
         <div className="cfg-section">

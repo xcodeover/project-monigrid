@@ -1,48 +1,32 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import {
+    MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_H,
+    MAX_WIDGET_W,
+    MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_H,
+    MIN_WIDGET_W,
+    SIZE_STEP,
+} from "../pages/dashboardConstants";
 import { useAutoScrollTopOnDataChange } from "../utils/widgetListHelpers";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
-import { clamp, formatInterval, formatLocalTime } from "./widgetUtils.js";
+import MonitorTargetPicker from "./MonitorTargetPicker.jsx";
+import {
+    clamp,
+    formatInterval,
+    formatLocalTime,
+    toGridSize,
+    toUserSize,
+} from "./widgetUtils.js";
 import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./StatusListCard.css";
 
-const MAX_ENDPOINTS = 50;
-
-const serializeEndpoints = (endpoints = []) =>
-    (endpoints || [])
-        .map((item) => `${item.label || item.url} | ${item.url}`)
-        .join("\n");
-
-const parseEndpointLines = (rawValue) =>
-    String(rawValue ?? "")
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line, index) => {
-            const [rawLabel, ...rawUrlTokens] = line.includes("|")
-                ? line.split("|")
-                : ["", line];
-            const url = (
-                rawUrlTokens.length > 0 ? rawUrlTokens.join("|") : rawLabel
-            ).trim();
-            const fallbackLabel = url || `API ${index + 1}`;
-
-            return {
-                id: `status-list-${index}-${url}`,
-                label:
-                    (rawUrlTokens.length > 0
-                        ? rawLabel
-                        : fallbackLabel
-                    ).trim() || fallbackLabel,
-                url,
-            };
-        })
-        .filter((item) => item.url);
+const MAX_TARGETS = 50;
 
 const StatusListCard = ({
     title,
-    endpoints,
+    targetIds,
     data,
     loading,
     error,
@@ -55,15 +39,17 @@ const StatusListCard = ({
     refreshIntervalSec,
     onRefreshIntervalChange,
     onWidgetMetaChange,
-    onEndpointsChange,
+    onTargetIdsChange,
 }) => {
     const [showSettings, setShowSettings] = useState(false);
     const [sizeDraft, setSizeDraft] = useState({ w: 4, h: 5 });
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 5);
     const [titleDraft, setTitleDraft] = useState(title);
-    const [endpointsDraft, setEndpointsDraft] = useState(
-        serializeEndpoints(endpoints),
+    const safeTargetIds = useMemo(
+        () => (Array.isArray(targetIds) ? targetIds.filter(Boolean) : []),
+        [targetIds],
     );
+    const [targetIdsDraft, setTargetIdsDraft] = useState(safeTargetIds);
     const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
     // 갱신 주기마다 목록 스크롤을 상단으로 리셋
     const scrollRef = useRef(null);
@@ -108,14 +94,14 @@ const StatusListCard = ({
     }, [title]);
 
     useEffect(() => {
-        setEndpointsDraft(serializeEndpoints(endpoints));
-    }, [endpoints]);
+        setTargetIdsDraft(safeTargetIds);
+    }, [safeTargetIds]);
 
     const handleSizeApply = () => {
-        const minW = sizeBounds?.minW ?? 2;
-        const maxW = sizeBounds?.maxW ?? 12;
-        const minH = sizeBounds?.minH ?? 2;
-        const maxH = sizeBounds?.maxH ?? 24;
+        const minW = sizeBounds?.minW ?? MIN_WIDGET_W;
+        const maxW = sizeBounds?.maxW ?? MAX_WIDGET_W;
+        const minH = sizeBounds?.minH ?? MIN_WIDGET_H;
+        const maxH = sizeBounds?.maxH ?? MAX_WIDGET_H;
 
         const nextWidth = clamp(
             sizeDraft.w,
@@ -149,23 +135,15 @@ const StatusListCard = ({
         onWidgetMetaChange?.({ title: nextTitle });
     };
 
-    const parsedDraftCount = useMemo(
-        () => parseEndpointLines(endpointsDraft).length,
-        [endpointsDraft],
-    );
-
-    const handleEndpointsApply = () => {
-        const nextEndpoints = parseEndpointLines(endpointsDraft);
-        if (nextEndpoints.length === 0) {
+    const handleTargetIdsApply = () => {
+        if (targetIdsDraft.length > MAX_TARGETS) {
+            window.alert(`최대 ${MAX_TARGETS}개까지 선택할 수 있습니다. (현재 ${targetIdsDraft.length}개)`);
             return;
         }
-        if (nextEndpoints.length > MAX_ENDPOINTS) {
-            window.alert(`최대 ${MAX_ENDPOINTS}개까지 등록할 수 있습니다. (현재 ${nextEndpoints.length}개)`);
-            return;
-        }
-
-        onEndpointsChange?.(nextEndpoints);
+        onTargetIdsChange?.(targetIdsDraft);
     };
+
+    const hasNoTargets = safeTargetIds.length === 0;
 
     // Sections each have their own apply button, so no global footer.
     const settingsPopup = (
@@ -200,33 +178,31 @@ const StatusListCard = ({
 
                     <div className='settings-section'>
                         <h6>
-                            API 목록
-                            <span className={`status-list-count${parsedDraftCount > MAX_ENDPOINTS ? " over-limit" : ""}`}>
-                                {parsedDraftCount} / {MAX_ENDPOINTS}
+                            API 상태 대상
+                            <span className={`status-list-count${targetIdsDraft.length > MAX_TARGETS ? " over-limit" : ""}`}>
+                                {targetIdsDraft.length} / {MAX_TARGETS}
                             </span>
                         </h6>
-                        <textarea
-                            className='status-list-textarea'
-                            value={endpointsDraft}
-                            onChange={(event) =>
-                                setEndpointsDraft(event.target.value)
-                            }
-                            placeholder={
-                                "label | https://example.com/health\nhttps://example.com/ping\n\n(최대 50개)"
-                            }
+                        <p className='status-list-picker-hint'>
+                            백엔드 설정 → "API 상태" 탭에서 등록한 대상 중에서 표시할 항목을 선택합니다.
+                        </p>
+                        <MonitorTargetPicker
+                            targetType='http_status'
+                            selectedIds={targetIdsDraft}
+                            onChange={(ids) => setTargetIdsDraft(ids)}
                         />
-                        {parsedDraftCount > MAX_ENDPOINTS && (
+                        {targetIdsDraft.length > MAX_TARGETS && (
                             <p className="status-list-limit-warn">
-                                최대 {MAX_ENDPOINTS}개까지 등록 가능합니다. ({parsedDraftCount - MAX_ENDPOINTS}개 초과)
+                                최대 {MAX_TARGETS}개까지 선택 가능합니다. ({targetIdsDraft.length - MAX_TARGETS}개 초과)
                             </p>
                         )}
                         <button
                             type='button'
-                            className={`size-preset-btn status-list-apply-btn${parsedDraftCount > MAX_ENDPOINTS ? " disabled" : ""}`}
-                            onClick={handleEndpointsApply}
-                            disabled={parsedDraftCount > MAX_ENDPOINTS}
+                            className={`size-preset-btn status-list-apply-btn${targetIdsDraft.length > MAX_TARGETS ? " disabled" : ""}`}
+                            onClick={handleTargetIdsApply}
+                            disabled={targetIdsDraft.length > MAX_TARGETS}
                         >
-                            목록 적용
+                            대상 적용
                         </button>
                     </div>
 
@@ -238,13 +214,14 @@ const StatusListCard = ({
                                     Width
                                     <input
                                         type='number'
-                                        min={sizeBounds?.minW ?? 2}
-                                        max={sizeBounds?.maxW ?? 12}
-                                        value={sizeDraft.w}
+                                        min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)}
+                                        max={toUserSize(sizeBounds?.maxW ?? MAX_WIDGET_W)}
+                                        step={SIZE_STEP}
+                                        value={toUserSize(sizeDraft.w)}
                                         onChange={(event) =>
                                             setSizeDraft((previousDraft) => ({
                                                 ...previousDraft,
-                                                w: event.target.value,
+                                                w: toGridSize(event.target.value),
                                             }))
                                         }
                                     />
@@ -253,8 +230,8 @@ const StatusListCard = ({
                                     Height
                                     <input
                                         type='number'
-                                        min={sizeBounds?.minH ?? 2}
-                                        max={sizeBounds?.maxH ?? 24}
+                                        min={sizeBounds?.minH ?? MIN_WIDGET_H}
+                                        max={sizeBounds?.maxH ?? MAX_WIDGET_H}
                                         value={sizeDraft.h}
                                         onChange={(event) =>
                                             setSizeDraft((previousDraft) => ({
@@ -275,7 +252,7 @@ const StatusListCard = ({
                         </div>
 
                         <div className='settings-section refresh-interval-section'>
-                            <h6>체크 주기 (초)</h6>
+                            <h6>화면 갱신 주기 (초)</h6>
                             <div className='refresh-interval-editor'>
                                 <label className='refresh-interval-input-label'>
                                     <span>Interval</span>
@@ -297,6 +274,9 @@ const StatusListCard = ({
                                     적용
                                 </button>
                             </div>
+                            <p className='status-list-picker-hint'>
+                                실제 HTTP 점검 주기는 백엔드 설정에서 대상별로 관리됩니다.
+                            </p>
                         </div>
                     </div>
 
@@ -305,7 +285,7 @@ const StatusListCard = ({
                         className='size-preset-btn status-list-reconnect-btn'
                         onClick={onRefresh}
                     >
-                        리프레시 + 재연결 시도
+                        스냅샷 새로고침
                     </button>
         </WidgetSettingsModal>
     );
@@ -368,7 +348,7 @@ const StatusListCard = ({
                     <div className='api-endpoint-row'>
                         <div className='api-endpoint-info'>
                             <span className='api-endpoint'>
-                                {endpoints?.length || 0} endpoints
+                                {safeTargetIds.length} targets
                             </span>
                             <span className='refresh-interval-chip'>
                                 ⏱ {formatInterval(refreshIntervalSec ?? 5)}
@@ -388,9 +368,13 @@ const StatusListCard = ({
             <div className='api-card-content'>
                 {error && <div className='status-list-error'>{error}</div>}
 
-                {items.length === 0 && !loading ? (
+                {hasNoTargets ? (
                     <div className='status-list-empty'>
-                        표시할 API 상태가 없습니다.
+                        선택된 API 상태 대상이 없습니다. 설정에서 대상을 추가하세요.
+                    </div>
+                ) : items.length === 0 && !loading ? (
+                    <div className='status-list-empty'>
+                        백엔드에서 수집된 상태가 아직 없습니다.
                     </div>
                 ) : (
                     <div

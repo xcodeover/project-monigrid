@@ -7,7 +7,14 @@ import {
 } from "react";
 import apiClient from "../services/http.js";
 import { monitorService } from "../services/dashboardService.js";
-import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import {
+    MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_H,
+    MAX_WIDGET_W,
+    MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_H,
+    MIN_WIDGET_W,
+} from "../pages/dashboardConstants";
 import {
     DEFAULT_CRITERIA,
     MAX_HISTORY,
@@ -435,14 +442,14 @@ const ServerResourceCard = ({
     const handleSizeApply = () => {
         const w = clamp(
             sizeDraft.w,
-            sizeBounds?.minW ?? 2,
-            sizeBounds?.maxW ?? 12,
-            currentSize?.w ?? 4,
+            sizeBounds?.minW ?? MIN_WIDGET_W,
+            sizeBounds?.maxW ?? MAX_WIDGET_W,
+            currentSize?.w ?? 8,
         );
         const h = clamp(
             sizeDraft.h,
-            sizeBounds?.minH ?? 2,
-            sizeBounds?.maxH ?? 24,
+            sizeBounds?.minH ?? MIN_WIDGET_H,
+            sizeBounds?.maxH ?? MAX_WIDGET_H,
             currentSize?.h ?? 5,
         );
         setSizeDraft({ w, h });

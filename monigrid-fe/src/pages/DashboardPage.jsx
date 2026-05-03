@@ -48,7 +48,6 @@ import {
     createStatusListWidget,
     layoutArrayToMap,
     normalizeWidgetLayout,
-    parseStatusListInput,
 } from "./dashboardHelpers";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
@@ -113,7 +112,6 @@ const DashboardPage = () => {
         title: "",
         endpoint: "",
         type: WIDGET_TYPE_TABLE,
-        endpointsText: `${rememberedApiBaseUrl}/health\n${rememberedApiBaseUrl}/dashboard/endpoints`,
         targetIds: [],
     });
     const [monitorTargets, setMonitorTargets] = useState([]);
@@ -214,7 +212,7 @@ const DashboardPage = () => {
             return;
         }
         // 최초 로드(localStorage 없음)일 때만 기본 위젯 세트를 추가
-        const statusListWidget = createStatusListWidget(rememberedApiBaseUrl);
+        const statusListWidget = createStatusListWidget();
         const initial = [...DEFAULT_APIS, statusListWidget];
         setWidgets(initial);
         saveLayout(statusListWidget.id, statusListWidget.defaultLayout);
@@ -341,22 +339,15 @@ const DashboardPage = () => {
             return;
         }
 
-        const statusListEndpoints = isStatusListWidget
-            ? parseStatusListInput(
-                  newApiForm.endpointsText,
-                  rememberedApiBaseUrl,
-              )
-            : [];
-        if (isStatusListWidget && statusListEndpoints.length === 0) {
-            return;
-        }
-
-        // 서버 리소스/네트워크 위젯은 백엔드에 등록된 모니터 대상을 1개 이상 선택해야 한다.
+        // 모니터 대상에 의존하는 위젯은 등록된 대상을 1개 이상 선택해야 한다.
+        // (status-list 도 이제 http_status 모니터 대상에서 골라 추가하는 구조다.)
         const selectedTargetIds = Array.isArray(newApiForm.targetIds)
             ? newApiForm.targetIds.filter(Boolean)
             : [];
         if (
-            (isServerResourceWidget || isNetworkTestWidget) &&
+            (isServerResourceWidget ||
+                isNetworkTestWidget ||
+                isStatusListWidget) &&
             selectedTargetIds.length === 0
         ) {
             return;
@@ -384,7 +375,9 @@ const DashboardPage = () => {
                 : undefined,
             defaultLayout: nextLayout,
             refreshIntervalSec: DEFAULT_REFRESH_INTERVAL_SEC,
-            endpoints: isStatusListWidget ? statusListEndpoints : undefined,
+            // status-list 위젯은 등록된 http_status 모니터 대상 id 목록을 보유한다.
+            // (BE 가 주기적으로 폴링한 결과를 monitor-snapshot 으로 가져온다.)
+            targetIds: isStatusListWidget ? selectedTargetIds : undefined,
             tableSettings:
                 newApiForm.type === WIDGET_TYPE_TABLE
                     ? { visibleColumns: [], columnWidths: {}, criteria: {} }
@@ -411,7 +404,6 @@ const DashboardPage = () => {
             title: "",
             endpoint: "",
             type: WIDGET_TYPE_TABLE,
-            endpointsText: `${rememberedApiBaseUrl}/health\n${rememberedApiBaseUrl}/dashboard/endpoints`,
             targetIds: [],
         });
         setShowAddApi(false);
@@ -458,8 +450,11 @@ const DashboardPage = () => {
         });
     };
 
-    const handleStatusListEndpointsChange = (apiId, endpoints) => {
-        updateWidget(apiId, { endpoints });
+    const handleStatusListTargetIdsChange = (apiId, targetIds) => {
+        const sanitized = Array.isArray(targetIds)
+            ? targetIds.filter(Boolean)
+            : [];
+        updateWidget(apiId, { targetIds: sanitized });
     };
 
     const isBackendManagedEndpoint = (endpointValue) => {
@@ -755,10 +750,10 @@ const DashboardPage = () => {
                             }}
                             cols={{
                                 lg: GRID_COLUMNS,
-                                md: 10,
-                                sm: 6,
-                                xs: 4,
-                                xxs: 2,
+                                md: 20,
+                                sm: 12,
+                                xs: 8,
+                                xxs: 4,
                             }}
                             rowHeight={56}
                             margin={[20, 20]}
@@ -818,8 +813,8 @@ const DashboardPage = () => {
                                             onChartSettingsChange={
                                                 handleChartSettingsChange
                                             }
-                                            onStatusListEndpointsChange={
-                                                handleStatusListEndpointsChange
+                                            onStatusListTargetIdsChange={
+                                                handleStatusListTargetIdsChange
                                             }
                                             onUpdateWidget={updateWidget}
                                             onReportWidgetStatus={

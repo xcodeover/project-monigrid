@@ -45,7 +45,7 @@ const WidgetRenderer = ({
     onWidgetMetaChange,
     onTableSettingsChange,
     onChartSettingsChange,
-    onStatusListEndpointsChange,
+    onStatusListTargetIdsChange,
     onUpdateWidget,
     onReportWidgetStatus,
 }) => {
@@ -110,7 +110,7 @@ const WidgetRenderer = ({
         return (
             <StatusListCard
                 title={widget.title}
-                endpoints={widget.endpoints}
+                targetIds={widget.targetIds || []}
                 data={apiData}
                 loading={isLoading}
                 error={widgetError}
@@ -128,8 +128,8 @@ const WidgetRenderer = ({
                 onWidgetMetaChange={(updates) =>
                     onWidgetMetaChange(widget.id, updates)
                 }
-                onEndpointsChange={(nextEndpoints) =>
-                    onStatusListEndpointsChange(widget.id, nextEndpoints)
+                onTargetIdsChange={(nextTargetIds) =>
+                    onStatusListTargetIdsChange(widget.id, nextTargetIds)
                 }
                 onSizeChange={(nextWidth, nextHeight) =>
                     onWidgetSizeChange(widget.id, nextWidth, nextHeight)

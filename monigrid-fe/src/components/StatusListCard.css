@@ -66,6 +66,12 @@
     margin-top: 10px;
 }
 
+.status-list-picker-hint {
+    margin: 4px 0 8px;
+    font-size: 0.78rem;
+    color: #7a96a8;
+}
+
 .status-list-summary {
     display: flex;
     gap: 8px;

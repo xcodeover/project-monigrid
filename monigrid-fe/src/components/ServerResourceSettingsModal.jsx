@@ -1,5 +1,14 @@
-import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import {
+    MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_H,
+    MAX_WIDGET_W,
+    MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_H,
+    MIN_WIDGET_W,
+    SIZE_STEP,
+} from "../pages/dashboardConstants";
 import MonitorTargetPicker from "./MonitorTargetPicker";
+import { toGridSize, toUserSize } from "./widgetUtils.js";
 import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 
 /**
@@ -73,13 +82,14 @@ const ServerResourceSettingsModal = ({
                                     Width
                                     <input
                                         type='number'
-                                        min={sizeBounds?.minW ?? 2}
-                                        max={sizeBounds?.maxW ?? 12}
-                                        value={sizeDraft.w}
+                                        min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)}
+                                        max={toUserSize(sizeBounds?.maxW ?? MAX_WIDGET_W)}
+                                        step={SIZE_STEP}
+                                        value={toUserSize(sizeDraft.w)}
                                         onChange={(e) =>
                                             onSizeDraftChange((p) => ({
                                                 ...p,
-                                                w: e.target.value,
+                                                w: toGridSize(e.target.value),
                                             }))
                                         }
                                     />
@@ -88,8 +98,8 @@ const ServerResourceSettingsModal = ({
                                     Height
                                     <input
                                         type='number'
-                                        min={sizeBounds?.minH ?? 2}
-                                        max={sizeBounds?.maxH ?? 24}
+                                        min={sizeBounds?.minH ?? MIN_WIDGET_H}
+                                        max={sizeBounds?.maxH ?? MAX_WIDGET_H}
                                         value={sizeDraft.h}
                                         onChange={(e) =>
                                             onSizeDraftChange((p) => ({

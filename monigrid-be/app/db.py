@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 
 try:
     import jaydebeapi
@@ -18,6 +19,15 @@ except ImportError:
 _jvm_lock = threading.Lock()
 _jvm_started = False
 _logger = logging.getLogger("monitoring_backend")
+
+# Transient connect failures (DB restart, brief network blip) heal on their
+# own within seconds — retry a few times with backoff before surrendering so
+# scheduler ticks don't keep storing error entries while the DB is still
+# coming back up. The total ceiling (~3.5s with defaults) is small enough
+# that callers don't notice on the first request after recovery.
+_CONNECT_RETRY_ATTEMPTS = int(os.environ.get("DB_CONNECT_RETRY_ATTEMPTS", "3"))
+_CONNECT_RETRY_BACKOFF_SEC = float(os.environ.get("DB_CONNECT_RETRY_BACKOFF_SEC", "0.5"))
+_CONNECT_VALIDATION_TIMEOUT_SEC = int(os.environ.get("DB_CONNECT_VALIDATION_TIMEOUT_SEC", "2"))
 
 
 def ensure_jvm_started(
@@ -97,29 +107,75 @@ class DBConnectionPool:
                 "JDBC connect attempt driverClass=%s jdbcUrl=%s",
                 jdbc_config.jdbc_driver_class, jdbc_config.jdbc_url,
             )
-        conn = jaydebeapi.connect(
-            jdbc_config.jdbc_driver_class,
-            jdbc_config.jdbc_url,
-            jdbc_config.driver_args,
-            list(jdbc_config.jdbc_jars),
-        )
-        if _logger.isEnabledFor(logging.DEBUG):
-            _logger.debug(
-                "JDBC connect success driverClass=%s jdbcUrl=%s",
-                jdbc_config.jdbc_driver_class, jdbc_config.jdbc_url,
-            )
-        return conn
+        last_exc: Exception | None = None
+        for attempt in range(1, _CONNECT_RETRY_ATTEMPTS + 1):
+            try:
+                conn = jaydebeapi.connect(
+                    jdbc_config.jdbc_driver_class,
+                    jdbc_config.jdbc_url,
+                    jdbc_config.driver_args,
+                    list(jdbc_config.jdbc_jars),
+                )
+                if _logger.isEnabledFor(logging.DEBUG):
+                    _logger.debug(
+                        "JDBC connect success driverClass=%s jdbcUrl=%s attempt=%d",
+                        jdbc_config.jdbc_driver_class, jdbc_config.jdbc_url, attempt,
+                    )
+                return conn
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _CONNECT_RETRY_ATTEMPTS:
+                    backoff = _CONNECT_RETRY_BACKOFF_SEC * attempt
+                    _logger.warning(
+                        "JDBC connect failed driverClass=%s jdbcUrl=%s attempt=%d/%d "
+                        "retryIn=%.2fs error=%s",
+                        jdbc_config.jdbc_driver_class, jdbc_config.jdbc_url,
+                        attempt, _CONNECT_RETRY_ATTEMPTS, backoff, exc,
+                    )
+                    time.sleep(backoff)
+                else:
+                    _logger.error(
+                        "JDBC connect exhausted retries driverClass=%s jdbcUrl=%s attempts=%d error=%s",
+                        jdbc_config.jdbc_driver_class, jdbc_config.jdbc_url,
+                        _CONNECT_RETRY_ATTEMPTS, exc,
+                    )
+        # Re-raise the last exception so the caller (cache refresh, on-demand
+        # query) records it as an error entry; the next scheduler tick or
+        # request will retry from scratch — no permanent dead state.
+        assert last_exc is not None
+        raise last_exc
 
     def _is_connection_open(self, conn) -> bool:
+        """Return True iff the connection is still usable.
+
+        Checks ``isClosed`` first (cheap, local) and then ``isValid`` if
+        available — the latter actually round-trips to the server, which is
+        what catches the "TCP looks open but the DB restarted" case where
+        ``isClosed`` lies. Both probes are best-effort: any exception is
+        treated as "not open" so the pool drops the suspect connection.
+        """
         if conn is None:
             return False
         try:
             jconn = getattr(conn, "jconn", None)
-            if jconn is not None and hasattr(jconn, "isClosed"):
-                return not bool(jconn.isClosed())
+            if jconn is None:
+                return True
+            if hasattr(jconn, "isClosed"):
+                try:
+                    if bool(jconn.isClosed()):
+                        return False
+                except Exception:
+                    return False
+            if hasattr(jconn, "isValid"):
+                try:
+                    return bool(jconn.isValid(_CONNECT_VALIDATION_TIMEOUT_SEC))
+                except Exception:
+                    # isValid is the more reliable probe; if it raises the
+                    # connection is almost certainly broken.
+                    return False
+            return True
         except Exception:
             return False
-        return True
 
     def _safe_close(self, conn) -> bool:
         """Close `conn`, return True if it closed cleanly.

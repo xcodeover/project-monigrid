@@ -1,7 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import {
+    MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_H,
+    MAX_WIDGET_W,
+    MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_H,
+    MIN_WIDGET_W,
+    SIZE_STEP,
+} from "../pages/dashboardConstants";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
-import { clamp } from "./widgetUtils.js";
+import { clamp, toGridSize, toUserSize } from "./widgetUtils.js";
 import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./HealthCheckCard.css";
@@ -92,10 +100,10 @@ const HealthCheckCard = ({
     }, [error, healthData, loading]);
 
     const handleSizeApply = () => {
-        const minW = sizeBounds?.minW ?? 2;
-        const maxW = sizeBounds?.maxW ?? 12;
-        const minH = sizeBounds?.minH ?? 2;
-        const maxH = sizeBounds?.maxH ?? 24;
+        const minW = sizeBounds?.minW ?? MIN_WIDGET_W;
+        const maxW = sizeBounds?.maxW ?? MAX_WIDGET_W;
+        const minH = sizeBounds?.minH ?? MIN_WIDGET_H;
+        const maxH = sizeBounds?.maxH ?? MAX_WIDGET_H;
 
         const nextWidth = clamp(
             sizeDraft.w,
@@ -187,13 +195,14 @@ const HealthCheckCard = ({
                                     Width
                                     <input
                                         type='number'
-                                        min={sizeBounds?.minW ?? 2}
-                                        max={sizeBounds?.maxW ?? 12}
-                                        value={sizeDraft.w}
+                                        min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)}
+                                        max={toUserSize(sizeBounds?.maxW ?? MAX_WIDGET_W)}
+                                        step={SIZE_STEP}
+                                        value={toUserSize(sizeDraft.w)}
                                         onChange={(event) =>
                                             setSizeDraft((previousDraft) => ({
                                                 ...previousDraft,
-                                                w: event.target.value,
+                                                w: toGridSize(event.target.value),
                                             }))
                                         }
                                     />
@@ -202,8 +211,8 @@ const HealthCheckCard = ({
                                     Height
                                     <input
                                         type='number'
-                                        min={sizeBounds?.minH ?? 2}
-                                        max={sizeBounds?.maxH ?? 24}
+                                        min={sizeBounds?.minH ?? MIN_WIDGET_H}
+                                        max={sizeBounds?.maxH ?? MAX_WIDGET_H}
                                         value={sizeDraft.h}
                                         onChange={(event) =>
                                             setSizeDraft((previousDraft) => ({

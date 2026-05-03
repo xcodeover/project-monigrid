@@ -412,6 +412,7 @@ export default function ConfigEditorModal({ open, onClose }) {
                         { key: "apis", label: "데이터 API" },
                         { key: "serverTargets", label: "서버 리소스" },
                         { key: "networkTargets", label: "네트워크 체크" },
+                        { key: "httpStatusTargets", label: "API 상태" },
                         { key: "logging", label: "로깅" },
                         { key: "advanced", label: "고급" },
                     ].map((tab) => (
@@ -540,6 +541,11 @@ export default function ConfigEditorModal({ open, onClose }) {
                             {/* ── Network targets tab ─────── */}
                             {activeTab === "networkTargets" && (
                                 <MonitorTargetsTab targetType="network" />
+                            )}
+
+                            {/* ── HTTP status targets tab ─── */}
+                            {activeTab === "httpStatusTargets" && (
+                                <MonitorTargetsTab targetType="http_status" />
                             )}
 
                             {/* ── Logging tab ─────────────── */}

@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-    MIN_REFRESH_INTERVAL_SEC,
     MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_H,
+    MAX_WIDGET_W,
+    MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_H,
+    MIN_WIDGET_W,
 } from "../pages/dashboardConstants";
 import { normalizeChartData } from "../components/widgetUtils.js";
 import { normalizeThresholds } from "../utils/chartThresholds.js";
@@ -269,10 +273,10 @@ export const useBarChartSettings = ({
         setIntervalDraft(nextInterval);
         onRefreshIntervalChange?.(nextInterval);
 
-        const minW = sizeBounds?.minW ?? 2;
-        const maxW = sizeBounds?.maxW ?? 12;
-        const minH = sizeBounds?.minH ?? 2;
-        const maxH = sizeBounds?.maxH ?? 24;
+        const minW = sizeBounds?.minW ?? MIN_WIDGET_W;
+        const maxW = sizeBounds?.maxW ?? MAX_WIDGET_W;
+        const minH = sizeBounds?.minH ?? MIN_WIDGET_H;
+        const maxH = sizeBounds?.maxH ?? MAX_WIDGET_H;
         const nw = Math.min(
             maxW,
             Math.max(minW, Math.floor(Number(sizeDraft.w) || minW)),

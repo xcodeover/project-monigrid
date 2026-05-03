@@ -1,14 +1,28 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import apiClient from "../services/http.js";
 import { monitorService } from "../services/dashboardService.js";
-import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import {
+    MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_H,
+    MAX_WIDGET_W,
+    MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_H,
+    MIN_WIDGET_W,
+    SIZE_STEP,
+} from "../pages/dashboardConstants";
 import {
     sortAlertsFirst,
     useAutoScrollTopOnDataChange,
 } from "../utils/widgetListHelpers";
 import MonitorTargetPicker from "./MonitorTargetPicker";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
-import { clamp, formatInterval, formatLocalTime } from "./widgetUtils.js";
+import {
+    clamp,
+    formatInterval,
+    formatLocalTime,
+    toGridSize,
+    toUserSize,
+} from "./widgetUtils.js";
 import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./NetworkTestCard.css";
@@ -338,8 +352,8 @@ const NetworkTestCard = ({
     }, [targetIds]);
 
     const handleSizeApply = () => {
-        const w = clamp(sizeDraft.w, sizeBounds?.minW ?? 2, sizeBounds?.maxW ?? 12, currentSize?.w ?? 4);
-        const h = clamp(sizeDraft.h, sizeBounds?.minH ?? 2, sizeBounds?.maxH ?? 24, currentSize?.h ?? 5);
+        const w = clamp(sizeDraft.w, sizeBounds?.minW ?? MIN_WIDGET_W, sizeBounds?.maxW ?? MAX_WIDGET_W, currentSize?.w ?? 8);
+        const h = clamp(sizeDraft.h, sizeBounds?.minH ?? MIN_WIDGET_H, sizeBounds?.maxH ?? MAX_WIDGET_H, currentSize?.h ?? 5);
         setSizeDraft({ w, h });
         onSizeChange(w, h);
     };
@@ -395,8 +409,8 @@ const NetworkTestCard = ({
                         <div className="settings-section">
                             <h6>위젯 크기</h6>
                             <div className="size-editor widget-size-editor">
-                                <label>Width<input type="number" min={sizeBounds?.minW ?? 2} max={sizeBounds?.maxW ?? 12} value={sizeDraft.w} onChange={(e) => setSizeDraft((p) => ({ ...p, w: e.target.value }))} /></label>
-                                <label>Height<input type="number" min={sizeBounds?.minH ?? 2} max={sizeBounds?.maxH ?? 24} value={sizeDraft.h} onChange={(e) => setSizeDraft((p) => ({ ...p, h: e.target.value }))} /></label>
+                                <label>Width<input type="number" min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)} max={toUserSize(sizeBounds?.maxW ?? MAX_WIDGET_W)} step={SIZE_STEP} value={toUserSize(sizeDraft.w)} onChange={(e) => setSizeDraft((p) => ({ ...p, w: toGridSize(e.target.value) }))} /></label>
+                                <label>Height<input type="number" min={sizeBounds?.minH ?? MIN_WIDGET_H} max={sizeBounds?.maxH ?? MAX_WIDGET_H} value={sizeDraft.h} onChange={(e) => setSizeDraft((p) => ({ ...p, h: e.target.value }))} /></label>
                                 <button type="button" className="size-preset-btn" onClick={handleSizeApply}>적용</button>
                             </div>
                         </div>

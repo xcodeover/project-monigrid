@@ -29,8 +29,20 @@ const AddApiModal = ({
 }) => {
     const isServer = form.type === WIDGET_TYPE_SERVER_RESOURCE;
     const isNetwork = form.type === WIDGET_TYPE_NETWORK_TEST;
-    const usesMonitorTargets = isServer || isNetwork;
+    const isStatusList = form.type === WIDGET_TYPE_STATUS_LIST;
+    const usesMonitorTargets = isServer || isNetwork || isStatusList;
     const selectedIds = Array.isArray(form.targetIds) ? form.targetIds : [];
+
+    const monitorPickerTargetType = isServer
+        ? "server_resource"
+        : isNetwork
+          ? "network"
+          : "http_status";
+    const monitorPickerLabel = isServer
+        ? "서버 대상 선택"
+        : isNetwork
+          ? "네트워크 대상 선택"
+          : "API 상태 대상 선택";
 
     return (
         <div className='modal-overlay'>
@@ -59,35 +71,11 @@ const AddApiModal = ({
                         />
                     </div>
 
-                    {form.type === WIDGET_TYPE_STATUS_LIST ? (
+                    {usesMonitorTargets ? (
                         <div className='form-group'>
-                            <label htmlFor='api-endpoints-text'>
-                                엔드포인트 목록
-                            </label>
-                            <textarea
-                                id='api-endpoints-text'
-                                className='config-json-textarea'
-                                placeholder={
-                                    "한 줄에 하나씩 입력하세요.\nlabel | https://example.com/health"
-                                }
-                                value={form.endpointsText}
-                                onChange={(event) =>
-                                    onChange({
-                                        ...form,
-                                        endpointsText: event.target.value,
-                                    })
-                                }
-                            />
-                        </div>
-                    ) : usesMonitorTargets ? (
-                        <div className='form-group'>
-                            <label>
-                                {isServer ? "서버 대상 선택" : "네트워크 대상 선택"}
-                            </label>
+                            <label>{monitorPickerLabel}</label>
                             <MonitorTargetPicker
-                                targetType={
-                                    isServer ? "server_resource" : "network"
-                                }
+                                targetType={monitorPickerTargetType}
                                 selectedIds={selectedIds}
                                 onChange={(ids) =>
                                     onChange({ ...form, targetIds: ids })

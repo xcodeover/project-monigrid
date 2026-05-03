@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Callable
 
+from .http_health_checker import check_http_url
 from .network_tester import run_network_test
 from .server_resource_collector import collect_server_resources
 
@@ -233,6 +234,20 @@ class MonitorCollectorManager:
                 data = run_network_test(spec)
                 if isinstance(data, dict) and data.get("success") is False:
                     error_message = str(data.get("message") or "probe failed")
+            elif target_type == "http_status":
+                # Replaces the per-request /health-check-proxy-batch fan-out:
+                # one BE-side probe per target on its own schedule, and every
+                # widget reads the same in-memory snapshot. Spec is intentionally
+                # narrow — `url` (required) and `timeout_sec` (clamped) — so the
+                # proxy SSRF rules don't have to live in two places.
+                url = str(spec.get("url") or "").strip()
+                if not url:
+                    error_message = "http_status target requires spec.url"
+                else:
+                    timeout_sec = _clamp_http_timeout(spec.get("timeout_sec"))
+                    data = check_http_url(url, timeout_sec)
+                    if isinstance(data, dict) and not data.get("ok"):
+                        error_message = str(data.get("error") or f"HTTP {data.get('httpStatus')}")
             else:
                 error_message = f"unknown target type: {target_type}"
         except Exception as exc:
@@ -286,6 +301,25 @@ def _initial_snapshot(target: dict[str, Any]) -> MonitorSnapshot:
         enabled=bool(target.get("enabled", True)),
         spec_echo=_redact_spec(target.get("spec") or {}),
     )
+
+
+_HTTP_TIMEOUT_MIN_SEC = 1.0
+_HTTP_TIMEOUT_MAX_SEC = 30.0
+_HTTP_TIMEOUT_DEFAULT_SEC = 10.0
+
+
+def _clamp_http_timeout(value: Any) -> float:
+    """Clamp a user-supplied timeout to the same envelope the proxy enforces.
+
+    The HTTP proxy route already clamps inbound `timeout` to [1, 30] seconds;
+    we mirror that here so an admin can't set spec.timeout_sec=600 in the
+    settings DB and stall the collector pool on a single slow target.
+    """
+    try:
+        n = float(value if value is not None else _HTTP_TIMEOUT_DEFAULT_SEC)
+    except (TypeError, ValueError):
+        return _HTTP_TIMEOUT_DEFAULT_SEC
+    return max(_HTTP_TIMEOUT_MIN_SEC, min(_HTTP_TIMEOUT_MAX_SEC, n))
 
 
 _SECRET_KEYS = ("password", "passwd", "secret", "token")

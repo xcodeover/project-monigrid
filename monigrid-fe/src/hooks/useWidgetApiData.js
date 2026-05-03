@@ -3,9 +3,54 @@
  * auto-rescheduling. Supports table, health-check, and status-list widget types.
  */
 import { useState, useEffect, useRef, useCallback } from "react";
-import { dataService, healthService } from "../services/dashboardService.js";
+import {
+    dataService,
+    healthService,
+    monitorService,
+} from "../services/dashboardService.js";
 import { formatErrorMessage } from "../services/http.js";
 import { getEnabledCriteriaColumns } from "../utils/helpers.js";
+
+// Convert monitor-snapshot rows (BE-collected) into the shape StatusListCard
+// already understands ({items, okCount, failCount}). Mirrors the wire format
+// produced by the legacy `/health-check-proxy-batch` route so the card itself
+// doesn't need to learn about monitor targets.
+const transformMonitorSnapshotToStatusList = (snapshotResponse) => {
+    const rawItems = Array.isArray(snapshotResponse?.items)
+        ? snapshotResponse.items
+        : [];
+    const items = rawItems.map((entry) => {
+        const probe = entry?.data || {};
+        const ok = probe?.ok === true;
+        const url = entry?.spec?.url || "";
+        const error =
+            entry?.errorMessage ||
+            probe?.error ||
+            (ok
+                ? null
+                : probe?.httpStatus
+                  ? `HTTP ${probe.httpStatus}`
+                  : "수집 결과 없음");
+        return {
+            id: entry?.targetId || url,
+            label: entry?.label || url || entry?.targetId,
+            url,
+            ok,
+            httpStatus: probe?.httpStatus ?? null,
+            responseTimeMs: probe?.responseTimeMs ?? null,
+            checkedAt: entry?.updatedAt || null,
+            body: probe?.body ?? null,
+            error,
+        };
+    });
+    const okCount = items.filter((i) => i.ok).length;
+    return {
+        items,
+        okCount,
+        failCount: items.length - okCount,
+        checkedAt: new Date().toISOString(),
+    };
+};
 
 const clampIntervalSec = (value) => {
     const n = Number(value);
@@ -31,9 +76,14 @@ const widgetNeedsFreshData = (widget) => {
 
 const scheduleKeyFor = (widget) => {
     const intervalSec = clampIntervalSec(widget.refreshIntervalSec ?? 5);
+    // status-list now keys on the registered http_status target id list — the
+    // widget pulls a BE-collected snapshot, so re-key whenever the operator
+    // adds/removes a target from this widget.
     const target =
         resolveWidgetType(widget) === "status-list"
-            ? JSON.stringify(widget.endpoints || [])
+            ? JSON.stringify(
+                  Array.isArray(widget.targetIds) ? widget.targetIds : [],
+              )
             : widget.endpoint;
     // fresh 모드 토글도 키에 포함 — 알람 criteria가 켜지거나 꺼지면 즉시 재스케줄
     const freshFlag = widgetNeedsFreshData(widget) ? "fresh" : "cached";
@@ -59,7 +109,7 @@ const useWidgetApiData = (widgets) => {
         const widgetType = resolveWidgetType(widget);
         const hasTarget =
             widgetType === "status-list"
-                ? Array.isArray(widget.endpoints) && widget.endpoints.length > 0
+                ? Array.isArray(widget.targetIds) && widget.targetIds.length > 0
                 : Boolean(widget.endpoint);
 
         if (!widgetId || !hasTarget) return;
@@ -83,7 +133,12 @@ const useWidgetApiData = (widgets) => {
                 return healthService.checkEndpointHealth(widget.endpoint);
             }
             if (widgetType === "status-list") {
-                return healthService.checkMultipleEndpointsHealth(widget.endpoints);
+                // Hit the BE-shared monitor-snapshot cache instead of the
+                // per-request proxy fan-out. Multiple users staring at the
+                // same dashboard now share one collector per target.
+                return monitorService
+                    .getSnapshot(widget.targetIds)
+                    .then(transformMonitorSnapshotToStatusList);
             }
             return dataService.getApiData(widgetId, widget.endpoint, {
                 fresh: widgetNeedsFreshData(widget),

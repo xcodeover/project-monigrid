@@ -5,7 +5,6 @@
  * dashboard sub-components.
  */
 
-import { resolveEndpointWithBase } from "../services/api";
 import {
     DEFAULT_REFRESH_INTERVAL_SEC,
     DEFAULT_WIDGET_LAYOUT,
@@ -55,64 +54,19 @@ export const layoutArrayToMap = (layoutItems, previousLayouts = {}) => {
     }, {});
 };
 
-export const parseStatusListInput = (rawValue, baseUrl) => {
-    return String(rawValue ?? "")
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line, index) => {
-            const [rawLabel, ...rawUrlTokens] = line.includes("|")
-                ? line.split("|")
-                : ["", line];
-            const urlValue =
-                rawUrlTokens.length > 0 ? rawUrlTokens.join("|") : rawLabel;
-            const normalizedUrl = resolveEndpointWithBase(
-                urlValue.trim(),
-                baseUrl,
-            );
-            const fallbackLabel = (() => {
-                try {
-                    const parsedUrl = new URL(normalizedUrl);
-                    return parsedUrl.pathname || normalizedUrl;
-                } catch {
-                    return normalizedUrl;
-                }
-            })();
-
-            return {
-                id: `status-list-item-${index}-${normalizedUrl}`,
-                label:
-                    (rawUrlTokens.length > 0
-                        ? rawLabel
-                        : fallbackLabel
-                    ).trim() || fallbackLabel,
-                url: normalizedUrl,
-            };
-        })
-        .filter((item) => item.url);
-};
-
-export const createStatusListWidget = (baseUrl) => ({
+// Default status-list widget seeded on first dashboard load. Targets are now
+// owned by the BE settings DB (`monigrid_monitor_targets`, type=http_status),
+// so the widget starts empty — the admin must register targets in the
+// "API 상태" config tab and then pick them in the widget's settings.
+export const createStatusListWidget = () => ({
     id: "api-status-list",
     type: WIDGET_TYPE_STATUS_LIST,
     title: "API Status List",
-    endpoints: [
-        { id: "status-health", label: "Health", url: `${baseUrl}/health` },
-        {
-            id: "status-endpoints",
-            label: "Endpoint Catalog",
-            url: `${baseUrl}/dashboard/endpoints`,
-        },
-        {
-            id: "status-logs",
-            label: "Log Dates",
-            url: `${baseUrl}/logs/available-dates`,
-        },
-    ],
+    targetIds: [],
     defaultLayout: {
         x: 0,
         y: 5,
-        w: 4,
+        w: 8,
         h: 5,
         minW: MIN_WIDGET_W,
         minH: MIN_WIDGET_H,
@@ -129,7 +83,7 @@ export const createDefaultApis = (baseUrl) => [
         defaultLayout: {
             x: 0,
             y: 0,
-            w: 4,
+            w: 8,
             h: 4,
             minW: MIN_WIDGET_W,
             minH: MIN_WIDGET_H,
@@ -147,9 +101,9 @@ export const createDefaultApis = (baseUrl) => [
         title: "Application Alerts",
         endpoint: `${baseUrl}/api/alerts`,
         defaultLayout: {
-            x: 4,
+            x: 8,
             y: 0,
-            w: 4,
+            w: 8,
             h: 4,
             minW: MIN_WIDGET_W,
             minH: MIN_WIDGET_H,
@@ -167,9 +121,9 @@ export const createDefaultApis = (baseUrl) => [
         title: "System Metrics",
         endpoint: `${baseUrl}/api/metrics`,
         defaultLayout: {
-            x: 8,
+            x: 16,
             y: 0,
-            w: 4,
+            w: 8,
             h: 5,
             minW: MIN_WIDGET_W,
             minH: MIN_WIDGET_H,

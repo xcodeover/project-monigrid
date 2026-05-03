@@ -78,27 +78,30 @@
 
 .sql-toolbar-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 12px;
     align-items: start;
 }
 
 .sql-toolbar-grid .form-group {
     margin-bottom: 0;
+    min-width: 0;
 }
 
 .sql-summary-group {
     display: block;
+    min-width: 0;
 }
 
 .sql-endpoint-summary {
     display: flex;
     align-items: center;
-    min-width: 120px;
+    min-width: 0;
     padding: 11px 14px;
     border: 1px solid rgba(148, 163, 184, 0.12);
     border-radius: 12px;
     background: rgba(255, 255, 255, 0.03);
+    overflow: hidden;
 }
 
 .sql-summary-label {
@@ -116,6 +119,10 @@
     color: var(--text-primary);
     font-size: 13px;
     font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 }
 
 .sql-editor-error,

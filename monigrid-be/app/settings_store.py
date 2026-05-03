@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -41,6 +42,14 @@ except ImportError:
 SCHEMA_VERSION = "1"
 
 _SUPPORTED_DB_TYPES = ("oracle", "mariadb", "mssql")
+
+# Settings DB sits behind every config / SQL fetch, so a transient outage
+# (DB restart, network blip) used to leave the store with `_conn=None` and
+# every subsequent call permafailed. We now retry connect() on each
+# `_ensure_connection_alive` invocation — the previous behaviour required
+# a backend restart to recover, which is exactly what we're trying to avoid.
+_SETTINGS_RECONNECT_ATTEMPTS = int(os.environ.get("SETTINGS_DB_RECONNECT_ATTEMPTS", "3"))
+_SETTINGS_RECONNECT_BACKOFF_SEC = float(os.environ.get("SETTINGS_DB_RECONNECT_BACKOFF_SEC", "0.5"))
 
 
 # ─── init settings ────────────────────────────────────────────────────────────
@@ -361,6 +370,12 @@ class SettingsStore:
         self._cfg = settings_db
         self._logger = logger
         self._conn: Any = None
+        # Tracks whether `connect()` was ever successfully called. Without
+        # this, the "you forgot to call connect()" guard in
+        # `_ensure_connection_alive` would fire whenever a reconnect attempt
+        # left `_conn=None`, masking the real (transient DB outage) error
+        # behind a misleading "not initialized" message.
+        self._ever_connected = False
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
@@ -382,6 +397,7 @@ class SettingsStore:
             self._conn.jconn.setAutoCommit(False)
         except Exception:
             pass
+        self._ever_connected = True
 
     def close(self) -> None:
         if self._conn is None:
@@ -392,27 +408,58 @@ class SettingsStore:
             pass
         self._conn = None
 
-    # MariaDB/MSSQL servers reap idle connections (wait_timeout / keepalive). A
-    # settings DB session may sit idle between admin ops and quietly die server
-    # side — we detect that here and reconnect before handing out a cursor.
+    # MariaDB/MSSQL servers reap idle connections (wait_timeout / keepalive),
+    # and the settings DB itself can restart underneath us. Either way the
+    # session quietly dies server-side — we detect that here and reconnect
+    # before handing out a cursor. Reconnect is bounded-retry (not single-shot)
+    # so a brief DB outage heals on the very next caller instead of leaving
+    # the process wedged until restart.
     def _ensure_connection_alive(self) -> None:
-        if self._conn is None:
+        if not self._ever_connected:
             raise RuntimeError("SettingsStore.connect() was not called")
-        try:
-            if self._conn.jconn.isValid(2):
+        if self._conn is not None:
+            try:
+                if self._conn.jconn.isValid(2):
+                    return
+            except Exception:
+                pass
+            self._logger.warning(
+                "Settings DB connection lost — reconnecting dbType=%s url=%s",
+                self._cfg.db_type, self._cfg.jdbc_url,
+            )
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
+        last_exc: Exception | None = None
+        for attempt in range(1, _SETTINGS_RECONNECT_ATTEMPTS + 1):
+            try:
+                self.connect()
                 return
-        except Exception:
-            pass
-        self._logger.warning(
-            "Settings DB connection lost — reconnecting dbType=%s url=%s",
-            self._cfg.db_type, self._cfg.jdbc_url,
-        )
-        try:
-            self._conn.close()
-        except Exception:
-            pass
-        self._conn = None
-        self.connect()
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _SETTINGS_RECONNECT_ATTEMPTS:
+                    backoff = _SETTINGS_RECONNECT_BACKOFF_SEC * attempt
+                    self._logger.warning(
+                        "Settings DB reconnect failed dbType=%s url=%s attempt=%d/%d "
+                        "retryIn=%.2fs error=%s",
+                        self._cfg.db_type, self._cfg.jdbc_url,
+                        attempt, _SETTINGS_RECONNECT_ATTEMPTS, backoff, exc,
+                    )
+                    time.sleep(backoff)
+                else:
+                    self._logger.error(
+                        "Settings DB reconnect exhausted dbType=%s url=%s attempts=%d error=%s",
+                        self._cfg.db_type, self._cfg.jdbc_url,
+                        _SETTINGS_RECONNECT_ATTEMPTS, exc,
+                    )
+        # Surface to the caller. `_conn` stays None; the next call retries
+        # from scratch instead of dying on the "connect() was not called"
+        # guard, so the store auto-heals once the DB is back.
+        assert last_exc is not None
+        raise RuntimeError(f"Settings DB unavailable: {last_exc}") from last_exc
 
     def _cursor(self):
         self._ensure_connection_alive()
@@ -759,7 +806,7 @@ class SettingsStore:
     # layout. Each A-A node collects the same target independently and
     # exposes the latest snapshot via the monitor routes. Operators
     # maintain this list from the admin UI.
-    _MONITOR_TARGET_TYPES = ("server_resource", "network")
+    _MONITOR_TARGET_TYPES = ("server_resource", "network", "http_status")
 
     def list_monitor_targets(self) -> list[dict[str, Any]]:
         cur = self._cursor()
