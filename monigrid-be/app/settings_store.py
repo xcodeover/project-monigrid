@@ -625,9 +625,15 @@ class SettingsStore:
 
     @_sync
     def replace_connections(self, connections: Iterable[dict[str, Any]]) -> None:
+        # Commit inside so a standalone caller doesn't leave the DELETE +
+        # INSERTs in an open transaction. The composite paths
+        # (seed_from_config / save_config_dict) issue their own final
+        # commit too, but a no-op double commit is cheaper than a forgotten
+        # one that strands rows in the session buffer.
         self._execute_simple("DELETE FROM monigrid_connections")
         for item in connections:
             self._insert_connection(item)
+        self._conn.commit()
 
     def _insert_connection(self, item: dict[str, Any]) -> None:
         known = {"id", "db_type", "jdbc_driver_class", "jdbc_url", "username", "password", "jdbc_jars"}
@@ -709,9 +715,12 @@ class SettingsStore:
 
     @_sync
     def replace_apis(self, apis: Iterable[dict[str, Any]]) -> None:
+        # See replace_connections — commit inside to make the method
+        # self-contained for ad-hoc callers.
         self._execute_simple("DELETE FROM monigrid_apis")
         for item in apis:
             self._insert_api(item)
+        self._conn.commit()
 
     def _insert_api(self, item: dict[str, Any]) -> None:
         cur = self._cursor()
