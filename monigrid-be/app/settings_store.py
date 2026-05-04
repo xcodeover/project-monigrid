@@ -852,6 +852,40 @@ class SettingsStore:
     # maintain this list from the admin UI.
     _MONITOR_TARGET_TYPES = ("server_resource", "network", "http_status")
 
+    # 서버 리소스 알람 임계치(%) — 운영자가 등록 시 미지정하면 이 값으로 채운다.
+    # 클라이언트는 spec.criteria 를 단일 출처로 삼아 위젯에서 알람을 평가한다.
+    _DEFAULT_SERVER_RESOURCE_CRITERIA = {"cpu": 90, "memory": 85, "disk": 90}
+    _CRITERIA_KEYS = ("cpu", "memory", "disk")
+
+    @classmethod
+    def _normalize_server_resource_criteria(cls, raw: Any) -> dict[str, int]:
+        """Validate criteria dict and clamp values to [1, 100].
+
+        Returns the full {cpu, memory, disk} dict so persisted spec is
+        self-describing (no implicit defaults at read time). Raises
+        ValueError for clearly bad values so the route returns HTTP 400.
+        """
+        normalized = dict(cls._DEFAULT_SERVER_RESOURCE_CRITERIA)
+        if raw is None:
+            return normalized
+        if not isinstance(raw, dict):
+            raise ValueError("spec.criteria must be an object")
+        for key in cls._CRITERIA_KEYS:
+            if key not in raw or raw[key] is None or raw[key] == "":
+                continue
+            try:
+                value = int(raw[key])
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"spec.criteria.{key} must be an integer between 1 and 100"
+                )
+            if value < 1 or value > 100:
+                raise ValueError(
+                    f"spec.criteria.{key} must be between 1 and 100, got {value}"
+                )
+            normalized[key] = value
+        return normalized
+
     @_sync
     def list_monitor_targets(self) -> list[dict[str, Any]]:
         cur = self._cursor()
@@ -898,6 +932,15 @@ class SettingsStore:
         spec = item.get("spec")
         if not isinstance(spec, dict):
             raise ValueError("monitor target spec must be an object")
+        # server_resource 는 알람 임계치(criteria)를 spec 안에 함께 저장한다.
+        # 다른 type 에는 criteria 가 없으므로 이 정규화를 적용하지 않는다.
+        if target_type == "server_resource":
+            spec = {
+                **spec,
+                "criteria": self._normalize_server_resource_criteria(
+                    spec.get("criteria"),
+                ),
+            }
         label = str(item.get("label") or "").strip() or None
         interval_sec = max(1, int(item.get("interval_sec") or 30))
         enabled = 1 if item.get("enabled", True) else 0

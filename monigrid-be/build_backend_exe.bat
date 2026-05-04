@@ -8,7 +8,7 @@ echo   monigrid-be  Build Script
 echo ============================================================
 echo.
 
-echo [1/6] Installing Python dependencies...
+echo [1/5] Installing Python dependencies...
 python -m pip install -r requirements.txt
 if errorlevel 1 (
     echo ERROR: pip install failed.
@@ -16,7 +16,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/6] Cleaning previous build artifacts...
+echo [2/5] Cleaning previous build artifacts...
 :: Only remove PyInstaller outputs, preserve user-editable files
 if exist "dist\_internal" rmdir /S /Q "dist\_internal"
 if exist "dist\monigrid-be.exe" del /Q "dist\monigrid-be.exe"
@@ -24,7 +24,8 @@ if exist "dist\monigrid-be" rmdir /S /Q "dist\monigrid-be"
 if exist "build" rmdir /S /Q "build"
 
 echo.
-echo [3/6] Building monigrid-be (onedir) with PyInstaller...
+echo [3/5] Building monigrid-be (onedir) with PyInstaller...
+:: spec 의 빌드 후 코드가 dist\monigrid-be\{exe,_internal} → dist\ 로 평탄화한다
 pyinstaller --noconfirm --clean monigrid_be.spec
 if errorlevel 1 (
     echo ERROR: PyInstaller build failed.
@@ -32,17 +33,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/6] Flattening dist output to dist\...
-:: PyInstaller onedir creates dist\monigrid-be\ — move exe and _internal up
-if exist "dist\monigrid-be" (
-    move /Y "dist\monigrid-be\monigrid-be.exe" "dist\monigrid-be.exe"
-    if exist "dist\_internal" rmdir /S /Q "dist\_internal"
-    move "dist\monigrid-be\_internal" "dist\_internal"
-    rmdir /S /Q "dist\monigrid-be"
-)
-
-echo.
-echo [5/6] Ensuring editable runtime files in dist\...
+echo [4/5] Ensuring editable runtime files in dist\...
 
 :: initsetting.json — seed from example template if neither the real file
 :: nor an existing deployment copy is present. Contains DB credentials, so
@@ -92,7 +83,7 @@ if not exist "dist\drivers" (
 if exist ".env.example" copy /Y ".env.example" "dist\.env.example"
 
 echo.
-echo [6/6] Creating logs directory...
+echo [5/5] Creating logs directory...
 if not exist "dist\logs" mkdir "dist\logs"
 
 echo.

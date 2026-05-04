@@ -217,8 +217,9 @@ const ServerResourceCard = ({
             try {
                 const res = await monitorService.getSnapshot(targetIds);
                 const items = Array.isArray(res?.items) ? res.items : [];
-                const criteriaOverrides = widgetConfig?.criteriaByTarget || {};
                 const now = new Date();
+                // 임계치는 BE 의 spec.criteria 가 단일 출처. 누락된 값만 코드 기본값으로
+                // 보강해 위젯 알람 평가 함수가 항상 완전한 dict 을 받도록 한다.
                 const derivedServers = items.map((it) => ({
                     id: it.targetId,
                     label: it.label || it.spec?.host || it.targetId,
@@ -227,7 +228,6 @@ const ServerResourceCard = ({
                     criteria: {
                         ...DEFAULT_CRITERIA,
                         ...(it.spec?.criteria || {}),
-                        ...(criteriaOverrides[it.targetId] || {}),
                     },
                 }));
                 setSnapshotServers(derivedServers);

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { monitorService } from "../services/dashboardService";
-import { OS_OPTIONS } from "./serverResourceHelpers";
+import { DEFAULT_CRITERIA, OS_OPTIONS } from "./serverResourceHelpers";
 import PasswordInput from "./PasswordInput";
 import {
     IconChevronRight,
@@ -35,7 +35,14 @@ const buildEmpty = (targetType) => {
         enabled: true,
     };
     if (targetType === "server_resource") {
-        return { ...base, spec: { os_type: "linux-generic", host: "" } };
+        return {
+            ...base,
+            spec: {
+                os_type: "linux-generic",
+                host: "",
+                criteria: { ...DEFAULT_CRITERIA },
+            },
+        };
     }
     if (targetType === "network") {
         return { ...base, spec: { type: "ping", host: "" } };
@@ -95,6 +102,21 @@ const TargetCard = ({
     const networkKind = target.spec?.type || "ping";
     const osType = target.spec?.os_type || "linux-generic";
     const showCreds = needsServerCreds(target);
+
+    // server_resource 의 알람 임계치(%) — 운영자가 등록 시 함께 입력해
+    // BE 에 중앙 저장한다. 빈 입력은 fallback 으로 DEFAULT_CRITERIA 사용.
+    const criteria = target.spec?.criteria || {};
+    const updateCriteria = (field, value) =>
+        onChange({
+            ...target,
+            spec: {
+                ...(target.spec || {}),
+                criteria: {
+                    ...(target.spec?.criteria || {}),
+                    [field]: value === "" ? "" : Number(value),
+                },
+            },
+        });
 
     return (
         <div className={`cfg-card ${collapsed ? "cfg-card-collapsed" : ""}`}>
@@ -287,6 +309,54 @@ const TargetCard = ({
                                     )}
                                 </>
                             )}
+                            <div
+                                className="cfg-row-3"
+                                style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "1fr 1fr 1fr",
+                                    gap: 8,
+                                }}
+                            >
+                                <label>
+                                    <span>CPU 알람 임계치 (%)</span>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="100"
+                                        value={criteria.cpu ?? ""}
+                                        onChange={(e) =>
+                                            updateCriteria("cpu", e.target.value)
+                                        }
+                                        placeholder={String(DEFAULT_CRITERIA.cpu)}
+                                    />
+                                </label>
+                                <label>
+                                    <span>Memory 알람 임계치 (%)</span>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="100"
+                                        value={criteria.memory ?? ""}
+                                        onChange={(e) =>
+                                            updateCriteria("memory", e.target.value)
+                                        }
+                                        placeholder={String(DEFAULT_CRITERIA.memory)}
+                                    />
+                                </label>
+                                <label>
+                                    <span>Disk 알람 임계치 (%)</span>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="100"
+                                        value={criteria.disk ?? ""}
+                                        onChange={(e) =>
+                                            updateCriteria("disk", e.target.value)
+                                        }
+                                        placeholder={String(DEFAULT_CRITERIA.disk)}
+                                    />
+                                </label>
+                            </div>
                         </fieldset>
                     )}
 

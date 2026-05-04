@@ -1,6 +1,5 @@
 import React, { useEffect } from "react";
 import {
-    HashRouter,
     BrowserRouter as Router,
     Routes,
     Route,
@@ -14,9 +13,6 @@ import DashboardPage from "./pages/DashboardPage";
 import LogViewerPage from "./pages/LogViewerPage";
 import AlertHistoryPage from "./pages/AlertHistoryPage";
 import UserManagementPage from "./pages/UserManagementPage";
-
-// Electron serves over file:// — HashRouter avoids 404s on deep links.
-const isElectron = () => window.location.protocol === "file:";
 
 const ProtectedRoute = ({ children }) => {
     const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -34,8 +30,6 @@ const LoginRoute = () => {
 };
 
 function App() {
-    const ActiveRouter = isElectron() ? HashRouter : Router;
-
     // restoreSession only needs to run once on app boot. Calling it via
     // getState() avoids depending on the function's identity (which is
     // stable today but fragile if Zustand internals ever change) and makes
@@ -57,7 +51,7 @@ function App() {
     }, []);
 
     return (
-        <ActiveRouter>
+        <Router>
             <Routes>
                 <Route path="/login" element={<LoginRoute />} />
                 <Route
@@ -95,7 +89,7 @@ function App() {
                 <Route path="/" element={<RootRedirect />} />
                 <Route path="*" element={<RootRedirect />} />
             </Routes>
-        </ActiveRouter>
+        </Router>
     );
 }
 

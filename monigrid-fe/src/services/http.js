@@ -24,8 +24,9 @@ const computeBuildtimeApiBaseUrl = () => {
         return DEV_FALLBACK_API_URL;
     }
     if (ENV_API_URL === "") {
-        // same-origin 모드: 브라우저에서 실행 중이면 현재 origin 사용,
-        // electron(file://) 등에서는 개발 fallback 사용.
+        // same-origin 모드: 브라우저에서 http(s) 로 서빙 중이면 현재 origin 사용.
+        // file:// 같은 비-http 환경(로컬에서 dist/index.html 직접 열기 등)은
+        // 현재 origin 으로 fetch 가 불가능하므로 개발 fallback 으로 떨어진다.
         if (
             typeof window !== "undefined" &&
             window.location?.origin &&
@@ -296,11 +297,7 @@ apiClient.interceptors.response.use(
                     }
                 }
             }
-            if (window.location.protocol === "file:") {
-                window.location.hash = "/login";
-            } else {
-                window.location.href = "/login";
-            }
+            window.location.href = "/login";
         }
         return Promise.reject(error);
     },

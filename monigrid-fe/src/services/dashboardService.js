@@ -54,9 +54,6 @@ export const dataService = {
 
 // ── Health checks ─────────────────────────────────────────────────────────────
 
-const isElectron = () =>
-    typeof window !== "undefined" && window.desktop?.isElectron === true;
-
 const isCrossOrigin = (url) => {
     try {
         const target = new URL(url, window.location.origin);
@@ -88,7 +85,7 @@ const isOurBackendUrl = (url) => {
 };
 
 const needsProxy = (url) =>
-    !isElectron() && isCrossOrigin(url) && !isOurBackendUrl(url);
+    isCrossOrigin(url) && !isOurBackendUrl(url);
 
 export const healthService = {
     checkEndpointHealth: async (endpoint, { signal } = {}) => {
@@ -187,7 +184,7 @@ export const healthService = {
             }
         }
 
-        // Direct requests for same-origin URLs (Electron or same-origin)
+        // Direct requests for same-origin URLs
         const directResults = await Promise.all(
             directItems.map(async (item) => {
                 try {
