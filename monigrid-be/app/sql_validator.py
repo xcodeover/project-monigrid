@@ -6,10 +6,6 @@ from typing import Any
 
 
 SELECT_LIKE_PATTERN = re.compile(r"^\s*(select\b|with\b[\s\S]*\bselect\b)", re.IGNORECASE)
-FORBIDDEN_SQL_PATTERN = re.compile(
-    r"\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|call|exec|execute)\b",
-    re.IGNORECASE,
-)
 FOR_UPDATE_PATTERN = re.compile(r"\bfor\s+update\b", re.IGNORECASE)
 FROM_PATTERN = re.compile(r"\bfrom\b", re.IGNORECASE)
 ORDER_WITHOUT_BY_PATTERN = re.compile(r"\border\b(?!\s+by\b)", re.IGNORECASE)
@@ -141,11 +137,5 @@ def validate_select_only_sql(
 
     if FOR_UPDATE_PATTERN.search(normalized_sql):
         raise ValueError("SELECT ... FOR UPDATE is not allowed")
-
-    forbidden_match = FORBIDDEN_SQL_PATTERN.search(normalized_sql)
-    if forbidden_match:
-        raise ValueError(
-            f"Forbidden SQL keyword detected: {forbidden_match.group(1).upper()}"
-        )
 
 
