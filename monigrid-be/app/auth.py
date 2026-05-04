@@ -26,6 +26,13 @@ _jwt_key_warned = False
 def _resolve_jwt_secret() -> str:
     global _jwt_key_warned
     secret = get_env("JWT_SECRET_KEY", _DEFAULT_JWT_SECRET) or _DEFAULT_JWT_SECRET
+    is_production = (os.environ.get("FLASK_ENV") or "").strip().lower() != "development"
+    if is_production and secret == _DEFAULT_JWT_SECRET:
+        raise RuntimeError(
+            "JWT_SECRET_KEY 가 default 값입니다. production 환경에서는 반드시 별도 시크릿을 "
+            ".env 에 설정하세요. (예: JWT_SECRET_KEY=<openssl rand -hex 32 로 생성한 값>) "
+            "로컬 개발 시에는 FLASK_ENV=development 로 설정하면 이 검사를 건너뜁니다."
+        )
     if len(secret.encode("utf-8")) < _MIN_JWT_KEY_BYTES:
         # Production startups must abort instead of silently falling back to a
         # public default — that fallback would let anyone holding the source
