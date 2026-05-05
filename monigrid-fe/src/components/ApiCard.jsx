@@ -436,26 +436,23 @@ const ApiCard = ({
         }, 300);
     }, [criteriaMap, onTableSettingsChange]);
 
-    // Ctrl+C: 단일 클릭으로 선택된 행을 헤더 포함 TSV로 클립보드에 복사
-    useEffect(() => {
-        const handleKeyDown = (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === "c" && clipboardRow) {
-                const headers = visibleColumns.filter(
-                    (c) => !c.startsWith("_"),
-                );
-                const values = headers.map((h) => {
-                    const v = clipboardRow[h];
-                    if (v === null || v === undefined) return "";
-                    if (typeof v === "object") return JSON.stringify(v);
-                    return String(v);
-                });
-                const tsv = headers.join("\t") + "\n" + values.join("\t");
-                navigator.clipboard.writeText(tsv).catch(() => {});
-                e.preventDefault();
-            }
-        };
-        document.addEventListener("keydown", handleKeyDown);
-        return () => document.removeEventListener("keydown", handleKeyDown);
+    // Ctrl+C: 단일 클릭으로 선택된 행을 헤더 포함 TSV로 클립보드에 복사.
+    // document 전역 대신 카드 root 의 onKeyDown 으로 등록해 N개 위젯 × 전역 listener 제거.
+    const handleKeyDown = useCallback((e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "c" && clipboardRow) {
+            const headers = visibleColumns.filter(
+                (c) => !c.startsWith("_"),
+            );
+            const values = headers.map((h) => {
+                const v = clipboardRow[h];
+                if (v === null || v === undefined) return "";
+                if (typeof v === "object") return JSON.stringify(v);
+                return String(v);
+            });
+            const tsv = headers.join("\t") + "\n" + values.join("\t");
+            navigator.clipboard.writeText(tsv).catch(() => {});
+            e.preventDefault();
+        }
     }, [clipboardRow, visibleColumns]);
 
     // 선택된 행의 최신 데이터를 실시간으로 추적.
@@ -484,7 +481,7 @@ const ApiCard = ({
     }, [selectedRow, dataRows]);
 
     return (
-        <div className='api-card'>
+        <div className='api-card' tabIndex={0} onKeyDown={handleKeyDown}>
             <div className='api-card-header'>
                 <div className='api-card-title-section'>
                     <div className='api-card-title-row'>
