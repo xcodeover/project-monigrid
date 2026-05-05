@@ -4,10 +4,36 @@ Extracted from `MonitoringBackend.get_logs` (SRP). Owns nothing but the
 logging-section of `AppConfig` and a logger; reads daily-rotated log files
 under `logging.directory` and returns paginated lines plus a cursor for
 incremental tailing.
+
+## Cursor formats
+
+Two distinct cursor schemas are in use:
+
+**History mode** (``follow_latest=False``):
+    ``{"YYYY-MM-DD": line_count, ...}``
+    Tracks per-date line offsets so the caller can page forward across a date
+    range without re-reading already-seen lines.
+
+**Follow mode** (``follow_latest=True``):
+    ``{"__follow__": {"file": "prefix-YYYY-MM-DD.log", "offset": N, "line": N}}``
+    Stores a *byte* offset into the active daily log so that each polling call
+    only reads the newly appended bytes instead of the entire (potentially
+    multi-GB) file.  ``line`` is the cumulative line count (UI display only).
+
+### Follow-mode seek logic
+
+1. ``cursor is None`` → first call; start at byte 0 (or seek to max_lines tail).
+2. ``cursor.file == active_filename`` and ``offset <= file_size``
+       → ``f.seek(offset)``; read only new bytes.
+3. ``cursor.file != active_filename`` (date rotate at midnight)
+       → open new file from byte 0.
+4. ``cursor.offset > os.path.getsize(file)`` (truncate / inode change)
+       → reset to byte 0.
 """
 from __future__ import annotations
 
 import logging
+import os
 from collections import deque
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -29,6 +55,8 @@ class LogReader:
     def update_logging_config(self, logging_config: LoggingConfig) -> None:
         """Refresh the logging-config reference (called from `MonitoringBackend.reload`)."""
         self._logging = logging_config
+
+    # ── public API ──────────────────────────────────────────────────────────
 
     def get_logs(
         self,
@@ -56,7 +84,134 @@ class LogReader:
         if start_date > end_date:
             raise ValueError("start_date cannot be after end_date")
 
-        log_cursor = decode_log_cursor(cursor)
+        if follow_latest:
+            return self._get_logs_follow(end_date, max_lines, cursor)
+        return self._get_logs_history(start_date, end_date, max_lines, cursor)
+
+    # ── follow mode (byte-offset cursor) ────────────────────────────────────
+
+    def _get_logs_follow(
+        self,
+        today: date,
+        max_lines: int,
+        raw_cursor: str | None,
+    ) -> tuple[list[str], str | None, str, str]:
+        """Return incremental lines for LIVE polling using a byte-offset cursor.
+
+        Only the bytes appended since the last call are read, so disk IO scales
+        with *new data* rather than with file size.
+        """
+        date_key = today.strftime(LOG_DATE_FORMAT)
+        log_file = (
+            Path(self._logging.directory)
+            / f"{self._logging.file_prefix}-{date_key}.log"
+        )
+        active_filename = log_file.name  # e.g. "monitoring_backend-2026-05-05.log"
+
+        decoded = decode_log_cursor(raw_cursor)
+        prev_follow = decoded.get("__follow__") if decoded else None
+
+        # Determine seek offset -------------------------------------------------
+        seek_offset: int = 0
+        prev_line_count: int = 0
+        if prev_follow is not None:
+            prev_file: str = prev_follow["file"]
+            prev_offset: int = prev_follow["offset"]
+            prev_line_count = prev_follow["line"]
+
+            if prev_file != active_filename:
+                # Date rotate — new file, start from beginning
+                seek_offset = 0
+                prev_line_count = 0
+                self._logger.debug(
+                    "log_reader: date rotate detected (%s → %s), resetting offset",
+                    prev_file, active_filename,
+                )
+            else:
+                # Same file — validate offset against current size
+                try:
+                    current_size = os.path.getsize(log_file)
+                except OSError:
+                    current_size = 0
+
+                if prev_offset > current_size:
+                    # Truncation / inode change — reset
+                    seek_offset = 0
+                    prev_line_count = 0
+                    self._logger.debug(
+                        "log_reader: truncation detected (offset %d > size %d), resetting",
+                        prev_offset, current_size,
+                    )
+                else:
+                    seek_offset = prev_offset
+
+        # File does not exist yet (e.g. midnight, new file not created) ----------
+        if not log_file.exists():
+            next_cursor = encode_log_cursor(
+                {"__follow__": {"file": active_filename, "offset": 0, "line": prev_line_count}}
+            )
+            return [], next_cursor, date_key, date_key
+
+        # Read only the new bytes -----------------------------------------------
+        lines: list[str] = []
+        end_offset: int = seek_offset
+        new_line_count: int = 0
+
+        try:
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                if seek_offset == 0 and prev_follow is None:
+                    # First call ever: return only the last max_lines lines so
+                    # the UI gets an immediately useful tail, not the full file.
+                    tail: deque[str] = deque(maxlen=max_lines)
+                    for line in f:
+                        new_line_count += 1
+                        tail.append(line.rstrip("\n"))
+                    end_offset = f.tell()
+                    lines = list(tail)
+                else:
+                    # Subsequent calls (or seek_offset set from prev_follow):
+                    # read only newly appended bytes.
+                    f.seek(seek_offset)
+                    for line in f:
+                        new_line_count += 1
+                        lines.append(line.rstrip("\n"))
+                    end_offset = f.tell()
+
+        except Exception as error:
+            self._logger.error("Failed to read log file '%s': %s", log_file, error)
+            # Return empty with unchanged cursor so next poll retries cleanly
+            next_cursor = encode_log_cursor(
+                {"__follow__": {"file": active_filename, "offset": seek_offset, "line": prev_line_count}}
+            )
+            return [], next_cursor, date_key, date_key
+
+        cumulative_lines = prev_line_count + new_line_count
+        trimmed = lines[-max_lines:] if len(lines) > max_lines else lines
+        next_cursor = encode_log_cursor(
+            {"__follow__": {"file": active_filename, "offset": end_offset, "line": cumulative_lines}}
+        )
+        return trimmed, next_cursor, date_key, date_key
+
+    # ── history mode (line-count cursor, unchanged) ──────────────────────────
+
+    def _get_logs_history(
+        self,
+        start_date: date,
+        end_date: date,
+        max_lines: int,
+        raw_cursor: str | None,
+    ) -> tuple[list[str], str | None, str, str]:
+        """Return paginated log lines across a date range (history / search mode).
+
+        Uses the legacy per-date line-count cursor; behaviour is unchanged from
+        before the Phase 4 byte-offset refactor.
+        """
+        log_cursor = decode_log_cursor(raw_cursor)
+        # If caller accidentally passes a follow-mode cursor into history mode,
+        # ignore it gracefully.
+        if "__follow__" in log_cursor:
+            log_cursor = {}
+
         collected_lines: list[str] = []
         next_cursor: dict[str, int] = {}
         current_date = start_date

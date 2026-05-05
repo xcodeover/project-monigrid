@@ -65,12 +65,24 @@ def get_client_ip() -> str:
     return request.remote_addr or "unknown"
 
 
-def encode_log_cursor(cursor: dict[str, int]) -> str:
+def encode_log_cursor(cursor: dict) -> str:
+    """Encode a log cursor dict to a URL-safe base64 string.
+
+    Supports both history-mode cursors (``{date_key: line_count}``) and
+    follow-mode cursors (``{"__follow__": {file, offset, line}}``).
+    """
     payload = json.dumps(cursor, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(payload).decode("ascii")
 
 
-def decode_log_cursor(raw_cursor: str | None) -> dict[str, int]:
+def decode_log_cursor(raw_cursor: str | None) -> dict:
+    """Decode a log cursor from a URL-safe base64 string.
+
+    Returns an empty dict when *raw_cursor* is ``None`` or empty.  The returned
+    dict may be:
+    - a history-mode cursor: ``{"YYYY-MM-DD": line_count, ...}``
+    - a follow-mode cursor:  ``{"__follow__": {"file": str, "offset": int, "line": int}}``
+    """
     if not raw_cursor:
         return {}
 
@@ -84,6 +96,20 @@ def decode_log_cursor(raw_cursor: str | None) -> dict[str, int]:
     if not isinstance(parsed, dict):
         raise ValueError("Invalid log cursor")
 
+    # Follow-mode cursor: {"__follow__": {file, offset, line}} — pass through as-is
+    if "__follow__" in parsed:
+        fc = parsed["__follow__"]
+        if isinstance(fc, dict):
+            return {
+                "__follow__": {
+                    "file": str(fc.get("file", "")),
+                    "offset": max(0, int(fc.get("offset", 0))),
+                    "line": max(0, int(fc.get("line", 0))),
+                }
+            }
+        raise ValueError("Invalid log cursor")
+
+    # Legacy history-mode cursor: {"YYYY-MM-DD": line_count}
     result: dict[str, int] = {}
     for key, value in parsed.items():
         result[str(key)] = max(0, int(value))
