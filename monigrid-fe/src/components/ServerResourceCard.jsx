@@ -368,16 +368,49 @@ const ServerResourceCard = ({
 
     const hasItems = useSnapshot ? targetIds.length > 0 : legacyServers.length > 0;
 
+    // Consecutive failure counter for exponential backoff polling.
+    // Incremented on network/server error, reset to 0 on first success.
+    const failCountRef = useRef(0);
+
+    // Wrap fetchAllServers to track success/failure for backoff purposes.
+    const fetchAllServersWithTracking = useCallback(async () => {
+        try {
+            await fetchAllServers();
+            failCountRef.current = 0;
+        } catch {
+            // fetchAllServers swallows its own errors via setState; this catch
+            // is a safety net.
+            failCountRef.current += 1;
+        }
+    }, [fetchAllServers]);
+
     useEffect(() => {
         if (hasItems) fetchAllServers();
     }, [pollKey, hasItems, fetchAllServers]);
 
+    // Exponential-backoff polling via recursive setTimeout.
+    // On consecutive failures: base → 2× → 4× → 8× → 16× → 32× (cap at 5 min).
+    // Returns to base interval on first successful response.
     useEffect(() => {
-        if (!hasItems) return;
-        const ms = (refreshIntervalSec ?? 30) * 1000;
-        timerRef.current = setInterval(fetchAllServers, ms);
-        return () => clearInterval(timerRef.current);
-    }, [pollKey, hasItems, refreshIntervalSec, fetchAllServers]);
+        if (!hasItems) return undefined;
+        const baseSec = refreshIntervalSec ?? 30;
+        // Reset failure count when poll key or interval changes so stale backoff
+        // state from a previous configuration does not carry over.
+        failCountRef.current = 0;
+
+        const schedule = (delayMs) => {
+            timerRef.current = setTimeout(async () => {
+                await fetchAllServersWithTracking();
+                const fails = failCountRef.current;
+                const nextDelay = fails === 0
+                    ? baseSec * 1000
+                    : Math.min(baseSec * 1000 * (2 ** Math.min(fails, 5)), 5 * 60 * 1000);
+                schedule(nextDelay);
+            }, delayMs);
+        };
+        schedule(baseSec * 1000);
+        return () => clearTimeout(timerRef.current);
+    }, [pollKey, hasItems, refreshIntervalSec, fetchAllServersWithTracking]);
 
     // Visibility-flip: immediately refetch when the user returns to the tab so
     // the widget shows fresh data rather than stale results from before hiding.

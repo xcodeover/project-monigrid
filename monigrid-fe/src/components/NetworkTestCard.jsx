@@ -394,17 +394,51 @@ const NetworkTestCard = ({
 
     const hasItems = useSnapshot ? targetIds.length > 0 : legacyTargets.length > 0;
 
+    // Consecutive failure counter for exponential backoff polling.
+    // Incremented on network/server error, reset to 0 on first success.
+    const failCountRef = useRef(0);
+
+    // Wrap checkAllTargets to track success/failure for backoff purposes.
+    // Returns true on success, false on failure (network-level error).
+    const checkAllTargetsWithTracking = useCallback(async () => {
+        try {
+            await checkAllTargets();
+            failCountRef.current = 0;
+        } catch {
+            // checkAllTargets swallows its own errors via setState; this catch
+            // is a safety net. The internal catch already updates targetStates.
+            failCountRef.current += 1;
+        }
+    }, [checkAllTargets]);
+
     useEffect(() => {
         if (hasItems) checkAllTargets();
     }, [pollKey, hasItems, checkAllTargets]);
 
+    // Exponential-backoff polling via recursive setTimeout.
+    // On consecutive failures: 5s → 10s → 20s → 40s → 80s → 160s (cap at 5 min).
+    // Returns to base interval on first successful response.
     useEffect(() => {
         if (!hasItems) return undefined;
-        // refreshIntervalSec이 string("30")으로 들어와도 안전하게 처리한다.
-        const sec = Math.max(MIN_REFRESH_INTERVAL_SEC, Number(refreshIntervalSec) || 10);
-        const id = setInterval(checkAllTargets, sec * 1000);
-        return () => clearInterval(id);
-    }, [pollKey, hasItems, refreshIntervalSec, checkAllTargets]);
+        const baseSec = Math.max(MIN_REFRESH_INTERVAL_SEC, Number(refreshIntervalSec) || 10);
+        // Reset failure count when poll key or interval changes so stale backoff
+        // state from a previous configuration does not carry over.
+        failCountRef.current = 0;
+
+        let timerId;
+        const schedule = (delayMs) => {
+            timerId = setTimeout(async () => {
+                await checkAllTargetsWithTracking();
+                const fails = failCountRef.current;
+                const nextDelay = fails === 0
+                    ? baseSec * 1000
+                    : Math.min(baseSec * 1000 * (2 ** Math.min(fails, 5)), 5 * 60 * 1000);
+                schedule(nextDelay);
+            }, delayMs);
+        };
+        schedule(baseSec * 1000);
+        return () => clearTimeout(timerId);
+    }, [pollKey, hasItems, refreshIntervalSec, checkAllTargetsWithTracking]);
 
     // Visibility-flip: immediately refetch when the user returns to the tab so
     // the widget shows fresh data rather than stale results from before hiding.

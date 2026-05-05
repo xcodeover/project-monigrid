@@ -113,6 +113,15 @@ const scheduleKeyFor = (widget) => {
     return `${target}::${intervalSec}::${freshFlag}`;
 };
 
+// Compute the next polling delay for a widget based on its consecutive failure count.
+// On success (fails=0) → baseIntervalSec.
+// On Nth failure → min(baseIntervalSec * 2^min(N,5), 5 min).
+// Caps at 5 minutes so BE recovery is detected within a reasonable window.
+const nextPollDelay = (fails, baseIntervalSec) => {
+    if (fails === 0) return baseIntervalSec * 1000;
+    return Math.min(baseIntervalSec * 1000 * (2 ** Math.min(fails, 5)), 5 * 60 * 1000);
+};
+
 const useWidgetApiData = (widgets) => {
     const [results, setResults] = useState({});
     const [loadingMap, setLoadingMap] = useState({});
@@ -133,6 +142,11 @@ const useWidgetApiData = (widgets) => {
     const controllersRef = useRef({});
     const widgetsRef = useRef(widgets);
     const resultsRef = useRef(results);
+    // Per-widget consecutive failure count for exponential backoff.
+    // Only network/server errors increment this; successful responses reset it.
+    // Abort-cancelled requests do NOT count as failures (they are intentional).
+    // Map is stored in a ref so updates don't cause re-renders.
+    const failureCountRef = useRef(new Map());
 
     useEffect(() => { widgetsRef.current = widgets; }, [widgets]);
     useEffect(() => { resultsRef.current = results; }, [results]);
@@ -183,6 +197,10 @@ const useWidgetApiData = (widgets) => {
             });
         })()
             .then((data) => {
+                // Successful response — reset consecutive failure count so the
+                // next poll fires at the normal base interval.
+                failureCountRef.current.set(widgetId, 0);
+
                 if (widgetType === "health-check") {
                     const isLive = data?.ok === true;
                     setResults((prev) => ({
@@ -232,9 +250,16 @@ const useWidgetApiData = (widgets) => {
                 // result and just clear the in-flight slot. Surfacing
                 // "Request aborted" as a widget error would flash the
                 // alarm UI on every widget removal.
+                // Intentional aborts do NOT count as failures — they are caused
+                // by widget removal or tab navigation, not BE health degradation.
                 if (signal.aborted || error?.name === "CanceledError" || error?.code === "ERR_CANCELED") {
                     return;
                 }
+                // Network / server error — increment failure count to trigger
+                // exponential backoff on the next scheduled poll.
+                const prevFails = failureCountRef.current.get(widgetId) || 0;
+                failureCountRef.current.set(widgetId, prevFails + 1);
+
                 setResults((prev) => ({
                     ...prev,
                     [widgetId]: {
@@ -265,10 +290,14 @@ const useWidgetApiData = (widgets) => {
         // Clean up removed widgets only
         Object.keys(timersRef.current).forEach((widgetId) => {
             if (!widgetIds.has(widgetId)) {
-                clearInterval(timersRef.current[widgetId]);
+                clearTimeout(timersRef.current[widgetId]);
                 delete timersRef.current[widgetId];
                 delete scheduleKeyRef.current[widgetId];
                 delete inFlightRef.current[widgetId];
+                // Remove the failure count entry for the removed widget so the
+                // Map doesn't grow unboundedly if widgets are frequently added
+                // and removed from the dashboard.
+                failureCountRef.current.delete(widgetId);
                 const controller = controllersRef.current[widgetId];
                 if (controller) {
                     controller.abort();
@@ -288,10 +317,15 @@ const useWidgetApiData = (widgets) => {
             }
 
             if (timersRef.current[widget.id]) {
-                clearInterval(timersRef.current[widget.id]);
+                clearTimeout(timersRef.current[widget.id]);
             }
 
             scheduleKeyRef.current[widget.id] = key;
+            // Reset failure count when the schedule key changes (endpoint /
+            // interval / fresh-flag changed) so stale backoff state from a
+            // previous configuration doesn't carry over to the new one.
+            failureCountRef.current.set(widget.id, 0);
+
             // Resolve the widget from widgetsRef on every tick instead of
             // capturing it in the closure: a setting edit (criteria, table
             // formatting, etc.) won't change the schedule key but still
@@ -300,23 +334,50 @@ const useWidgetApiData = (widgets) => {
             // that does invalidate the schedule key.
             const widgetId = widget.id;
             const startDelay = computeStartDelayMs(widgetId, intervalSec);
-            const tick = () => {
-                // Skip fetch while tab is hidden — avoids ~360 req/min for
-                // 30 widgets × 5 s interval in background tabs. The
-                // visibilitychange effect below fires an immediate refetch
-                // when the user returns, so no stale data is shown.
-                // NOTE: 탭이 숨겨진 동안에는 알람 감지가 최대 폴링 주기만큼 지연된다.
-                if (document.hidden) return;
-                const latest = widgetsRef.current.find((w) => w.id === widgetId);
-                if (latest) fetchWidget(latest);
+
+            // Recursive setTimeout instead of setInterval so each tick can
+            // read the current failure count and schedule itself at the
+            // appropriate backoff delay. setInterval fires at a fixed cadence
+            // and cannot express variable inter-tick gaps.
+            const scheduleTick = (delayMs) => {
+                timersRef.current[widgetId] = setTimeout(async () => {
+                    // Skip fetch while tab is hidden — avoids ~360 req/min for
+                    // 30 widgets × 5 s interval in background tabs. The
+                    // visibilitychange effect below fires an immediate refetch
+                    // when the user returns, so no stale data is shown.
+                    // NOTE: 탭이 숨겨진 동안에는 알람 감지가 최대 폴링 주기만큼 지연된다.
+                    // While hidden we still re-arm at base interval so that
+                    // when the tab becomes visible the backoff state is current.
+                    if (!document.hidden) {
+                        const latest = widgetsRef.current.find((w) => w.id === widgetId);
+                        if (latest) await fetchWidget(latest);
+                    }
+                    // Re-arm: read failure count AFTER the fetch completes so
+                    // the next delay already reflects the outcome of this tick.
+                    if (timersRef.current[widgetId] !== undefined) {
+                        const fails = failureCountRef.current.get(widgetId) || 0;
+                        const base = clampIntervalSec(
+                            (widgetsRef.current.find((w) => w.id === widgetId)?.refreshIntervalSec) ?? 5,
+                        );
+                        scheduleTick(nextPollDelay(fails, base));
+                    }
+                }, delayMs);
             };
-            // Phase the first fetch via setTimeout, then start the interval
-            // from that offset so subsequent ticks inherit the per-widget
-            // phase. clearInterval/clearTimeout share an ID space in
-            // browsers, so the cleanup paths can clear either kind safely.
+
+            // Phase the very first fetch via the start delay, then hand off
+            // to the recursive scheduler for all subsequent ticks.
             timersRef.current[widgetId] = setTimeout(() => {
-                tick();
-                timersRef.current[widgetId] = setInterval(tick, intervalSec * 1000);
+                // Immediate first tick (within the start-delay window).
+                (async () => {
+                    if (!document.hidden) {
+                        const latest = widgetsRef.current.find((w) => w.id === widgetId);
+                        if (latest) await fetchWidget(latest);
+                    }
+                    if (timersRef.current[widgetId] !== undefined) {
+                        const fails = failureCountRef.current.get(widgetId) || 0;
+                        scheduleTick(nextPollDelay(fails, intervalSec));
+                    }
+                })();
             }, startDelay);
         });
 
@@ -326,7 +387,7 @@ const useWidgetApiData = (widgets) => {
     // Unmount-only cleanup
     useEffect(() => {
         return () => {
-            Object.values(timersRef.current).forEach(clearInterval);
+            Object.values(timersRef.current).forEach(clearTimeout);
             Object.values(controllersRef.current).forEach((c) => {
                 try { c.abort(); } catch { /* ignore */ }
             });
@@ -334,6 +395,7 @@ const useWidgetApiData = (widgets) => {
             scheduleKeyRef.current = {};
             inFlightRef.current = {};
             controllersRef.current = {};
+            failureCountRef.current.clear();
         };
     }, []);
 
