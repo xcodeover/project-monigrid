@@ -52,7 +52,6 @@ const BarChartBody = ({ error, loading, settings }) => {
         isHorizontal,
         rechartsLayout,
         useCellColors,
-        animationActive,
         singleYMode,
         activeThresholds,
         activeIdx,
@@ -270,10 +269,18 @@ const BarChartBody = ({ error, loading, settings }) => {
                             // recharts 3.x: deprecated <Cell> + activeBar 조합은
                             // tooltip payload 가 첫 row 로 고정되는 버그가 있어
                             // shape render prop 으로 per-bar 색상을 적용한다.
+                            //
+                            // isAnimationActive={false} 이유:
+                            // recharts 3.x 의 useAnimationId(props) 는 props 참조가
+                            // 바뀔 때마다 animation id 를 갱신한다. BarChartBody 는
+                            // setActiveIdx (마우스 이동마다 호출) 로 재렌더되므로
+                            // 마우스를 움직일 때마다 애니메이션이 t=0 으로 리셋되어
+                            // 막대 height=0 → Rectangle null 반환 → 막대 미표시.
+                            // 애니메이션을 끄면 bars 가 즉시 최종 크기로 렌더된다.
                             <Bar
                                 key={key}
                                 dataKey={key}
-                                isAnimationActive={animationActive}
+                                isAnimationActive={false}
                                 radius={
                                     isHorizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]
                                 }
@@ -299,11 +306,12 @@ const BarChartBody = ({ error, loading, settings }) => {
                             />
                         ) : (
                             // 대량 데이터: 단일/계열 색상
+                            // (동일 이유로 isAnimationActive={false})
                             <Bar
                                 key={key}
                                 dataKey={key}
                                 fill={CHART_COLORS[i % CHART_COLORS.length]}
-                                isAnimationActive={animationActive}
+                                isAnimationActive={false}
                                 radius={
                                     isHorizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]
                                 }
