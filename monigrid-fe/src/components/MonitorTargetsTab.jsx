@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import { monitorService, invalidateMonitorTargetsCache } from "../services/dashboardService";
 import { DEFAULT_CRITERIA, OS_OPTIONS } from "./serverResourceHelpers";
 import PasswordInput from "./PasswordInput";
+import { useDirtyList } from "../hooks/useDirtyList";
+import DirtyListSummary from "./DirtyListSummary";
 import {
     IconChevronRight,
     IconCopy,
@@ -15,7 +17,7 @@ import {
  *
  * targetType prop 으로 표시/추가할 종류를 한정한다 (서버 리소스 / 네트워크).
  * 별도 백엔드 엔드포인트(`/dashboard/monitor-targets`)를 사용하므로
- * ConfigEditorModal 푸터의 "저장 & 적용" 과 결합되지 않고 카드 단위로 즉시 저장한다.
+ * ConfigEditorModal 푸터의 "저장 & 적용" 과 결합되지 않고 배치 저장한다.
  */
 
 const NETWORK_TYPE_OPTIONS = [
@@ -27,8 +29,6 @@ const HTTP_STATUS_DEFAULT_TIMEOUT_SEC = 10;
 
 const buildEmpty = (targetType) => {
     const base = {
-        _local: true,
-        id: `mt-${Date.now().toString(36)}`,
         type: targetType,
         label: "",
         interval_sec: 30,
@@ -56,20 +56,6 @@ const buildEmpty = (targetType) => {
     return { ...base, spec: {} };
 };
 
-// "db-01" → "db-02", "db" → "db-2" 식으로 끝의 숫자를 증가시키며,
-// 이미 존재하는 id 와 충돌하지 않을 때까지 반복한다.
-const nextAvailableId = (sourceId, existing) => {
-    const text = String(sourceId || "");
-    const bump = (s) => {
-        const m = s.match(/^(.*?)(\d+)$/);
-        if (m) return m[1] + (parseInt(m[2], 10) + 1);
-        return s ? `${s}-2` : `mt-${Date.now().toString(36)}`;
-    };
-    let candidate = bump(text);
-    while (existing.has(candidate)) candidate = bump(candidate);
-    return candidate;
-};
-
 const needsServerCreds = (target) => {
     if (target?.type !== "server_resource") return false;
     const osType = target.spec?.os_type || "linux-generic";
@@ -87,10 +73,10 @@ const TargetCard = ({
     onToggle,
     onChange,
     onRemove,
+    onRestore,
     onDuplicate,
-    onSave,
-    saving,
-    rowError,
+    rowStateClass,
+    validationError,
 }) => {
     const update = (field, value) => onChange({ ...target, [field]: value });
     const updateSpec = (field, value) =>
@@ -102,6 +88,7 @@ const TargetCard = ({
     const networkKind = target.spec?.type || "ping";
     const osType = target.spec?.os_type || "linux-generic";
     const showCreds = needsServerCreds(target);
+    const isDeleted = target._isDeleted;
 
     // server_resource 의 알람 임계치(%) — 운영자가 등록 시 함께 입력해
     // BE 에 중앙 저장한다. 빈 입력은 fallback 으로 DEFAULT_CRITERIA 사용.
@@ -118,8 +105,20 @@ const TargetCard = ({
             },
         });
 
+    const cardClasses = [
+        "cfg-card",
+        collapsed ? "cfg-card-collapsed" : "",
+        rowStateClass || "",
+        validationError ? "row-state-invalid" : "",
+    ]
+        .filter(Boolean)
+        .join(" ");
+
     return (
-        <div className={`cfg-card ${collapsed ? "cfg-card-collapsed" : ""}`}>
+        <div
+            className={cardClasses}
+            data-row-id={target.id}
+        >
             <div
                 className="cfg-card-header"
                 onClick={onToggle}
@@ -128,18 +127,20 @@ const TargetCard = ({
                 <span className={`cfg-card-chevron ${collapsed ? "" : "open"}`}>
                     <IconChevronRight size={12} />
                 </span>
-                <label
-                    className="cfg-toggle"
-                    onClick={(e) => e.stopPropagation()}
-                    title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}
-                >
-                    <input
-                        type="checkbox"
-                        checked={!!target.enabled}
-                        onChange={(e) => update("enabled", e.target.checked)}
-                    />
-                    <span className="cfg-toggle-slider" />
-                </label>
+                {!isDeleted && (
+                    <label
+                        className="cfg-toggle"
+                        onClick={(e) => e.stopPropagation()}
+                        title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}
+                    >
+                        <input
+                            type="checkbox"
+                            checked={!!target.enabled}
+                            onChange={(e) => update("enabled", e.target.checked)}
+                        />
+                        <span className="cfg-toggle-slider" />
+                    </label>
+                )}
                 <span className="cfg-card-title">
                     {target.label || target.id || "(이름 없음)"}
                 </span>
@@ -148,36 +149,51 @@ const TargetCard = ({
                         ? target.spec?.url || "-"
                         : target.spec?.host || "-"}
                 </span>
-                {target._local && <span className="cfg-card-badge">신규</span>}
-                {target._dirty && !target._local && (
-                    <span className="cfg-card-badge">변경됨</span>
+                {target._isNew && <span className="cfg-card-badge">신규</span>}
+                {isDeleted && <span className="cfg-card-badge" style={{ color: "#ff6b6b" }}>삭제 예정</span>}
+                {!isDeleted && (
+                    <button
+                        type="button"
+                        className="cfg-duplicate-btn"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDuplicate();
+                        }}
+                        title="복제"
+                        aria-label="복제"
+                    >
+                        <IconCopy size={14} />
+                    </button>
                 )}
-                <button
-                    type="button"
-                    className="cfg-duplicate-btn"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onDuplicate();
-                    }}
-                    title="복제"
-                    aria-label="복제"
-                >
-                    <IconCopy size={14} />
-                </button>
-                <button
-                    type="button"
-                    className="cfg-remove-btn"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onRemove();
-                    }}
-                    title="삭제"
-                    aria-label="삭제"
-                >
-                    <IconTrash size={14} />
-                </button>
+                {isDeleted ? (
+                    <button
+                        type="button"
+                        className="row-restore-btn"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onRestore();
+                        }}
+                        title="복원"
+                        aria-label="복원"
+                    >
+                        ↺ 복원
+                    </button>
+                ) : (
+                    <button
+                        type="button"
+                        className="cfg-remove-btn"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onRemove();
+                        }}
+                        title="삭제"
+                        aria-label="삭제"
+                    >
+                        <IconTrash size={14} />
+                    </button>
+                )}
             </div>
-            {!collapsed && (
+            {!collapsed && !isDeleted && (
                 <div className="cfg-card-body">
                     <div className="cfg-row-2">
                         <label>
@@ -187,7 +203,7 @@ const TargetCard = ({
                                 value={target.id || ""}
                                 onChange={(e) => update("id", e.target.value)}
                                 placeholder="예: db-01"
-                                disabled={!target._local}
+                                disabled={!target._isNew}
                             />
                         </label>
                         <label>
@@ -438,18 +454,9 @@ const TargetCard = ({
                         </fieldset>
                     )}
 
-                    {rowError && <div className="cfg-msg cfg-msg-error">{rowError}</div>}
-
-                    <div className="cfg-card-footer">
-                        <button
-                            type="button"
-                            className="cfg-footer-btn cfg-btn-primary"
-                            onClick={onSave}
-                            disabled={saving || (!target._dirty && !target._local)}
-                        >
-                            {saving ? "저장 중..." : target._local ? "추가" : "저장"}
-                        </button>
-                    </div>
+                    {validationError && (
+                        <div className="row-state-invalid-msg">{validationError}</div>
+                    )}
                 </div>
             )}
         </div>
@@ -457,22 +464,71 @@ const TargetCard = ({
 };
 
 const MonitorTargetsTab = ({ targetType }) => {
-    const [allTargets, setAllTargets] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [collapsed, setCollapsed] = useState({});
-    const [savingIds, setSavingIds] = useState({});
-    const [rowErrors, setRowErrors] = useState({});
+    const [isSaving, setIsSaving] = useState(false);
 
+    // ── validator ──────────────────────────────────────────────────────────────
+    const validator = useCallback((item) => {
+        const label = (item.label || "").trim();
+        if (!label) return "이름(label)은 필수입니다.";
+        if (label.length > 64) return "이름은 64자 이하여야 합니다.";
+        if (!item.type) return "유형(type)은 필수입니다.";
+
+        if (item.type === "http_status") {
+            const url = (item.spec?.url || "").trim();
+            if (!url) return "URL은 필수입니다.";
+            return null;
+        }
+
+        const host = (item.spec?.host || "").trim();
+        if (!host) return "호스트(host)는 필수입니다.";
+
+        const port = item.spec?.port;
+        if (port !== undefined && port !== "" && port !== null) {
+            const n = Number(port);
+            if (!Number.isFinite(n) || n < 1 || n > 65535) return "포트는 1-65535 범위여야 합니다.";
+        }
+
+        if (item.type === "server_resource") {
+            const osType = item.spec?.os_type || "linux-generic";
+            const needsCreds =
+                osType === "windows-winrm" ||
+                ((osType?.startsWith("linux") || osType === "windows-ssh") &&
+                    !!host &&
+                    host !== "localhost" &&
+                    host !== "127.0.0.1");
+            if (needsCreds) {
+                const username = item.spec?.username;
+                if (!username || !(username + "").trim()) return "Username은 필수입니다.";
+            }
+        }
+
+        return null;
+    }, []);
+
+    // ── newItemFactory ─────────────────────────────────────────────────────────
+    const newItemFactory = useCallback(() => buildEmpty(targetType), [targetType]);
+
+    // ── useDirtyList ───────────────────────────────────────────────────────────
+    const list = useDirtyList({
+        initial: [],
+        idKey: "id",
+        newItemFactory,
+        validator,
+    });
+
+    // ── server load ────────────────────────────────────────────────────────────
     const reload = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
             const data = await monitorService.listTargets();
-            const list = Array.isArray(data?.targets) ? data.targets : [];
-            setAllTargets(list);
-            setCollapsed(Object.fromEntries(list.map((t) => [t.id, true])));
-            setRowErrors({});
+            const items = Array.isArray(data?.targets) ? data.targets : [];
+            const filtered = items.filter((t) => t.type === targetType);
+            list.reset(filtered);
+            setCollapsed(Object.fromEntries(filtered.map((t) => [t.id, true])));
         } catch (err) {
             setError(
                 err?.response?.data?.message ||
@@ -482,123 +538,87 @@ const MonitorTargetsTab = ({ targetType }) => {
         } finally {
             setLoading(false);
         }
-    }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [targetType]);
 
     useEffect(() => {
         reload();
     }, [reload]);
 
-    // 현재 탭 type 에 해당하는 항목만 + 상단에 신규(_local) 항목.
-    const targets = allTargets.filter(
-        (t) => (t._local && t.type === targetType) || t.type === targetType,
-    );
-
-    const setRowSaving = (id, value) =>
-        setSavingIds((prev) => ({ ...prev, [id]: value }));
-    const setRowError = (id, msg) =>
-        setRowErrors((prev) => ({ ...prev, [id]: msg }));
-
+    // ── handlers ───────────────────────────────────────────────────────────────
     const handleAdd = () => {
-        const empty = buildEmpty(targetType);
-        setAllTargets((prev) => [empty, ...prev]);
-        setCollapsed((prev) => ({ ...prev, [empty.id]: false }));
+        const tmpId = list.addItem();
+        setCollapsed((prev) => ({ ...prev, [tmpId]: false }));
     };
 
     const handleDuplicate = (id) => {
-        const src = allTargets.find((t) => t.id === id);
+        const src = list.visibleItems.find((t) => t.id === id);
         if (!src) return;
-        const existingIds = new Set(allTargets.map((t) => t.id));
-        const dup = {
-            ...src,
-            _local: true,
-            _dirty: false,
-            id: nextAvailableId(src.id, existingIds),
+        const dupId = list.addItem({
+            ...buildEmpty(targetType),
+            type: src.type,
             label: src.label ? `${src.label} (사본)` : "",
+            interval_sec: src.interval_sec,
+            enabled: src.enabled,
             spec: { ...(src.spec || {}) },
-        };
-        setAllTargets((prev) => {
-            const idx = prev.findIndex((t) => t.id === id);
-            if (idx === -1) return [dup, ...prev];
-            return [...prev.slice(0, idx + 1), dup, ...prev.slice(idx + 1)];
         });
-        setCollapsed((prev) => ({ ...prev, [dup.id]: false }));
+        setCollapsed((prev) => ({ ...prev, [dupId]: false }));
     };
 
     const handleChange = (id, updated) => {
-        setAllTargets((prev) =>
-            prev.map((t) =>
-                t.id === id ? { ...updated, _dirty: !updated._local } : t,
-            ),
-        );
+        // Strip _isNew/_isDeleted from the patch — useDirtyList manages those
+        const { _isNew: _n, _isDeleted: _d, ...patch } = updated;
+        list.updateItem(id, patch);
     };
 
-    const handleRemove = async (id) => {
-        const t = allTargets.find((x) => x.id === id);
-        if (!t) return;
-        if (t._local) {
-            setAllTargets((prev) => prev.filter((x) => x.id !== id));
-            setCollapsed((prev) => {
-                const next = { ...prev };
-                delete next[id];
-                return next;
-            });
-            return;
-        }
-        if (!window.confirm(`대상 "${t.label || t.id}" 을(를) 삭제할까요?`)) return;
-        setRowSaving(id, true);
-        try {
-            await monitorService.deleteTarget(id);
-            invalidateMonitorTargetsCache();
-            await reload();
-        } catch (err) {
-            setRowError(
-                id,
-                err?.response?.data?.message || err?.message || "삭제 실패",
-            );
-        } finally {
-            setRowSaving(id, false);
-        }
+    const handleRemove = (id) => {
+        list.deleteItem(id);
     };
 
-    const handleSave = async (id) => {
-        const t = allTargets.find((x) => x.id === id);
-        if (!t) return;
-        const finalId = (t.id || "").trim();
-        if (!finalId) {
-            setRowError(id, "id가 필요합니다.");
-            return;
-        }
-        const body = {
-            id: finalId,
-            type: t.type,
-            label: t.label || "",
-            interval_sec: Number(t.interval_sec) || 30,
-            enabled: !!t.enabled,
-            spec: t.spec || {},
-        };
-        setRowSaving(id, true);
-        setRowError(id, null);
-        try {
-            if (t._local) {
-                await monitorService.createTarget(body);
-            } else {
-                await monitorService.updateTarget(finalId, body);
-            }
-            invalidateMonitorTargetsCache();
-            await reload();
-        } catch (err) {
-            setRowError(
-                id,
-                err?.response?.data?.message || err?.message || "저장 실패",
-            );
-        } finally {
-            setRowSaving(id, false);
-        }
+    const handleRestore = (id) => {
+        list.restoreItem(id);
     };
 
     const toggleCollapsed = (id) =>
         setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
 
+    // ── batch save ─────────────────────────────────────────────────────────────
+    const handleBatchSave = async () => {
+        if (!list.isValid) {
+            const firstInvalidId = list.invalidIds[0];
+            const el = document.querySelector(`[data-row-id="${firstInvalidId}"]`);
+            el?.scrollIntoView({ behavior: "smooth", block: "center" });
+            window.alert(`${list.invalidIds.length}개 항목에 오류가 있습니다.`);
+            return;
+        }
+
+        const diff = list.computeDiff();
+        setIsSaving(true);
+        try {
+            const result = await monitorService.applyTargetsBatch(
+                diff.creates,
+                diff.updates,
+                diff.deletes,
+            );
+            if (result.success) {
+                invalidateMonitorTargetsCache();
+                await reload();
+            } else {
+                const failed = result.failedItem;
+                window.alert(`저장 실패: ${failed?.message || result.error}`);
+                if (failed?.id) {
+                    const el = document.querySelector(`[data-row-id="${failed.id}"]`);
+                    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }
+            }
+        } catch (err) {
+            window.alert(`저장 실패: ${err?.response?.data?.error || err?.response?.data?.message || err.message}`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    // ── render ─────────────────────────────────────────────────────────────────
     const headerLabel =
         targetType === "server_resource"
             ? "서버 리소스"
@@ -608,18 +628,21 @@ const MonitorTargetsTab = ({ targetType }) => {
                 ? "API 상태"
                 : "대상";
 
+    // visibleItems already includes the targetType-filtered list (reset only loaded this type)
+    const targets = list.visibleItems;
+
     return (
         <div className="cfg-section">
             <div className="cfg-section-header">
                 <span>
-                    {headerLabel} ({targets.length}개)
+                    {headerLabel} ({targets.filter((t) => !t._isDeleted).length}개)
                 </span>
                 <div style={{ display: "flex", gap: 8 }}>
                     <button
                         type="button"
                         className="cfg-add-btn"
                         onClick={reload}
-                        disabled={loading}
+                        disabled={loading || isSaving}
                         title="새로고침"
                     >
                         <IconRefresh size={14} />
@@ -629,6 +652,7 @@ const MonitorTargetsTab = ({ targetType }) => {
                         type="button"
                         className="cfg-add-btn"
                         onClick={handleAdd}
+                        disabled={isSaving}
                         title="추가"
                     >
                         <IconPlus size={14} />
@@ -642,21 +666,40 @@ const MonitorTargetsTab = ({ targetType }) => {
             ) : targets.length === 0 ? (
                 <div className="cfg-empty">등록된 대상이 없습니다.</div>
             ) : (
-                targets.map((t) => (
-                    <TargetCard
-                        key={t.id}
-                        target={t}
-                        collapsed={!!collapsed[t.id]}
-                        onToggle={() => toggleCollapsed(t.id)}
-                        onChange={(next) => handleChange(t.id, next)}
-                        onRemove={() => handleRemove(t.id)}
-                        onDuplicate={() => handleDuplicate(t.id)}
-                        onSave={() => handleSave(t.id)}
-                        saving={!!savingIds[t.id]}
-                        rowError={rowErrors[t.id]}
-                    />
-                ))
+                targets.map((t) => {
+                    const state = list.rowState(t.id);
+                    const rowStateClass =
+                        state === "new"
+                            ? "row-state-new"
+                            : state === "modified"
+                              ? "row-state-modified"
+                              : state === "deleted"
+                                ? "row-state-deleted"
+                                : "";
+                    const valError = list.validationError(t.id);
+                    return (
+                        <TargetCard
+                            key={t.id}
+                            target={t}
+                            collapsed={!!collapsed[t.id]}
+                            onToggle={() => toggleCollapsed(t.id)}
+                            onChange={(next) => handleChange(t.id, next)}
+                            onRemove={() => handleRemove(t.id)}
+                            onRestore={() => handleRestore(t.id)}
+                            onDuplicate={() => handleDuplicate(t.id)}
+                            rowStateClass={rowStateClass}
+                            validationError={valError}
+                        />
+                    );
+                })
             )}
+            <DirtyListSummary
+                count={list.dirtyCount}
+                isValid={list.isValid}
+                invalidCount={list.invalidIds.length}
+                isSaving={isSaving}
+                onSave={handleBatchSave}
+            />
         </div>
     );
 };
