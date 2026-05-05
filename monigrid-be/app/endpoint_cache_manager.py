@@ -322,13 +322,41 @@ class EndpointCacheManager:
     def refresh_all_endpoint_caches(
         self, *, source: str, client_ip: str, reset_connection: bool = False,
     ) -> list[EndpointCacheEntry]:
-        return [
-            self.refresh_endpoint_cache(
-                endpoint, source=source, client_ip=client_ip, reset_connection=reset_connection,
+        enabled = [ep for ep in self._config_provider().apis.values() if ep.enabled]
+        if not enabled:
+            return []
+
+        executor = self._executor_provider()
+        futures: dict = {
+            executor.submit(
+                self.refresh_endpoint_cache,
+                ep,
+                source=source,
+                client_ip=client_ip,
+                reset_connection=reset_connection,
+            ): ep
+            for ep in enabled
+        }
+
+        overall_timeout = max(120, len(futures) * 5)
+        results: list[EndpointCacheEntry] = []
+        try:
+            for fut in as_completed(futures, timeout=overall_timeout):
+                ep = futures[fut]
+                try:
+                    results.append(fut.result())
+                except Exception as exc:
+                    self._logger.warning(
+                        "refresh-all 실패 api_id=%s: %s", ep.api_id, exc,
+                    )
+        except FutureTimeoutError:
+            pending = len(futures) - len(results)
+            self._logger.warning(
+                "refresh-all overall timeout after %.0fs — "
+                "%d/%d completed, %d still pending",
+                overall_timeout, len(results), len(futures), pending,
             )
-            for endpoint in self._config_provider().apis.values()
-            if endpoint.enabled
-        ]
+        return results
 
     def get_cached_endpoint_response(self, endpoint: ApiEndpointConfig, client_ip: str) -> Any:
         entry = self.get_cached_endpoint_entry(endpoint.api_id)
