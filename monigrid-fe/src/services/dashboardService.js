@@ -389,6 +389,16 @@ export const monitorService = {
         );
         return response.data;
     },
+
+    async applyTargetsBatch(creates, updates, deletes) {
+        const response = await apiClient.post(
+            "/dashboard/monitor-targets/batch",
+            { creates, updates, deletes },
+            { timeout: RELOAD_TIMEOUT_MS },  // BE reload 시간 고려 — 이슈 #2 의 RELOAD_TIMEOUT_MS 패턴 따라감
+        );
+        invalidateMonitorTargetsCache();  // Phase 3 Task 3.7 cache 와 호환
+        return response.data;
+    },
 };
 
 // ── Monitor target list — 30s promise cache ───────────────────────────────────

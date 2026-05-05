@@ -1,0 +1,102 @@
+/* ── DirtyListSummary ─────────────────────────────────────────────────────────
+   Bottom summary bar used by batch-save modals.
+   Variables from monigrid-fe/src/styles/index.css :root
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.dirty-list-summary {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-elevated);
+}
+
+.dls-summary-text {
+    flex: 1;
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.dls-summary-empty {
+    color: var(--text-tertiary);
+}
+
+.dls-invalid-badge {
+    color: #ff6b6b;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 8px;
+    background: rgba(255, 107, 107, 0.1);
+    border-radius: 4px;
+}
+
+.dls-save-btn {
+    padding: 8px 16px;
+    background: var(--accent-primary);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.15s;
+}
+
+.dls-save-btn:disabled {
+    background: var(--bg-surface-strong);
+    color: var(--text-tertiary);
+    cursor: not-allowed;
+}
+
+.dls-save-btn:hover:not(:disabled) {
+    background: #3db3ff; /* accent-primary lightened — no dedicated hover token */
+}
+
+/* ── Row state classes — shared across batch-save modals ─────────────────── */
+
+.row-state-new {
+    border-left: 4px solid #51cf66;
+}
+
+.row-state-modified {
+    border-left: 4px solid #ffd43b;
+}
+
+.row-state-modified::after {
+    content: "●";
+    color: #ffd43b;
+    margin-left: 8px;
+}
+
+.row-state-deleted {
+    opacity: 0.5;
+    text-decoration: line-through;
+    background: rgba(255, 107, 107, 0.05);
+}
+
+.row-state-invalid {
+    border: 1px solid #ff6b6b;
+    background: rgba(255, 107, 107, 0.05);
+}
+
+.row-state-invalid-msg {
+    color: #ff6b6b;
+    font-size: 12px;
+    padding: 4px 8px;
+}
+
+.row-restore-btn {
+    background: none;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.15s;
+}
+
+.row-restore-btn:hover {
+    background: var(--bg-surface-strong);
+}
