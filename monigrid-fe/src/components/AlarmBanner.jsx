@@ -93,6 +93,8 @@ const AlarmBanner = () => {
     // Tracks the sorted join-key of the last alarm set that was processed.
     // Using a string key (instead of size) ensures member-swap detection:
     // e.g. A→B with equal size produces a different key → effect re-fires.
+    // NOTE: alarmStore.reportWidgetStatus 가 alarmedWidgets 가 비면 acknowledged 를 false 로
+    // reset 한다는 계약에 의존. 그 규칙이 바뀌면 ack-then-replacement 시나리오가 silent 하게 깨짐.
     const lastAlarmKeyRef = useRef("");
     const alarmSoundRef = useRef(alarmSound);
     alarmSoundRef.current = alarmSound;
@@ -100,7 +102,7 @@ const AlarmBanner = () => {
     // Stable string key derived from Set members — sort() makes it
     // deterministic regardless of insertion order or browser iteration order.
     const alarmKey = useMemo(
-        () => Array.from(alarmedWidgets).sort().join(","),
+        () => Array.from(alarmedWidgets).sort().join("|"),
         [alarmedWidgets],
     );
 
