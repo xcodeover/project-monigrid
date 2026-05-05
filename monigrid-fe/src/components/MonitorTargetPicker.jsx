@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { monitorService } from "../services/dashboardService";
+import { listMonitorTargetsCached } from "../services/dashboardService";
 import "./MonitorTargetPicker.css";
 
 /**
@@ -33,7 +33,7 @@ const MonitorTargetPicker = ({
     const reload = useCallback(async () => {
         setLoading(true);
         try {
-            const data = await monitorService.listTargets();
+            const data = await listMonitorTargetsCached();
             setTargets(Array.isArray(data?.targets) ? data.targets : []);
             setError(null);
         } catch (err) {

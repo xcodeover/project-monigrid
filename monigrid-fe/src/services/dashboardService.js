@@ -370,6 +370,37 @@ export const monitorService = {
     },
 };
 
+// ── Monitor target list — 30s promise cache ───────────────────────────────────
+// 여러 위젯 settings 모달이 30초 안에 차례로 열릴 때 중복 GET 을 제거한다.
+// · 동시 호출 안전: in-flight 중인 promise 를 그대로 반환 → race 없음
+// · 오류 시 즉시 invalidate → 다음 호출이 fresh fetch
+// · CRUD 후 invalidateMonitorTargetsCache() 를 호출해 stale 방지
+
+let _mtCachedPromise = null;
+let _mtCacheExpiry = 0;
+
+/**
+ * monitorService.listTargets 에 30s TTL promise 캐시를 씌운 래퍼.
+ * MonitorTargetPicker 와 DashboardPage 등에서 이 함수를 사용한다.
+ */
+export function listMonitorTargetsCached() {
+    const now = Date.now();
+    if (_mtCachedPromise && now < _mtCacheExpiry) return _mtCachedPromise;
+    _mtCachedPromise = monitorService.listTargets();
+    _mtCacheExpiry = now + 30_000;
+    _mtCachedPromise.catch(() => {
+        _mtCachedPromise = null;
+        _mtCacheExpiry = 0;
+    });
+    return _mtCachedPromise;
+}
+
+/** monitor target CRUD 직후 호출해 캐시를 무효화한다. */
+export function invalidateMonitorTargetsCache() {
+    _mtCachedPromise = null;
+    _mtCacheExpiry = 0;
+}
+
 // ── Admin user management (admin only) ────────────────────────────────────
 
 export const adminUserService = {

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { monitorService } from "../services/dashboardService";
+import { monitorService, invalidateMonitorTargetsCache } from "../services/dashboardService";
 import { DEFAULT_CRITERIA, OS_OPTIONS } from "./serverResourceHelpers";
 import PasswordInput from "./PasswordInput";
 import {
@@ -548,6 +548,7 @@ const MonitorTargetsTab = ({ targetType }) => {
         setRowSaving(id, true);
         try {
             await monitorService.deleteTarget(id);
+            invalidateMonitorTargetsCache();
             await reload();
         } catch (err) {
             setRowError(
@@ -583,6 +584,7 @@ const MonitorTargetsTab = ({ targetType }) => {
             } else {
                 await monitorService.updateTarget(finalId, body);
             }
+            invalidateMonitorTargetsCache();
             await reload();
         } catch (err) {
             setRowError(
