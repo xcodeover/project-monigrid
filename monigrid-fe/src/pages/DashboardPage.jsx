@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { WidthProvider, Responsive } from "react-grid-layout/legacy";
 import { useNavigate } from "react-router-dom";
 import { useWidgetApiData } from "../hooks/useApi";
@@ -21,8 +21,9 @@ import { useDashboardStore } from "../store/dashboardStore";
 import { useAuthStore } from "../store/authStore";
 import { useAlarmStore } from "../store/alarmStore";
 import AlarmBanner from "../components/AlarmBanner";
-import SqlEditorModal from "../components/SqlEditorModal";
-import ConfigEditorModal from "../components/ConfigEditorModal";
+// prismjs + react-simple-code-editor are heavy — defer until modal is opened
+const SqlEditorModal = lazy(() => import("../components/SqlEditorModal"));
+const ConfigEditorModal = lazy(() => import("../components/ConfigEditorModal"));
 import BackendConfigPasswordPrompt from "../components/BackendConfigPasswordPrompt";
 import DashboardHeader from "./DashboardHeader";
 import AddApiModal from "./AddApiModal";
@@ -706,10 +707,12 @@ const DashboardPage = () => {
             )}
 
             {showSqlEditor && isAdmin && (
-                <SqlEditorModal
-                    open={showSqlEditor}
-                    onClose={() => setShowSqlEditor(false)}
-                />
+                <Suspense fallback={null}>
+                    <SqlEditorModal
+                        open={showSqlEditor}
+                        onClose={() => setShowSqlEditor(false)}
+                    />
+                </Suspense>
             )}
 
             {isAdmin && (
@@ -724,10 +727,12 @@ const DashboardPage = () => {
             )}
 
             {showConfigEditor && isAdmin && (
-                <ConfigEditorModal
-                    open={showConfigEditor}
-                    onClose={() => setShowConfigEditor(false)}
-                />
+                <Suspense fallback={null}>
+                    <ConfigEditorModal
+                        open={showConfigEditor}
+                        onClose={() => setShowConfigEditor(false)}
+                    />
+                </Suspense>
             )}
 
             <div className='dashboard-content-wrapper'>

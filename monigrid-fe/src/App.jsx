@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { lazy, Suspense, useEffect } from "react";
 import {
     BrowserRouter as Router,
     Routes,
@@ -9,11 +9,26 @@ import {
 import { useAuthStore } from "./store/authStore";
 import { useDashboardStore } from "./store/dashboardStore";
 import { registerUnauthorizedHandler } from "./services/http";
-import LoginPage from "./pages/LoginPage";
-import DashboardPage from "./pages/DashboardPage";
-import LogViewerPage from "./pages/LogViewerPage";
-import AlertHistoryPage from "./pages/AlertHistoryPage";
-import UserManagementPage from "./pages/UserManagementPage";
+
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
+const LogViewerPage = lazy(() => import("./pages/LogViewerPage"));
+const AlertHistoryPage = lazy(() => import("./pages/AlertHistoryPage"));
+const UserManagementPage = lazy(() => import("./pages/UserManagementPage"));
+
+/** Full-screen blank fallback — matches the dark background so there is no
+ *  flash of white during the very first route chunk load. */
+const PageFallback = () => (
+    <div
+        style={{
+            minHeight: "100vh",
+            background: "#0b1017",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+        }}
+    />
+);
 
 const ProtectedRoute = ({ children }) => {
     const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -71,43 +86,45 @@ function AppRoutes() {
     }, [navigate]);
 
     return (
-        <Routes>
-            <Route path="/login" element={<LoginRoute />} />
-            <Route
-                path="/dashboard"
-                element={
-                    <ProtectedRoute>
-                        <DashboardPage />
-                    </ProtectedRoute>
-                }
-            />
-            <Route
-                path="/logs"
-                element={
-                    <ProtectedRoute>
-                        <LogViewerPage />
-                    </ProtectedRoute>
-                }
-            />
-            <Route
-                path="/alerts"
-                element={
-                    <ProtectedRoute>
-                        <AlertHistoryPage />
-                    </ProtectedRoute>
-                }
-            />
-            <Route
-                path="/users"
-                element={
-                    <ProtectedRoute>
-                        <UserManagementPage />
-                    </ProtectedRoute>
-                }
-            />
-            <Route path="/" element={<RootRedirect />} />
-            <Route path="*" element={<RootRedirect />} />
-        </Routes>
+        <Suspense fallback={<PageFallback />}>
+            <Routes>
+                <Route path="/login" element={<LoginRoute />} />
+                <Route
+                    path="/dashboard"
+                    element={
+                        <ProtectedRoute>
+                            <DashboardPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/logs"
+                    element={
+                        <ProtectedRoute>
+                            <LogViewerPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/alerts"
+                    element={
+                        <ProtectedRoute>
+                            <AlertHistoryPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/users"
+                    element={
+                        <ProtectedRoute>
+                            <UserManagementPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route path="/" element={<RootRedirect />} />
+                <Route path="*" element={<RootRedirect />} />
+            </Routes>
+        </Suspense>
     );
 }
 
