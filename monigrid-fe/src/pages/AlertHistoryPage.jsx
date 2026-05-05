@@ -44,6 +44,9 @@ export default function AlertHistoryPage() {
         loadAlerts();
         const id = setInterval(loadAlerts, 30_000);
         return () => clearInterval(id);
+    // loadAlerts 는 deps 에서 의도적으로 제외. 이 함수는 imported singleton
+    // (dashboardService.getAlerts) + React 가 보장하는 stable setter 들만 닫는다 →
+    // 매 렌더의 새 reference 가 functionally identical, stale closure 문제 없음.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isAuthenticated, visible]);
 
