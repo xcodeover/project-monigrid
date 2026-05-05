@@ -286,6 +286,9 @@ apiClient.interceptors.response.use(
             localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
             localStorage.removeItem(STORAGE_KEYS.USER);
             if (_onUnauthorized) {
+                // Delegate navigation to the registered SPA handler so we avoid
+                // a full-page reload. The handler is responsible for flushing
+                // any pending push, disabling server sync, and calling navigate().
                 try {
                     _onUnauthorized();
                 } catch (handlerError) {
@@ -297,7 +300,9 @@ apiClient.interceptors.response.use(
                     }
                 }
             }
-            window.location.href = "/login";
+            // If no handler is registered yet (pre-boot 401), do nothing further:
+            // reject-only is safe — the caller gets the rejection and the latched
+            // flag prevents duplicate 401 processing.
         }
         return Promise.reject(error);
     },
