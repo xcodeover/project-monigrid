@@ -7,6 +7,7 @@ import {
 } from "react";
 import apiClient from "../services/http.js";
 import { monitorService } from "../services/dashboardService.js";
+import { useDocumentVisible } from "../hooks/useDocumentVisible.js";
 import {
     MAX_REFRESH_INTERVAL_SEC,
     MAX_WIDGET_H,
@@ -181,6 +182,9 @@ const ServerResourceCard = ({
                 ? "normal"
                 : "wide";
 
+    /* ── visibility-aware polling ────────────────────────────────── */
+    const visible = useDocumentVisible();
+
     /* ── per-server data map ─────────────────────────────────────── */
     const [serverStates, setServerStates] = useState({});
     const [diskCycleIdx, setDiskCycleIdx] = useState(0);
@@ -211,6 +215,9 @@ const ServerResourceCard = ({
     }, [servers]);
 
     const fetchAllServers = useCallback(async () => {
+        // Skip polling while tab is hidden to avoid wasted requests.
+        // The visibility-flip effect triggers an immediate fetch on return.
+        if (document.hidden) return;
         if (useSnapshot) {
             if (targetIds.length === 0) return;
             setDiskCycleIdx((prev) => prev + 1);
@@ -370,6 +377,15 @@ const ServerResourceCard = ({
         timerRef.current = setInterval(fetchAllServers, ms);
         return () => clearInterval(timerRef.current);
     }, [pollKey, hasItems, refreshIntervalSec, fetchAllServers]);
+
+    // Visibility-flip: immediately refetch when the user returns to the tab so
+    // the widget shows fresh data rather than stale results from before hiding.
+    // Trade-off: all visible-flip fetches fire simultaneously (BE burst), but
+    // this equals a normal dashboard load — acceptable for user freshness.
+    useEffect(() => {
+        if (visible && hasItems) fetchAllServers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visible]);
 
     /* ── accumulate history for charts ─────────────────────────── */
     useEffect(() => {

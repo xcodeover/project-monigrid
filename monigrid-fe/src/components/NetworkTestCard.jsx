@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import apiClient from "../services/http.js";
 import { monitorService } from "../services/dashboardService.js";
+import { useDocumentVisible } from "../hooks/useDocumentVisible.js";
 import {
     MAX_REFRESH_INTERVAL_SEC,
     MAX_WIDGET_H,
@@ -251,6 +252,9 @@ const NetworkTestCard = ({
               ? "normal"
               : "wide";
 
+    /* ── visibility-aware polling ────────────────────────────────── */
+    const visible = useDocumentVisible();
+
     /* ── per-target state map ────────────────────────────────────── */
     const [targetStates, setTargetStates] = useState({});
     const targetsRef = useRef(targets);
@@ -258,6 +262,9 @@ const NetworkTestCard = ({
     useEffect(() => { targetsRef.current = targets; }, [targets]);
 
     const checkAllTargets = useCallback(async () => {
+        // Skip polling while tab is hidden to avoid wasted requests.
+        // The visibility-flip effect triggers an immediate fetch on return.
+        if (document.hidden) return;
         if (useSnapshot) {
             if (targetIds.length === 0) return;
             try {
@@ -397,6 +404,15 @@ const NetworkTestCard = ({
         const id = setInterval(checkAllTargets, sec * 1000);
         return () => clearInterval(id);
     }, [pollKey, hasItems, refreshIntervalSec, checkAllTargets]);
+
+    // Visibility-flip: immediately refetch when the user returns to the tab so
+    // the widget shows fresh data rather than stale results from before hiding.
+    // Trade-off: all visible-flip fetches fire simultaneously (BE burst), but
+    // this equals a normal dashboard load — acceptable for user freshness.
+    useEffect(() => {
+        if (visible && hasItems) checkAllTargets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visible]);
 
     /* ── alarm reporting ──────────────────────────────────────���─── */
     const statusSummary = useMemo(() => {
