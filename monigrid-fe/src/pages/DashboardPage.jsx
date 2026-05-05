@@ -210,6 +210,11 @@ const DashboardPage = () => {
     // race the async GET: setWidgets() triggers queueServerPush() which sets
     // _dirtyDuringSync=true, causing the local-wins branch to discard BE prefs
     // and push empty defaults back to the server.
+    //
+    // ⚠ WARNING: 이 effect 와 sync 응답 사이에 setWidgets/setLayouts 같은
+    // store mutating effect 를 추가하면 위 race 가 재발한다 (issue #4 재현).
+    // 새 effect 는 반드시 syncPreferencesFromServer 의 .then() 안에서 실행하거나,
+    // store 의 _syncInFlight=false 확인 후 실행할 것.
     useEffect(() => {
         if (!user?.username) return;
         const buildDefaults = () => {
