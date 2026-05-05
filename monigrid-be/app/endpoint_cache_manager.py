@@ -347,7 +347,7 @@ class EndpointCacheManager:
                     results.append(fut.result())
                 except Exception as exc:
                     self._logger.warning(
-                        "refresh-all 실패 api_id=%s: %s", ep.api_id, exc,
+                        "refresh-all failed api_id=%s: %s", ep.api_id, exc,
                     )
         except FutureTimeoutError:
             pending = len(futures) - len(results)
