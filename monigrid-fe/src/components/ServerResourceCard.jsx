@@ -346,6 +346,7 @@ const ServerResourceCard = ({
                 return next;
             });
         }
+    // widgetConfig 변경은 targetIds (useMemo above) 통해 전파됨 — widgetConfig 를 deps 에 다시 넣지 말 것.
     }, [useSnapshot, targetIds]);
 
     // stable key for detecting server list changes.
