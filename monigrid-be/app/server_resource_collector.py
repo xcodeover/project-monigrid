@@ -81,8 +81,12 @@ class _PooledSshSession:
         # fully independent — no cross-host parallelism is lost.
         # Trade-off: if thread A holds the lock for a slow command (up to
         # self._timeout seconds), thread B for the *same host* waits behind it.
-        # Worst-case additional wait = self._timeout. Accepted: ghost data is
-        # worse than a brief extra delay.
+        # Worst-case lock-wait for B = self._timeout; B then also runs its own
+        # command, so B's total worst case = 2 * self._timeout (10s at the
+        # default of 5s). At the default polling interval (≥30s) this is
+        # acceptable. If either constant is tightened, revisit this trade-off.
+        # Ghost data (CPU output mixed into disk metrics) is worse than a brief
+        # extra delay.
         self._exec_lock = threading.Lock()
 
     def is_alive(self) -> bool:
@@ -105,6 +109,11 @@ class _PooledSshSession:
                 return f"ERROR: {e}"
 
     def close(self) -> None:
+        # No _exec_lock acquired here on purpose: close() is only called
+        # after the session has been removed from _SSH_POOL, so no new
+        # run() can start. A run() already in flight catches the resulting
+        # exception and returns "ERROR: ..." — acceptable for one tick.
+        # Acquiring _exec_lock here would risk deadlock if run() ever hangs.
         try:
             self._client.close()
         except Exception:
