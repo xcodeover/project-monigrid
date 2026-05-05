@@ -110,13 +110,12 @@ def register(app, backend, limiter) -> None:
 
     @app.route("/dashboard/monitor-snapshot/<target_id>/refresh", methods=["POST"])
     @require_auth
-    @require_admin
     @limiter.limit(rl.monitor_refresh)
+    @require_admin
     def refresh_monitor_target(target_id: str):
-        # On-demand refresh forces an SSH/WMI/HTTP probe regardless of the
-        # background scheduler, so it's a privileged operation: a single user
-        # with a tight-loop refresh button can saturate the collector pool
-        # for everyone else. Restrict to admins.
+        # Rate limit: 동일 IP/admin 의 연타 시 Flask request thread 가 SSH/HTTP/WMI
+        # probe 응답을 기다리며 점거됨 (refresh 는 background pool 이 아닌 request
+        # thread 에서 동기 실행). 분당 10회로 제한해 worker 고갈 방지.
         snapshot = backend.refresh_monitor_target(target_id)
         if snapshot is None:
             return jsonify({"message": "monitor target not found"}), 404
