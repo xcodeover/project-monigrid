@@ -21,6 +21,11 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from time import perf_counter
 from typing import Any, Callable
 
+try:
+    import jaydebeapi
+except ImportError:
+    jaydebeapi = None  # type: ignore[assignment]
+
 from .config import ApiEndpointConfig, AppConfig
 from .db import DBConnectionPool
 from .exceptions import QueryExecutionTimeoutError, SqlFileNotFoundError
@@ -169,6 +174,10 @@ class JdbcQueryExecutor:
             else:
                 pool.discard_connection(jdbc_conn)
 
+    # WARNING: 이 헬퍼는 JayDeBeApi 1.2.3 의 internal cursor 속성
+    # (_close_last, _prep, _rs, _meta) 에 직접 결합한다.
+    # requirements.txt 가 JayDeBeApi==1.2.3 으로 exact-pin 되어 있어서
+    # 안전하지만, 버전 업그레이드 시 위 속성이 여전히 동일 의미인지 audit 필요.
     def _execute_with_query_timeout(
         self, cursor, jdbc_conn, sql: str, timeout_sec: int, api_id: str
     ) -> None:
@@ -186,8 +195,13 @@ class JdbcQueryExecutor:
         cursor 의 내부 상태(_prep, _rs, _meta, rowcount)를 JayDeBeApi 와
         동일하게 채워 두므로 이후 cursor.description / fetchall() / close() 는
         정상 동작한다.
+
+        주의: ? placeholder 가 있는 parameterized query 는 지원하지 않음.
+        이 헬퍼에 SQL 을 넘기기 전에 모든 값이 fully rendered 되어야 함.
+        (JayDeBeApi 의 _set_stmt_parms 호출을 의도적으로 생략했음 — 현재 코드 경로는 raw SQL 전용)
         """
-        import jaydebeapi
+        if jaydebeapi is None:
+            raise ImportError("jaydebeapi 패키지가 설치되지 않았습니다. requirements.txt 를 확인하세요.")
 
         # 1) 이전 결과셋·PreparedStatement 닫기 (JayDeBeApi의 _close_last() 역할)
         cursor._close_last()
@@ -227,6 +241,8 @@ class JdbcQueryExecutor:
             cursor._meta = cursor._rs.getMetaData()
             cursor.rowcount = -1
         else:
+            # DML 경로: _meta 는 위의 _close_last() 에서 None 으로 클리어된 상태 유지 →
+            # cursor.description 이 None 반환 (정상 DBAPI 동작).
             cursor.rowcount = cursor._prep.getUpdateCount()
 
     def _track_sql_change(self, endpoint: ApiEndpointConfig, sql: str) -> None:
