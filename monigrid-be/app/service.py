@@ -167,6 +167,24 @@ class MonitoringBackend:
         self._monitor_collector.forget_target(target_id)
         self._monitor_collector.reload()
 
+    def apply_monitor_targets_batch(
+        self,
+        *,
+        creates: list[dict],
+        updates: list[dict],
+        deletes: list[str],
+    ) -> dict:
+        """Apply monitor target changes in a single transaction. Triggers
+        monitor_collector reload exactly once on success.
+        """
+        result = self.settings_store.apply_monitor_targets_batch(
+            creates=creates, updates=updates, deletes=deletes,
+        )
+        if result.get("success"):
+            # 1회 reload (개별 endpoint 마다 reload 하던 것과 대비 — 이슈 #2 참고)
+            self._monitor_collector.reload()
+        return result
+
     def get_monitor_snapshot(self, target_id: str) -> MonitorSnapshot | None:
         return self._monitor_collector.get_snapshot(target_id)
 
