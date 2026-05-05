@@ -261,6 +261,13 @@ const NetworkTestCard = ({
 
     useEffect(() => { targetsRef.current = targets; }, [targets]);
 
+    /**
+     * 모든 네트워크 타깃을 순회하며 ping 결과를 상태에 반영한다.
+     * @returns {Promise<boolean>} 네트워크 요청 자체가 성공하면 true
+     *   (개별 타깃의 dead 여부는 앱 레벨 신호이므로 false로 취급하지 않는다).
+     *   네트워크/서버 오류(응답 없음·타임아웃·5xx·fetch 거부) 시 false.
+     *   *WithTracking 래퍼가 이 반환값으로 exponential backoff를 구동한다.
+     */
     const checkAllTargets = useCallback(async () => {
         // Skip polling while tab is hidden to avoid wasted requests.
         // The visibility-flip effect triggers an immediate fetch on return.
@@ -461,7 +468,7 @@ const NetworkTestCard = ({
             isFirstMountRef.current = false;
             return;
         }
-        if (visible && hasItems) checkAllTargets();
+        if (visible && hasItems) checkAllTargetsWithTracking();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible]);
 
