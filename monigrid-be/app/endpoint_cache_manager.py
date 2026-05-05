@@ -376,7 +376,8 @@ class EndpointCacheManager:
                 # finally block). Pop the stale Future so the next caller
                 # becomes a new owner and retries the refresh instead of
                 # waiting on the same dead Future.
-                self._in_flight.pop(api_id, None)
+                with self._in_flight_lock:
+                    self._in_flight.pop(api_id, None)
                 raise QueryExecutionTimeoutError(endpoint.api_id, waiter_timeout)
 
         if refreshed_entry.data is not None:

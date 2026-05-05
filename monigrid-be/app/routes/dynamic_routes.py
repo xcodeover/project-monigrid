@@ -10,7 +10,7 @@ from __future__ import annotations
 from flask import jsonify, request
 
 from app.auth import require_auth
-from app.exceptions import CachedEndpointError, SqlFileNotFoundError
+from app.exceptions import CachedEndpointError, QueryExecutionTimeoutError, SqlFileNotFoundError
 from app.utils import get_client_ip
 
 
@@ -63,6 +63,11 @@ def register(app, backend, limiter) -> None:
             return jsonify({
                 "message": str(error), "apiId": endpoint.api_id, "detail": f"expectedPath: {error.sql_path}",
             }), 404
+        except QueryExecutionTimeoutError as exc:
+            return jsonify({
+                "error": "query_timeout",
+                "message": str(exc),
+            }), 504
         except CachedEndpointError as error:
             return jsonify({
                 "message": error.message, "apiId": endpoint.api_id, "detail": error.detail,
