@@ -72,6 +72,18 @@ class _PooledSshSession:
         self._client = client
         self._timeout = timeout
         self.last_used = _time.monotonic()
+        # Serialise concurrent exec_command calls on the same session.
+        # paramiko's SSHClient.exec_command is not thread-safe: two simultaneous
+        # callers can open overlapping channels on the same transport, causing
+        # "Channel closed" errors or stdout/stderr cross-contamination (CPU
+        # result arriving in a disk-metric slot, etc.).
+        # This lock is instance-local, so sessions for different hosts remain
+        # fully independent — no cross-host parallelism is lost.
+        # Trade-off: if thread A holds the lock for a slow command (up to
+        # self._timeout seconds), thread B for the *same host* waits behind it.
+        # Worst-case additional wait = self._timeout. Accepted: ghost data is
+        # worse than a brief extra delay.
+        self._exec_lock = threading.Lock()
 
     def is_alive(self) -> bool:
         try:
@@ -81,12 +93,16 @@ class _PooledSshSession:
             return False
 
     def run(self, cmd: str) -> str:
-        try:
-            self.last_used = _time.monotonic()
-            _, stdout, _err = self._client.exec_command(cmd, timeout=self._timeout)
-            return stdout.read().decode("utf-8", errors="replace").strip()
-        except Exception as e:
-            return f"ERROR: {e}"
+        with self._exec_lock:
+            try:
+                self.last_used = _time.monotonic()
+                _, stdout, _err = self._client.exec_command(cmd, timeout=self._timeout)
+                # stdout.read() + channel.recv_exit_status() must stay inside the
+                # lock: reading after releasing would leave the channel open while
+                # another thread starts its own exec_command — still a race.
+                return stdout.read().decode("utf-8", errors="replace").strip()
+            except Exception as e:
+                return f"ERROR: {e}"
 
     def close(self) -> None:
         try:
