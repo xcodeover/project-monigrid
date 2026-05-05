@@ -13,6 +13,13 @@ import subprocess
 import time as _time
 from typing import Any
 
+# ── Safety ceilings for ping ──────────────────────────────────────────────────
+# Batch ping (up to 50 targets × 10 workers) must not let any single subprocess
+# hold a collector/thread-pool worker for more than MAX_PING_WALL_SEC seconds.
+# A 3-packet ping to a reachable host finishes in well under 10 s, so the caps
+# do not affect normal monitoring use-cases.
+MAX_PING_COUNT: int = 3       # max ICMP packets sent per ping invocation
+MAX_PING_WALL_SEC: float = 30.0  # hard ceiling on subprocess wall time (seconds)
 
 # ── Spec normalisation ────────────────────────────────────────────────────────
 
@@ -75,43 +82,66 @@ def run_telnet_test(host: str, port: int, timeout: float) -> dict[str, Any]:
 def run_ping_test(host: str, count: int, timeout: float) -> dict[str, Any]:
     """Run a system ping and return the result.
 
-    Returns: {type, host, count, success, responseTimeMs, output, message}
+    `count` and the subprocess wall time are capped at MAX_PING_COUNT and
+    MAX_PING_WALL_SEC regardless of caller-supplied values.  When either cap is
+    hit the response includes ``"limited": True`` so callers can surface that
+    the test ran under reduced parameters.
+
+    Returns: {type, host, count, success, responseTimeMs, output, message[, limited]}
     """
+    # ── Apply safety ceilings ────────────────────────────────────────────────
+    # Guard against zero/negative inputs (e.g. count=-1 from a crafted request)
+    # before capping at MAX_PING_COUNT.
+    safe_count = min(max(int(count), 1), MAX_PING_COUNT)
+    raw_wall = timeout * safe_count + 5
+    safe_wall = min(raw_wall, MAX_PING_WALL_SEC)
+    limited = (safe_count < count) or (safe_wall < raw_wall)
+
     is_windows = platform.system().lower() == "windows"
+    # Windows -w expects milliseconds; Linux -W expects whole seconds.
     ping_cmd = (
-        ["ping", "-n", str(count), "-w", str(int(timeout * 1000)), host]
+        ["ping", "-n", str(safe_count), "-w", str(int(timeout * 1000)), host]
         if is_windows
-        else ["ping", "-c", str(count), "-W", str(int(timeout)), host]
+        else ["ping", "-c", str(safe_count), "-W", str(int(timeout)), host]
     )
     started = _time.monotonic()
     try:
         result = subprocess.run(
-            ping_cmd, capture_output=True, text=True, timeout=timeout * count + 5,
+            ping_cmd, capture_output=True, text=True, timeout=safe_wall,
         )
         elapsed_ms = int((_time.monotonic() - started) * 1000)
         output = result.stdout + result.stderr
         success = result.returncode == 0
-        return {
-            "type": "ping", "host": host, "count": count,
+        out: dict[str, Any] = {
+            "type": "ping", "host": host, "count": safe_count,
             "success": success, "responseTimeMs": elapsed_ms,
             "output": output.strip(),
             "message": "Ping successful" if success else "Ping failed",
         }
+        if limited:
+            out["limited"] = True
+        return out
     except subprocess.TimeoutExpired:
-        return {
-            "type": "ping", "host": host, "count": count,
+        out = {
+            "type": "ping", "host": host, "count": safe_count,
             "success": False,
             "responseTimeMs": int((_time.monotonic() - started) * 1000),
             "output": "",
-            "message": f"Ping timed out ({timeout * count + 5}s)",
+            "message": f"Ping timed out ({safe_wall}s)",
         }
+        if limited:
+            out["limited"] = True
+        return out
     except Exception as e:
-        return {
-            "type": "ping", "host": host, "count": count,
+        out = {
+            "type": "ping", "host": host, "count": safe_count,
             "success": False,
             "responseTimeMs": int((_time.monotonic() - started) * 1000),
             "output": "", "message": str(e),
         }
+        if limited:
+            out["limited"] = True
+        return out
 
 
 # ── Public dispatcher ─────────────────────────────────────────────────────────
@@ -123,7 +153,7 @@ def run_network_test(spec: dict[str, Any]) -> dict[str, Any]:
         type    — "ping" | "telnet"  (default "ping")
         host    — required
         port    — required for telnet
-        count   — ping count (default 4, clamped 1..10)
+        count   — ping count (default 4, clamped 1..MAX_PING_COUNT)
         timeout — seconds (default 5, clamped 1..30)
 
     Returns the result dict (never raises). On validation failures returns

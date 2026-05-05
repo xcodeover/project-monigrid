@@ -27,7 +27,7 @@ def register(app, backend, limiter) -> None:
           type    — "ping" | "telnet"
           host    — target hostname or IP (required)
           port    — required for telnet (integer)
-          count   — ping count (default 4, max 10)
+          count   — ping count (default 4, effective max MAX_PING_COUNT)
           timeout — seconds (default 5, max 30)
         """
         body = request.get_json(silent=True) or {}
