@@ -3,12 +3,14 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { dashboardService } from "../services/api";
 import IncidentTimelineCard from "../components/IncidentTimelineCard";
+import { useDocumentVisible } from "../hooks/useDocumentVisible";
 
 export default function AlertHistoryPage() {
     const navigate = useNavigate();
     const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
     const logout = useAuthStore((state) => state.logout);
     const user = useAuthStore((state) => state.user);
+    const visible = useDocumentVisible();
 
     const [incidents, setIncidents] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -33,11 +35,17 @@ export default function AlertHistoryPage() {
         }
     };
 
+    // visibility-aware 30s polling:
+    // - 탭이 visible 이고 인증된 경우에만 폴링 실행
+    // - hidden 진입 시 즉시 interval 정리 → 백그라운드 요청 0
+    // - visible 복귀 시 즉시 1회 fetch + 30s 주기 재시작
     useEffect(() => {
-        if (isAuthenticated) {
-            loadAlerts();
-        }
-    }, [isAuthenticated]);
+        if (!isAuthenticated || !visible) return;
+        loadAlerts();
+        const id = setInterval(loadAlerts, 30_000);
+        return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isAuthenticated, visible]);
 
     const handleLogout = () => {
         logout();
