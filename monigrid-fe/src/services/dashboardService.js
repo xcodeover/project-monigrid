@@ -4,6 +4,12 @@
  */
 import apiClient, { getRememberedApiBaseUrl } from "./http.js";
 
+// BE의 backend.reload()는 현재 동기 처리라 모니터 타깃이 많으면 10~30s 소요된다.
+// reload 를 유발하는 호출(config 저장, 모니터 타깃 CRUD)은 별도 타임아웃을 적용해
+// 기본 10s 초과 오류가 사용자에게 노출되지 않도록 한다.
+// (BE reload 비동기화는 Phase 5 과제 — 그 전까지 FE 타임아웃으로 회피)
+const RELOAD_TIMEOUT_MS = 60_000;
+
 // ── Endpoint catalog ──────────────────────────────────────────────────────────
 
 export const endpointService = {
@@ -311,7 +317,7 @@ export const configService = {
     },
 
     updateConfig: async (configData) => {
-        const response = await apiClient.put("/dashboard/config", configData);
+        const response = await apiClient.put("/dashboard/config", configData, { timeout: RELOAD_TIMEOUT_MS });
         return response.data;
     },
 
@@ -330,7 +336,7 @@ export const monitorService = {
     },
 
     createTarget: async (body) => {
-        const response = await apiClient.post("/dashboard/monitor-targets", body);
+        const response = await apiClient.post("/dashboard/monitor-targets", body, { timeout: RELOAD_TIMEOUT_MS });
         return response.data;
     },
 
@@ -338,6 +344,7 @@ export const monitorService = {
         const response = await apiClient.put(
             `/dashboard/monitor-targets/${encodeURIComponent(id)}`,
             body,
+            { timeout: RELOAD_TIMEOUT_MS },
         );
         return response.data;
     },
@@ -345,6 +352,7 @@ export const monitorService = {
     deleteTarget: async (id) => {
         const response = await apiClient.delete(
             `/dashboard/monitor-targets/${encodeURIComponent(id)}`,
+            { timeout: RELOAD_TIMEOUT_MS },
         );
         return response.data;
     },
