@@ -1,4 +1,4 @@
-import { Component, memo } from "react";
+import { Component, memo, useCallback } from "react";
 import ApiCard from "../components/ApiCard";
 import HealthCheckCard from "../components/HealthCheckCard";
 import LineChartCard from "../components/LineChartCard";
@@ -121,6 +121,54 @@ const WidgetRendererInner = ({
     onUpdateWidget,
     onReportWidgetStatus,
 }) => {
+    const widgetId = widget.id;
+
+    // --- Memoized callbacks (keyed on widgetId + parent callbacks) ---
+    const handleRemove = useCallback(
+        () => onRemoveApi(widgetId),
+        [onRemoveApi, widgetId],
+    );
+    const handleRefresh = useCallback(
+        () => onManualRefresh(widget),
+        [onManualRefresh, widget],
+    );
+    const handleRefetchOne = useCallback(
+        () => onRefetchOne(widgetId),
+        [onRefetchOne, widgetId],
+    );
+    const handleRefreshIntervalChange = useCallback(
+        (intervalSec) => onRefreshIntervalChange(widgetId, intervalSec),
+        [onRefreshIntervalChange, widgetId],
+    );
+    const handleWidgetMetaChange = useCallback(
+        (updates) => onWidgetMetaChange(widgetId, updates),
+        [onWidgetMetaChange, widgetId],
+    );
+    const handleSizeChange = useCallback(
+        (nextWidth, nextHeight) => onWidgetSizeChange(widgetId, nextWidth, nextHeight),
+        [onWidgetSizeChange, widgetId],
+    );
+    const handleAlarmChange = useCallback(
+        (status) => onReportWidgetStatus(widgetId, status),
+        [onReportWidgetStatus, widgetId],
+    );
+    const handleChartSettingsChange = useCallback(
+        (nextSettings) => onChartSettingsChange(widgetId, nextSettings),
+        [onChartSettingsChange, widgetId],
+    );
+    const handleTableSettingsChange = useCallback(
+        (nextSettings) => onTableSettingsChange(widgetId, nextSettings),
+        [onTableSettingsChange, widgetId],
+    );
+    const handleStatusListTargetIdsChange = useCallback(
+        (nextTargetIds) => onStatusListTargetIdsChange(widgetId, nextTargetIds),
+        [onStatusListTargetIdsChange, widgetId],
+    );
+    const handleWidgetConfigChange = useCallback(
+        (cfg, key) => onUpdateWidget(widgetId, { [key]: cfg }),
+        [onUpdateWidget, widgetId],
+    );
+
     const sizeBounds = {
         minW: currentLayout?.minW ?? MIN_WIDGET_W,
         maxW: MAX_WIDGET_W,
@@ -138,29 +186,24 @@ const WidgetRendererInner = ({
         loading: isLoading,
         error: widgetError,
         apiStatus,
-        onRemove: () => onRemoveApi(widget.id),
-        onRefresh: () => onManualRefresh(widget),
+        onRemove: handleRemove,
+        onRefresh: handleRefresh,
         currentSize: currentLayout,
         sizeBounds,
         refreshIntervalSec:
             widget.refreshIntervalSec ?? DEFAULT_REFRESH_INTERVAL_SEC,
-        onRefreshIntervalChange: (intervalSec) =>
-            onRefreshIntervalChange(widget.id, intervalSec),
-        onWidgetMetaChange: (updates) =>
-            onWidgetMetaChange(widget.id, updates),
-        onSizeChange: (nextWidth, nextHeight) =>
-            onWidgetSizeChange(widget.id, nextWidth, nextHeight),
+        onRefreshIntervalChange: handleRefreshIntervalChange,
+        onWidgetMetaChange: handleWidgetMetaChange,
+        onSizeChange: handleSizeChange,
     };
 
     if (widget.type === WIDGET_TYPE_LINE_CHART) {
         return (
             <LineChartCard
-                apiId={widget.id}
+                apiId={widgetId}
                 {...commonCardProps}
                 chartSettings={widget.chartSettings}
-                onChartSettingsChange={(nextSettings) =>
-                    onChartSettingsChange(widget.id, nextSettings)
-                }
+                onChartSettingsChange={handleChartSettingsChange}
             />
         );
     }
@@ -168,12 +211,10 @@ const WidgetRendererInner = ({
     if (widget.type === WIDGET_TYPE_BAR_CHART) {
         return (
             <BarChartCard
-                apiId={widget.id}
+                apiId={widgetId}
                 {...commonCardProps}
                 chartSettings={widget.chartSettings}
-                onChartSettingsChange={(nextSettings) =>
-                    onChartSettingsChange(widget.id, nextSettings)
-                }
+                onChartSettingsChange={handleChartSettingsChange}
             />
         );
     }
@@ -187,25 +228,17 @@ const WidgetRendererInner = ({
                 loading={isLoading}
                 error={widgetError}
                 apiStatus={apiStatus}
-                onRemove={() => onRemoveApi(widget.id)}
-                onRefresh={() => onManualRefresh(widget)}
+                onRemove={handleRemove}
+                onRefresh={handleRefresh}
                 currentSize={currentLayout}
                 sizeBounds={sizeBounds}
                 refreshIntervalSec={
                     widget.refreshIntervalSec ?? DEFAULT_REFRESH_INTERVAL_SEC
                 }
-                onRefreshIntervalChange={(intervalSec) =>
-                    onRefreshIntervalChange(widget.id, intervalSec)
-                }
-                onWidgetMetaChange={(updates) =>
-                    onWidgetMetaChange(widget.id, updates)
-                }
-                onTargetIdsChange={(nextTargetIds) =>
-                    onStatusListTargetIdsChange(widget.id, nextTargetIds)
-                }
-                onSizeChange={(nextWidth, nextHeight) =>
-                    onWidgetSizeChange(widget.id, nextWidth, nextHeight)
-                }
+                onRefreshIntervalChange={handleRefreshIntervalChange}
+                onWidgetMetaChange={handleWidgetMetaChange}
+                onTargetIdsChange={handleStatusListTargetIdsChange}
+                onSizeChange={handleSizeChange}
             />
         );
     }
@@ -215,26 +248,18 @@ const WidgetRendererInner = ({
             <ServerResourceCard
                 title={widget.title}
                 widgetConfig={widget.serverConfig}
-                onRemove={() => onRemoveApi(widget.id)}
-                onRefresh={() => onRefetchOne(widget.id)}
+                onRemove={handleRemove}
+                onRefresh={handleRefetchOne}
                 currentSize={currentLayout}
                 sizeBounds={sizeBounds}
                 refreshIntervalSec={widget.refreshIntervalSec ?? 30}
-                onRefreshIntervalChange={(intervalSec) =>
-                    onRefreshIntervalChange(widget.id, intervalSec)
-                }
-                onWidgetMetaChange={(updates) =>
-                    onWidgetMetaChange(widget.id, updates)
-                }
+                onRefreshIntervalChange={handleRefreshIntervalChange}
+                onWidgetMetaChange={handleWidgetMetaChange}
                 onWidgetConfigChange={(cfg) =>
-                    onUpdateWidget(widget.id, { serverConfig: cfg })
+                    handleWidgetConfigChange(cfg, "serverConfig")
                 }
-                onAlarmChange={(status) =>
-                    onReportWidgetStatus(widget.id, status)
-                }
-                onSizeChange={(nextWidth, nextHeight) =>
-                    onWidgetSizeChange(widget.id, nextWidth, nextHeight)
-                }
+                onAlarmChange={handleAlarmChange}
+                onSizeChange={handleSizeChange}
             />
         );
     }
@@ -244,25 +269,17 @@ const WidgetRendererInner = ({
             <NetworkTestCard
                 title={widget.title}
                 networkConfig={widget.networkConfig}
-                onRemove={() => onRemoveApi(widget.id)}
+                onRemove={handleRemove}
                 currentSize={currentLayout}
                 sizeBounds={sizeBounds}
                 refreshIntervalSec={widget.refreshIntervalSec ?? 10}
-                onRefreshIntervalChange={(intervalSec) =>
-                    onRefreshIntervalChange(widget.id, intervalSec)
-                }
-                onWidgetMetaChange={(updates) =>
-                    onWidgetMetaChange(widget.id, updates)
-                }
+                onRefreshIntervalChange={handleRefreshIntervalChange}
+                onWidgetMetaChange={handleWidgetMetaChange}
                 onWidgetConfigChange={(cfg) =>
-                    onUpdateWidget(widget.id, { networkConfig: cfg })
+                    handleWidgetConfigChange(cfg, "networkConfig")
                 }
-                onAlarmChange={(status) =>
-                    onReportWidgetStatus(widget.id, status)
-                }
-                onSizeChange={(nextWidth, nextHeight) =>
-                    onWidgetSizeChange(widget.id, nextWidth, nextHeight)
-                }
+                onAlarmChange={handleAlarmChange}
+                onSizeChange={handleSizeChange}
             />
         );
     }
@@ -270,7 +287,7 @@ const WidgetRendererInner = ({
     if (widget.type === WIDGET_TYPE_HEALTH_CHECK) {
         return (
             <HealthCheckCard
-                apiId={widget.id}
+                apiId={widgetId}
                 title={widget.title}
                 endpoint={widget.endpoint}
                 healthData={apiData}
@@ -278,22 +295,16 @@ const WidgetRendererInner = ({
                 refreshing={isRefreshing}
                 error={widgetError}
                 apiStatus={apiStatus}
-                onRemove={() => onRemoveApi(widget.id)}
-                onRefresh={() => onManualRefresh(widget)}
+                onRemove={handleRemove}
+                onRefresh={handleRefresh}
                 currentSize={currentLayout}
                 sizeBounds={sizeBounds}
                 refreshIntervalSec={
                     widget.refreshIntervalSec ?? DEFAULT_REFRESH_INTERVAL_SEC
                 }
-                onRefreshIntervalChange={(intervalSec) =>
-                    onRefreshIntervalChange(widget.id, intervalSec)
-                }
-                onWidgetMetaChange={(updates) =>
-                    onWidgetMetaChange(widget.id, updates)
-                }
-                onSizeChange={(nextWidth, nextHeight) =>
-                    onWidgetSizeChange(widget.id, nextWidth, nextHeight)
-                }
+                onRefreshIntervalChange={handleRefreshIntervalChange}
+                onWidgetMetaChange={handleWidgetMetaChange}
+                onSizeChange={handleSizeChange}
             />
         );
     }
@@ -307,27 +318,19 @@ const WidgetRendererInner = ({
             loading={isLoading}
             error={widgetError}
             apiStatus={apiStatus}
-            onRemove={() => onRemoveApi(widget.id)}
-            onRefresh={() => onManualRefresh(widget)}
+            onRemove={handleRemove}
+            onRefresh={handleRefresh}
             currentSize={currentLayout}
             sizeBounds={sizeBounds}
             refreshIntervalSec={
                 widget.refreshIntervalSec ?? DEFAULT_REFRESH_INTERVAL_SEC
             }
-            onRefreshIntervalChange={(intervalSec) =>
-                onRefreshIntervalChange(widget.id, intervalSec)
-            }
-            onWidgetMetaChange={(updates) =>
-                onWidgetMetaChange(widget.id, updates)
-            }
+            onRefreshIntervalChange={handleRefreshIntervalChange}
+            onWidgetMetaChange={handleWidgetMetaChange}
             tableSettings={widget.tableSettings}
             widgetFontSize={widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE}
-            onTableSettingsChange={(nextSettings) =>
-                onTableSettingsChange(widget.id, nextSettings)
-            }
-            onSizeChange={(nextWidth, nextHeight) =>
-                onWidgetSizeChange(widget.id, nextWidth, nextHeight)
-            }
+            onTableSettingsChange={handleTableSettingsChange}
+            onSizeChange={handleSizeChange}
         />
     );
 };
