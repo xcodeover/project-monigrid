@@ -264,6 +264,7 @@ const NetworkTestCard = ({
     const checkAllTargets = useCallback(async () => {
         // Skip polling while tab is hidden to avoid wasted requests.
         // The visibility-flip effect triggers an immediate fetch on return.
+        // NOTE: 탭이 숨겨진 동안에는 알람 감지가 최대 폴링 주기만큼 지연된다.
         if (document.hidden) return;
         if (useSnapshot) {
             if (targetIds.length === 0) return;
@@ -409,7 +410,14 @@ const NetworkTestCard = ({
     // the widget shows fresh data rather than stale results from before hiding.
     // Trade-off: all visible-flip fetches fire simultaneously (BE burst), but
     // this equals a normal dashboard load — acceptable for user freshness.
+    // 최초 마운트 시 useDocumentVisible()이 true로 초기화되므로 이 effect가 즉시 실행돼
+    // 스케줄링 effect의 첫 fetch와 중복된다. isFirstMountRef로 마운트 시 1회만 건너뛴다.
+    const isFirstMountRef = useRef(true);
     useEffect(() => {
+        if (isFirstMountRef.current) {
+            isFirstMountRef.current = false;
+            return;
+        }
         if (visible && hasItems) checkAllTargets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible]);

@@ -305,6 +305,7 @@ const useWidgetApiData = (widgets) => {
                 // 30 widgets × 5 s interval in background tabs. The
                 // visibilitychange effect below fires an immediate refetch
                 // when the user returns, so no stale data is shown.
+                // NOTE: 탭이 숨겨진 동안에는 알람 감지가 최대 폴링 주기만큼 지연된다.
                 if (document.hidden) return;
                 const latest = widgetsRef.current.find((w) => w.id === widgetId);
                 if (latest) fetchWidget(latest);
@@ -341,7 +342,14 @@ const useWidgetApiData = (widgets) => {
     // full polling interval. All widgets burst simultaneously — intentional
     // trade-off: user-visible freshness > momentary BE burst (which is bounded
     // by the widget count, same as a normal dashboard load).
+    // 최초 마운트 시 useDocumentVisible()이 true로 초기화되므로 이 effect가 즉시 실행돼
+    // 스케줄링 effect의 첫 fetch와 중복된다. isFirstMountRef로 마운트 시 1회만 건너뛴다.
+    const isFirstMountRef = useRef(true);
     useEffect(() => {
+        if (isFirstMountRef.current) {
+            isFirstMountRef.current = false;
+            return;
+        }
         if (visible) {
             widgetsRef.current.forEach((w) => fetchWidget(w));
         }
