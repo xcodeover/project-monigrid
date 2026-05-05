@@ -10,16 +10,23 @@ export default defineConfig({
     build: {
         rollupOptions: {
             output: {
-                manualChunks: {
-                    // Charting library — only loaded when dashboard is visited
-                    recharts: ["recharts"],
-                    // Code editor + syntax highlighting — only loaded when
-                    // SqlEditorModal / ConfigEditorModal is opened
-                    editor: ["prismjs", "react-simple-code-editor"],
-                    // Grid drag-and-resize — only loaded with dashboard
-                    grid: ["react-grid-layout", "react-resizable"],
-                    // Core React runtime — always needed, cache-friendly
-                    react: ["react", "react-dom", "react-router-dom"],
+                manualChunks(id) {
+                    // Only split node_modules
+                    if (!id.includes("node_modules")) return undefined;
+
+                    // Heavy charting library — only loaded by chart widgets
+                    if (id.includes("recharts") || id.includes("d3-")) return "recharts";
+
+                    // Editor + syntax highlighter — only loaded by SQL/Config modals
+                    if (id.includes("prismjs") || id.includes("react-simple-code-editor")) return "editor";
+
+                    // Grid layout — loaded with dashboard
+                    if (id.includes("react-grid-layout") || id.includes("react-resizable")) return "grid";
+
+                    // Everything else from node_modules → single vendor chunk
+                    // (includes react, react-dom, react-router-dom, zustand, axios,
+                    //  jsx-runtime, use-sync-external-store, etc.)
+                    return "vendor";
                 },
             },
         },
