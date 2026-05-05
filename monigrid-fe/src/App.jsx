@@ -22,7 +22,7 @@ const PageFallback = () => (
     <div
         style={{
             minHeight: "100vh",
-            background: "#0b1017",
+            background: "var(--bg-base)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
