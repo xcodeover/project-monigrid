@@ -31,11 +31,10 @@ const WidgetSettingsModal = ({
     children,
     applyLabel = "적용",
     cancelLabel = "취소",
-    // Some widgets (NetworkTestCard) rely on a draft buffer the user is
-    // editing inside the modal — clicking the dim backdrop and losing those
-    // edits is hostile, so they opt out. Default stays true to match the
-    // old chart-card behaviour.
-    closeOnBackdropClick = true,
+    // Backdrop click never closes the modal — the user must use the X button,
+    // Cancel button, or Esc key. This prevents accidental data loss when the
+    // user clicks outside while editing inputs.
+    closeOnBackdropClick = false,
 }) => {
     const popupRef = useRef(null);
 
@@ -85,10 +84,11 @@ const WidgetSettingsModal = ({
         <div
             className='settings-overlay'
             onClick={(e) => {
-                // Click on the dim background = close, click on the popup =
-                // do nothing. The popup itself stops propagation below.
-                if (!closeOnBackdropClick) return;
-                if (e.target === e.currentTarget) onClose?.();
+                // Backdrop click is intentionally a no-op.
+                // Modals close only via the X button, Cancel button, or Esc key.
+                // The closeOnBackdropClick prop exists for legacy callers but
+                // defaults to false to prevent accidental data loss.
+                if (closeOnBackdropClick && e.target === e.currentTarget) onClose?.();
             }}
         >
             <div

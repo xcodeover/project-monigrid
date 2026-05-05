@@ -72,10 +72,9 @@ const ServerDetailPopup = ({ server, history, onClose }) => {
     if (!server) return null;
 
     return createPortal(
-        <div className='row-detail-overlay' onClick={onClose}>
+        <div className='row-detail-overlay'>
             <div
                 className='srv-detail-popup'
-                onClick={(e) => e.stopPropagation()}
             >
                 <div className='row-detail-header'>
                     <div>

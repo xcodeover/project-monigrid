@@ -38,10 +38,9 @@ const ApiCardRowDetailModal = ({ row, title, onClose }) => {
     if (!row) return null;
 
     return createPortal(
-        <div className='row-detail-overlay' onClick={onClose}>
+        <div className='row-detail-overlay'>
             <div
                 className='row-detail-popup'
-                onClick={(e) => e.stopPropagation()}
             >
                 <div className='row-detail-header'>
                     <div>
