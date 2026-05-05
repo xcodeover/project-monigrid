@@ -391,8 +391,13 @@ const ApiCard = ({
             setLocalColumnWidths(nextWidths);
             onTableSettingsChange({ columnWidths: nextWidths });
         }
+    // Intentional: availableColumnsKey 는 availableColumns 의 안정적인 동일성 키
+    // (폴링마다 새 배열 ref 가 와도 ref churn 없음). columnWidths 는 누락 항목 초기값
+    // 스냅샷용으로만 읽히며, 이 effect 는 *없는* 항목만 추가하므로 stale 위험 없음;
+    // 사용자가 직접 설정한 값은 절대 덮어쓰지 않는다. onTableSettingsChange 는
+    // store 콜백(안정적)이므로 deps 에 포함해도 동작은 동일하다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [availableColumnsKey]); // stable key: 컬럼 set 이 진짜 바뀔 때만 실행
+    }, [availableColumnsKey]);
 
     const criteriaTimerRef = useRef(null);
 
