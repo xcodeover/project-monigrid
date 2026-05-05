@@ -862,10 +862,11 @@ const DashboardPage = () => {
                     Copyright © {CURRENT_YEAR} {COMPANY_NAME}. All rights
                     reserved.
                 </span>
-                <span className='footer-version'>
-                    monitoring-fe v{import.meta.env.VITE_APP_VERSION || "0.0.0"}
-                    {backendVersion && ` | monitoring-be v${backendVersion}`}
-                </span>
+                {/* monigrid_settings_kv.version 을 application 버전으로 표시.
+                    backend.config.version 이 KV 우선 + build-time __version__ fallback. */}
+                {backendVersion && (
+                    <span className='footer-version'>v{backendVersion}</span>
+                )}
             </footer>
         </div>
     );
