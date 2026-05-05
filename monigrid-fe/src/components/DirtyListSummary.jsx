@@ -2,7 +2,11 @@ import "./DirtyListSummary.css";
 
 /**
  * Bottom summary bar for batch-save modals. Shows dirty count breakdown,
- * validation status, and a primary "저장 & 적용" button.
+ * validation status, and an optional primary "저장 & 적용" button.
+ *
+ * Pass `hideSaveButton` when the save action is handled by a parent modal
+ * (pattern A — shared footer button). In that case only the summary text
+ * and validation badge are rendered.
  */
 const DirtyListSummary = ({
     count,           // { creates, updates, deletes, total }
@@ -11,6 +15,7 @@ const DirtyListSummary = ({
     isSaving,
     onSave,
     saveLabel = "저장 & 적용",
+    hideSaveButton = false,
 }) => {
     const hasChanges = count.total > 0;
     const hasInvalid = invalidCount > 0;
@@ -41,14 +46,16 @@ const DirtyListSummary = ({
                     {invalidCount}개 항목에 오류
                 </span>
             )}
-            <button
-                type='button'
-                className='dls-save-btn'
-                onClick={onSave}
-                disabled={!hasChanges || isSaving}
-            >
-                {isSaving ? "저장 중…" : saveLabel}
-            </button>
+            {!hideSaveButton && (
+                <button
+                    type='button'
+                    className='dls-save-btn'
+                    onClick={onSave}
+                    disabled={!hasChanges || isSaving}
+                >
+                    {isSaving ? "저장 중…" : saveLabel}
+                </button>
+            )}
         </div>
     );
 };

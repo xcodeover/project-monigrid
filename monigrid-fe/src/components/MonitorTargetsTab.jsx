@@ -463,7 +463,13 @@ const TargetCard = ({
     );
 };
 
-const MonitorTargetsTab = ({ targetType }) => {
+/**
+ * @param {string}   targetType    - "server_resource" | "network" | "http_status"
+ * @param {Function} [onDirtyChange] - optional callback `(isDirty, total) => void`
+ *   invoked whenever the tab's dirty count changes. Used by ConfigEditorModal
+ *   to aggregate the dirty signal for the modal-level close guard.
+ */
+const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [collapsed, setCollapsed] = useState({});
@@ -518,6 +524,14 @@ const MonitorTargetsTab = ({ targetType }) => {
         newItemFactory,
         validator,
     });
+
+    // ── notify parent of dirty changes ────────────────────────────────────────
+    useEffect(() => {
+        if (onDirtyChange) {
+            onDirtyChange(list.isDirty, list.dirtyCount.total);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [list.isDirty, list.dirtyCount.total]);
 
     // ── server load ────────────────────────────────────────────────────────────
     const reload = useCallback(async () => {

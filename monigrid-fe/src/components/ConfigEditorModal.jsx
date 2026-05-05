@@ -1,6 +1,9 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { configService } from "../services/api";
+import { useDirtyList } from "../hooks/useDirtyList";
+import { useUnsavedChangesGuard } from "../hooks/useUnsavedChangesGuard";
+import DirtyListSummary from "./DirtyListSummary";
 import PasswordInput from "./PasswordInput";
 import MonitorTargetsTab from "./MonitorTargetsTab";
 import {
@@ -23,8 +26,6 @@ const OS_TYPE_LABELS = {
 const LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"];
 
 /* ── Helpers ───────────────────────────────────────────────────── */
-
-const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
 
 // "status" → "status-2", "ms-sql-123" → "ms-sql-124". Mirrors the pattern used
 // by the server-resource widget so the copy UX feels consistent across modals.
@@ -109,26 +110,70 @@ const ConnectionEditor = ({ conn, index, onChange, onRemove, onDuplicate, collap
     );
 };
 
-const ApiEndpointEditor = ({ api, index, connectionIds, onChange, onRemove, onDuplicate, collapsed, onToggle }) => {
-    const update = (field, value) => onChange(index, { ...api, [field]: value });
+/**
+ * ApiEndpointEditor — card for a single data API endpoint.
+ * Augmented with dirty-state styling (rowStateClass) and soft-delete restore.
+ */
+const ApiEndpointEditor = ({
+    api,
+    rowStateClass,
+    validationError,
+    connectionIds,
+    onUpdate,
+    onRemove,
+    onRestore,
+    onDuplicate,
+    collapsed,
+    onToggle,
+}) => {
+    const update = (field, value) => onUpdate({ ...api, [field]: value });
+    const isDeleted = !!api._isDeleted;
+
+    const cardClasses = [
+        "cfg-card",
+        collapsed ? "cfg-card-collapsed" : "",
+        rowStateClass || "",
+        validationError ? "row-state-invalid" : "",
+    ]
+        .filter(Boolean)
+        .join(" ");
+
     return (
-        <div className={`cfg-card ${collapsed ? "cfg-card-collapsed" : ""}`}>
+        <div className={cardClasses} data-row-id={api.id}>
             <div className="cfg-card-header" onClick={onToggle} style={{ cursor: "pointer" }}>
                 <span className={`cfg-card-chevron ${collapsed ? "" : "open"}`}><IconChevronRight size={12} /></span>
-                <label className="cfg-toggle" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={api.enabled ?? false} onChange={(e) => update("enabled", e.target.checked)} />
-                    <span className="cfg-toggle-slider" />
-                </label>
-                <span className="cfg-card-title">{api.id || `API ${index + 1}`}</span>
+                {!isDeleted && (
+                    <label className="cfg-toggle" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" checked={api.enabled ?? false} onChange={(e) => update("enabled", e.target.checked)} />
+                        <span className="cfg-toggle-slider" />
+                    </label>
+                )}
+                <span className="cfg-card-title">{api.id || "(ID 없음)"}</span>
                 <span className="cfg-card-badge">{api.rest_api_path || "/"}</span>
-                <button type="button" className="cfg-duplicate-btn" onClick={(e) => { e.stopPropagation(); onDuplicate(index); }} title="복제"><IconCopy size={14} /></button>
-                <button type="button" className="cfg-remove-btn" onClick={(e) => { e.stopPropagation(); onRemove(index); }} title="삭제"><IconTrash size={14} /></button>
+                {api._isNew && <span className="cfg-card-badge">신규</span>}
+                {isDeleted && <span className="cfg-card-badge" style={{ color: "#ff6b6b" }}>삭제 예정</span>}
+                {!isDeleted && (
+                    <button type="button" className="cfg-duplicate-btn" onClick={(e) => { e.stopPropagation(); onDuplicate(); }} title="복제"><IconCopy size={14} /></button>
+                )}
+                {isDeleted ? (
+                    <button type="button" className="row-restore-btn" onClick={(e) => { e.stopPropagation(); onRestore(); }} title="복원" aria-label="복원">
+                        ↺ 복원
+                    </button>
+                ) : (
+                    <button type="button" className="cfg-remove-btn" onClick={(e) => { e.stopPropagation(); onRemove(); }} title="삭제"><IconTrash size={14} /></button>
+                )}
             </div>
-            {!collapsed && (
+            {!collapsed && !isDeleted && (
                 <div className="cfg-card-body">
                     <div className="cfg-row-2">
                         <label><span>API ID</span>
-                            <input type="text" value={api.id || ""} onChange={(e) => update("id", e.target.value)} placeholder="status" />
+                            <input
+                                type="text"
+                                value={api.id || ""}
+                                onChange={(e) => update("id", e.target.value)}
+                                placeholder="status"
+                                disabled={!api._isNew}
+                            />
                         </label>
                         <label><span>REST API Path</span>
                             <input type="text" value={api.rest_api_path || ""} onChange={(e) => update("rest_api_path", e.target.value)} placeholder="/api/status" />
@@ -150,11 +195,42 @@ const ApiEndpointEditor = ({ api, index, connectionIds, onChange, onRemove, onDu
                             <input type="number" value={api.refresh_interval_sec ?? 5} onChange={(e) => update("refresh_interval_sec", Number(e.target.value))} min="1" max="3600" />
                         </label>
                     </div>
+                    {validationError && (
+                        <div className="row-state-invalid-msg">{validationError}</div>
+                    )}
                 </div>
             )}
         </div>
     );
 };
+
+/* ── Endpoint validator (spec §5.1) ───────────────────────────── */
+
+function buildEndpointValidator(allItems) {
+    return (item) => {
+        const id = (item.id || "").trim();
+        if (!id) return "API ID는 필수입니다.";
+        if (!/^[a-zA-Z0-9_]+$/.test(id)) return "API ID는 영문자·숫자·밑줄만 허용됩니다.";
+
+        // duplicate check (ignore the item's own entry)
+        const dupCount = allItems.filter(
+            (it) => !it._isDeleted && (it.id || "").trim() === id && it !== item,
+        ).length;
+        if (dupCount > 0) return "API ID가 중복됩니다.";
+
+        const path = (item.rest_api_path || "").trim();
+        if (!path) return "REST API Path는 필수입니다.";
+        if (!path.startsWith("/")) return "REST API Path는 '/'로 시작해야 합니다.";
+
+        if (!item.sql_id || !(item.sql_id + "").trim()) return "SQL ID는 필수입니다.";
+
+        const timeout = item.refresh_interval_sec;
+        if (timeout === undefined || timeout === null || timeout === "") return "갱신 주기(초)는 필수입니다.";
+        if (!Number.isInteger(Number(timeout)) || Number(timeout) < 1) return "갱신 주기(초)는 1 이상의 정수여야 합니다.";
+
+        return null;
+    };
+}
 
 /* ══════════════════════════════════════════════════════════════════
    ConfigEditorModal — main component
@@ -172,7 +248,6 @@ export default function ConfigEditorModal({ open, onClose }) {
     const [auth, setAuth] = useState({});
     const [logging, setLogging] = useState({});
     const [connections, setConnections] = useState([]);
-    const [apis, setApis] = useState([]);
     const [globalJdbcJars, setGlobalJdbcJars] = useState("");
     const [sqlValidation, setSqlValidation] = useState({});
 
@@ -183,6 +258,67 @@ export default function ConfigEditorModal({ open, onClose }) {
     // JSON raw editor mode
     const [jsonMode, setJsonMode] = useState(false);
     const [rawJson, setRawJson] = useState("");
+
+    // ── monitor tab dirty signals (lifted from MonitorTargetsTab) ──────────
+    // Key: targetType  Value: { isDirty, count }
+    const [monitorDirtyMap, setMonitorDirtyMap] = useState({});
+
+    const handleMonitorDirtyChange = useCallback((targetType, isDirty, count) => {
+        setMonitorDirtyMap((prev) => {
+            if (prev[targetType]?.isDirty === isDirty && prev[targetType]?.count === count) {
+                return prev; // no change, avoid re-render
+            }
+            return { ...prev, [targetType]: { isDirty, count } };
+        });
+    }, []);
+
+    const monitorTotalDirty = Object.values(monitorDirtyMap).reduce(
+        (sum, v) => sum + (v?.count || 0),
+        0,
+    );
+
+    // ── useDirtyList for the "데이터 API" tab ─────────────────────────────
+    // validator needs access to the full visible list for duplicate check,
+    // so we build it lazily via a ref that updates each render.
+    const visibleApiItemsRef = useRef([]);
+
+    const endpointValidator = useCallback((item) => {
+        return buildEndpointValidator(visibleApiItemsRef.current)(item);
+    }, []);
+
+    const endpointNewItemFactory = useCallback(
+        () => ({
+            id: "",
+            rest_api_path: "/api/",
+            connection_id: "",
+            sql_id: "",
+            refresh_interval_sec: 5,
+            enabled: true,
+        }),
+        [],
+    );
+
+    const apiList = useDirtyList({
+        initial: [],
+        idKey: "id",
+        newItemFactory: endpointNewItemFactory,
+        validator: endpointValidator,
+    });
+
+    // keep ref in sync with visible items
+    visibleApiItemsRef.current = apiList.visibleItems;
+
+    // ── modal-wide dirty aggregation ───────────────────────────────────────
+    const isModalDirty = apiList.isDirty || monitorTotalDirty > 0;
+    const modalDirtyCount = apiList.dirtyCount.total + monitorTotalDirty;
+
+    // ── close guard ─────────────────────────────────────────────────────────
+    const guardedClose = useUnsavedChangesGuard({
+        isDirty: isModalDirty,
+        dirtyCount: modalDirtyCount,
+        onClose,
+        isBlocked: saving,
+    });
 
     const loadConfig = useCallback(async () => {
         setLoading(true);
@@ -195,13 +331,15 @@ export default function ConfigEditorModal({ open, onClose }) {
             const loadedConnections = Array.isArray(data.connections) ? data.connections : [];
             const loadedApis = Array.isArray(data.apis) ? data.apis : [];
             setConnections(loadedConnections);
-            setApis(loadedApis);
             // 이미 등록되어 있는 항목들은 기본적으로 접힌 상태로 보여 화면이 길어지는 것을 방지한다.
             setCollapsedConns(
                 Object.fromEntries(loadedConnections.map((_, i) => [i, true])),
             );
+            // Initialize useDirtyList with the server snapshot.
+            // Collapse keyed by id (stable) rather than index.
+            apiList.reset(loadedApis);
             setCollapsedApis(
-                Object.fromEntries(loadedApis.map((_, i) => [i, true])),
+                Object.fromEntries(loadedApis.map((a) => [a.id, true])),
             );
             setGlobalJdbcJars(data.global_jdbc_jars || "");
             setSqlValidation(data.sql_validation || {});
@@ -211,11 +349,29 @@ export default function ConfigEditorModal({ open, onClose }) {
         } finally {
             setLoading(false);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     useEffect(() => {
         if (open) loadConfig();
     }, [open, loadConfig]);
+
+    // Build the final apis array by applying the useDirtyList diff onto the
+    // original snapshot, so the PUT payload contains the full correct list.
+    const buildApisForSave = useCallback(() => {
+        const diff = apiList.computeDiff();
+        // Start from the current visible items that are NOT deleted and NOT new
+        // (i.e., existing, possibly modified), then append creates.
+        const existing = apiList.visibleItems
+            .filter((it) => !it._isNew && !it._isDeleted)
+            .map((it) => {
+                // Strip internal _* flags
+                const { _isNew: _n, _isDeleted: _d, ...clean } = it;
+                return clean;
+            });
+        const created = diff.creates.map(({ _isNew: _n, _isDeleted: _d, ...clean }) => clean);
+        return [...existing, ...created];
+    }, [apiList]);
 
     const buildConfigObject = () => {
         if (jsonMode) {
@@ -228,11 +384,23 @@ export default function ConfigEditorModal({ open, onClose }) {
             global_jdbc_jars: globalJdbcJars,
             sql_validation: sqlValidation,
             connections,
-            apis,
+            apis: buildApisForSave(),
         };
     };
 
     const handleSave = async () => {
+        // Validate endpoint list before saving
+        if (apiList.isDirty && !apiList.isValid) {
+            const firstInvalidId = apiList.invalidIds[0];
+            const el = document.querySelector(`[data-row-id="${firstInvalidId}"]`);
+            if (el) {
+                setActiveTab("apis");
+                el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+            setError(`데이터 API 설정에 ${apiList.invalidIds.length}개 오류가 있습니다. 확인 후 다시 저장하세요.`);
+            return;
+        }
+
         setSaving(true);
         setError(null);
         setSuccessMsg(null);
@@ -244,6 +412,8 @@ export default function ConfigEditorModal({ open, onClose }) {
             );
             // sync rawJson with form state
             setRawJson(JSON.stringify(configObj, null, 2));
+            // After successful save, reset the dirty list to the new server state
+            apiList.reset(configObj.apis || []);
         } catch (e) {
             if (e instanceof SyntaxError) {
                 setError("JSON 형식이 올바르지 않습니다.");
@@ -285,12 +455,12 @@ export default function ConfigEditorModal({ open, onClose }) {
                 const parsedConnections = Array.isArray(data.connections) ? data.connections : [];
                 const parsedApis = Array.isArray(data.apis) ? data.apis : [];
                 setConnections(parsedConnections);
-                setApis(parsedApis);
                 setCollapsedConns(
                     Object.fromEntries(parsedConnections.map((_, i) => [i, true])),
                 );
+                apiList.reset(parsedApis);
                 setCollapsedApis(
-                    Object.fromEntries(parsedApis.map((_, i) => [i, true])),
+                    Object.fromEntries(parsedApis.map((a) => [a.id, true])),
                 );
                 setGlobalJdbcJars(data.global_jdbc_jars || "");
                 setSqlValidation(data.sql_validation || {});
@@ -336,44 +506,50 @@ export default function ConfigEditorModal({ open, onClose }) {
         setCollapsedConns((prev) => shiftCollapsedForInsert(prev, idx));
     };
 
-    /* ── api helpers ──────────────────────── */
+    /* ── api helpers (now delegated to useDirtyList) ─────────────── */
     const connectionIds = connections.map((c) => c.id).filter(Boolean);
-    const handleApiChange = (idx, updated) => {
-        setApis((prev) => prev.map((a, i) => (i === idx ? updated : a)));
-    };
-    const handleApiRemove = (idx) => {
-        setApis((prev) => prev.filter((_, i) => i !== idx));
-        setCollapsedApis((prev) => {
-            const next = {};
-            Object.keys(prev).forEach((k) => {
-                const i = Number(k);
-                if (i < idx) next[i] = prev[k];
-                else if (i > idx) next[i - 1] = prev[k];
-            });
-            return next;
+
+    const handleApiUpdate = useCallback((id, updated) => {
+        const { _isNew: _n, _isDeleted: _d, ...patch } = updated;
+        apiList.updateItem(id, patch);
+    }, [apiList]);
+
+    const handleApiAdd = useCallback(() => {
+        const tmpId = apiList.addItem({
+            connection_id: connectionIds[0] || "",
         });
-    };
-    const handleApiAdd = () => {
-        setApis((prev) => [
-            ...prev,
-            { id: "", rest_api_path: "/api/", connection_id: connectionIds[0] || "", refresh_interval_sec: 5, enabled: true, sql_id: "" },
-        ]);
-    };
-    const handleApiDuplicate = (idx) => {
-        setApis((prev) => {
-            const src = prev[idx];
-            if (!src) return prev;
-            const existingIds = new Set(prev.map((a) => a.id).filter(Boolean));
-            const existingPaths = new Set(prev.map((a) => a.rest_api_path).filter(Boolean));
-            const dup = {
-                ...src,
-                id: nextAvailable(src.id, existingIds),
-                rest_api_path: nextAvailable(src.rest_api_path, existingPaths),
-            };
-            return insertAfter(prev, idx, dup);
+        setCollapsedApis((prev) => ({ ...prev, [tmpId]: false }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [apiList, connectionIds]);
+
+    const handleApiRemove = useCallback((id) => {
+        apiList.deleteItem(id);
+    }, [apiList]);
+
+    const handleApiRestore = useCallback((id) => {
+        apiList.restoreItem(id);
+    }, [apiList]);
+
+    const handleApiDuplicate = useCallback((id) => {
+        const src = apiList.visibleItems.find((a) => a.id === id);
+        if (!src) return;
+        const existingIds = new Set(
+            apiList.visibleItems.map((a) => a.id).filter(Boolean),
+        );
+        const existingPaths = new Set(
+            apiList.visibleItems.map((a) => a.rest_api_path).filter(Boolean),
+        );
+        const tmpId = apiList.addItem({
+            ...endpointNewItemFactory(),
+            sql_id: src.sql_id,
+            connection_id: src.connection_id,
+            refresh_interval_sec: src.refresh_interval_sec,
+            enabled: src.enabled,
+            rest_api_path: nextAvailable(src.rest_api_path, existingPaths),
         });
-        setCollapsedApis((prev) => shiftCollapsedForInsert(prev, idx));
-    };
+        setCollapsedApis((prev) => ({ ...prev, [tmpId]: false }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [apiList, endpointNewItemFactory]);
 
     if (!open) return null;
 
@@ -400,7 +576,7 @@ export default function ConfigEditorModal({ open, onClose }) {
                         <h5>백엔드 설정</h5>
                         <p>서버, DB 연결, 데이터 API 설정을 관리합니다. 저장 시 설정 DB에 기록되어 모든 A-A 노드에 즉시 반영됩니다.</p>
                     </div>
-                    <button type="button" className="close-settings-btn" onClick={onClose} aria-label="닫기"><IconClose size={16} /></button>
+                    <button type="button" className="close-settings-btn" onClick={guardedClose} aria-label="닫기"><IconClose size={16} /></button>
                 </div>
 
                 {/* ── Tab bar ────────────────────────────── */}
@@ -514,38 +690,79 @@ export default function ConfigEditorModal({ open, onClose }) {
                             {activeTab === "apis" && (
                                 <div className="cfg-section">
                                     <div className="cfg-section-header">
-                                        <span>데이터 API ({apis.length}개)</span>
+                                        <span>데이터 API ({apiList.visibleItems.filter((a) => !a._isDeleted).length}개)</span>
                                         <button type="button" className="cfg-add-btn" onClick={handleApiAdd}><IconPlus size={14} /> 추가</button>
                                     </div>
-                                    {apis.length === 0 ? (
+                                    {apiList.visibleItems.length === 0 ? (
                                         <div className="cfg-empty">등록된 API가 없습니다.</div>
                                     ) : (
-                                        apis.map((api, i) => (
-                                            <ApiEndpointEditor key={i} api={api} index={i} connectionIds={connectionIds}
-                                                onChange={handleApiChange}
-                                                onRemove={handleApiRemove}
-                                                onDuplicate={handleApiDuplicate}
-                                                collapsed={!!collapsedApis[i]}
-                                                onToggle={() => setCollapsedApis((p) => ({ ...p, [i]: !p[i] }))}
-                                            />
-                                        ))
+                                        apiList.visibleItems.map((api) => {
+                                            const state = apiList.rowState(api.id);
+                                            const rowStateClass =
+                                                state === "new"
+                                                    ? "row-state-new"
+                                                    : state === "modified"
+                                                        ? "row-state-modified"
+                                                        : state === "deleted"
+                                                            ? "row-state-deleted"
+                                                            : "";
+                                            const valError = apiList.validationError(api.id);
+                                            return (
+                                                <ApiEndpointEditor
+                                                    key={api.id}
+                                                    api={api}
+                                                    rowStateClass={rowStateClass}
+                                                    validationError={valError}
+                                                    connectionIds={connectionIds}
+                                                    onUpdate={(next) => handleApiUpdate(api.id, next)}
+                                                    onRemove={() => handleApiRemove(api.id)}
+                                                    onRestore={() => handleApiRestore(api.id)}
+                                                    onDuplicate={() => handleApiDuplicate(api.id)}
+                                                    collapsed={!!collapsedApis[api.id]}
+                                                    onToggle={() => setCollapsedApis((p) => ({ ...p, [api.id]: !p[api.id] }))}
+                                                />
+                                            );
+                                        })
                                     )}
+                                    {/* Summary bar — no save button (modal footer owns save) */}
+                                    <DirtyListSummary
+                                        count={apiList.dirtyCount}
+                                        isValid={apiList.isValid}
+                                        invalidCount={apiList.invalidIds.length}
+                                        isSaving={saving}
+                                        hideSaveButton
+                                    />
                                 </div>
                             )}
 
                             {/* ── Server targets tab ──────── */}
                             {activeTab === "serverTargets" && (
-                                <MonitorTargetsTab targetType="server_resource" />
+                                <MonitorTargetsTab
+                                    targetType="server_resource"
+                                    onDirtyChange={(isDirty, count) =>
+                                        handleMonitorDirtyChange("server_resource", isDirty, count)
+                                    }
+                                />
                             )}
 
                             {/* ── Network targets tab ─────── */}
                             {activeTab === "networkTargets" && (
-                                <MonitorTargetsTab targetType="network" />
+                                <MonitorTargetsTab
+                                    targetType="network"
+                                    onDirtyChange={(isDirty, count) =>
+                                        handleMonitorDirtyChange("network", isDirty, count)
+                                    }
+                                />
                             )}
 
                             {/* ── HTTP status targets tab ─── */}
                             {activeTab === "httpStatusTargets" && (
-                                <MonitorTargetsTab targetType="http_status" />
+                                <MonitorTargetsTab
+                                    targetType="http_status"
+                                    onDirtyChange={(isDirty, count) =>
+                                        handleMonitorDirtyChange("http_status", isDirty, count)
+                                    }
+                                />
                             )}
 
                             {/* ── Logging tab ─────────────── */}
@@ -609,7 +826,7 @@ export default function ConfigEditorModal({ open, onClose }) {
                         Reload Only
                     </button>
                     <div className="cfg-footer-right">
-                        <button type="button" className="cfg-footer-btn cfg-btn-secondary" onClick={onClose}>
+                        <button type="button" className="cfg-footer-btn cfg-btn-secondary" onClick={guardedClose}>
                             닫기
                         </button>
                         <button type="button" className="cfg-footer-btn cfg-btn-primary" onClick={handleSave} disabled={saving || loading}>
