@@ -991,7 +991,7 @@ class SettingsStore:
     )
 
     def _prepare_monitor_target_fields(
-        self, item: dict[str, Any], target_id: str
+        self, item: dict[str, Any]
     ) -> tuple[str, str | None, str, int, int]:
         """Validate + normalise a monitor-target payload.
 
@@ -1043,12 +1043,13 @@ class SettingsStore:
         Does NOT commit.  Returns the inserted row dict (with generated id).
         Raises ValueError on invalid payload.
         """
-        # Strip FE-only internal fields (e.g. _isNew, _isDeleted, _clientId).
-        clean = {k: v for k, v in item.items() if not k.startswith("_")}
+        # Keep only known DB columns; drops FE-only internal fields
+        # (e.g. _isNew, _isDeleted, _clientId) and any future unknowns.
+        clean = {k: v for k, v in item.items() if k in self._MONITOR_TARGET_COLS}
 
         new_id = str(uuid.uuid4())
         target_type, label, spec_json, interval_sec, enabled = (
-            self._prepare_monitor_target_fields(clean, new_id)
+            self._prepare_monitor_target_fields(clean)
         )
 
         self._upsert(
@@ -1077,20 +1078,24 @@ class SettingsStore:
         did not exist (rowcount == 0 after upsert — treated as not-found).
         Raises ValueError on invalid payload.
         """
-        # Strip FE-only internal fields.
-        clean = {k: v for k, v in item.items() if not k.startswith("_")}
+        # Keep only known DB columns; drops FE-only internal fields
+        # (e.g. _isNew, _isDeleted, _clientId) and any future unknowns.
+        clean = {k: v for k, v in item.items() if k in self._MONITOR_TARGET_COLS}
 
         target_type, label, spec_json, interval_sec, enabled = (
-            self._prepare_monitor_target_fields(clean, target_id)
+            self._prepare_monitor_target_fields(clean)
         )
 
         # Use a plain UPDATE so we get an accurate "not found" signal via
         # rowcount, rather than silently inserting via the upsert helper.
+        # updated_at uses the same dialect-aware expression as _upsert.
+        ts_expr = self._now_literal()
         cur = self._cursor()
         try:
             cur.execute(
                 "UPDATE monigrid_monitor_targets "
-                "SET type = ?, label = ?, spec = ?, interval_sec = ?, enabled = ? "
+                f"SET type = ?, label = ?, spec = ?, interval_sec = ?, enabled = ?, "
+                f"updated_at = {ts_expr} "
                 "WHERE id = ?",
                 [target_type, label, spec_json, interval_sec, enabled, target_id],
             )
@@ -1221,7 +1226,19 @@ class SettingsStore:
             for idx, raw_id in enumerate(deletes):
                 target_id = str(raw_id).strip()
                 try:
-                    self._delete_monitor_target_no_commit(target_id)
+                    count = self._delete_monitor_target_no_commit(target_id)
+                    if count == 0:
+                        self._conn.rollback()
+                        return {
+                            "success": False,
+                            "error": f"monitor target id={target_id!r} not found",
+                            "failedItem": {
+                                "kind": "delete",
+                                "index": idx,
+                                "id": target_id,
+                                "message": f"target {target_id!r} not found",
+                            },
+                        }
                     deleted_ids.append(target_id)
                 except Exception as exc:
                     self._conn.rollback()
@@ -1270,8 +1287,8 @@ class SettingsStore:
                 "success": False,
                 "error": msg,
                 "failedItem": {
-                    "kind": "create",
-                    "index": 0,
+                    "kind": "unknown",  # connection-level failure; phase indeterminate
+                    "index": -1,
                     "id": None,
                     "message": msg,
                 },
