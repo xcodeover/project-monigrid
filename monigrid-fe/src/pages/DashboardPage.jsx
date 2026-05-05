@@ -203,21 +203,27 @@ const DashboardPage = () => {
 
     // Hydrate the store with server-side preferences once per session
     // (keyed by username so switching users re-fetches).
+    //
+    // buildDefaults is passed so that the store can seed the initial widget set
+    // INSIDE the sync window when both localStorage and the BE have no record
+    // (new PC, first login). Doing the seed here — outside the sync — would
+    // race the async GET: setWidgets() triggers queueServerPush() which sets
+    // _dirtyDuringSync=true, causing the local-wins branch to discard BE prefs
+    // and push empty defaults back to the server.
     useEffect(() => {
         if (!user?.username) return;
-        syncPreferencesFromServer();
+        const buildDefaults = () => {
+            const statusListWidget = createStatusListWidget();
+            const defaultWidgets = [...DEFAULT_APIS, statusListWidget];
+            const defaultLayouts = Object.fromEntries(
+                defaultWidgets
+                    .filter((w) => w.defaultLayout)
+                    .map((w) => [w.id, w.defaultLayout]),
+            );
+            return { widgets: defaultWidgets, layouts: defaultLayouts };
+        };
+        syncPreferencesFromServer(buildDefaults);
     }, [user?.username, syncPreferencesFromServer]);
-
-    useEffect(() => {
-        if (widgets !== null) {
-            return;
-        }
-        // 최초 로드(localStorage 없음)일 때만 기본 위젯 세트를 추가
-        const statusListWidget = createStatusListWidget();
-        const initial = [...DEFAULT_APIS, statusListWidget];
-        setWidgets(initial);
-        saveLayout(statusListWidget.id, statusListWidget.defaultLayout);
-    }, [widgets, setWidgets, saveLayout, rememberedApiBaseUrl]);
 
     const dashboardWidgets = widgets ?? DEFAULT_APIS;
     const isAdmin =

@@ -281,8 +281,15 @@ export const useDashboardStore = create((set) => ({
      * Called after login / session restore. If the server has no record,
      * uploads the current (localStorage-seeded) state so the user's first
      * login from another device sees the same layout.
+     *
+     * @param {(() => { widgets: any[], layouts: Record<string, any> }) | null} buildDefaults
+     *   Optional callback that returns the default widget set + layout map to
+     *   seed when the store has no widgets AND the server has no record.
+     *   Keeps UI-specific knowledge out of the store while still allowing the
+     *   seeding to happen inside the sync window (preventing the local-wins
+     *   race that would otherwise overwrite BE prefs with empty defaults).
      */
-    syncPreferencesFromServer: async () => {
+    syncPreferencesFromServer: async (buildDefaults = null) => {
         _syncInFlight = true;
         _dirtyDuringSync = false;
         try {
@@ -337,7 +344,21 @@ export const useDashboardStore = create((set) => ({
                 }
                 return { source: "server" };
             }
-            // First login on this user — seed the server from localStorage.
+            // First login on this user (no server record).
+            // If the store also has no widgets (new PC, empty localStorage) and
+            // the caller provided a default factory, seed the defaults here —
+            // INSIDE the sync window so it does NOT flip _dirtyDuringSync and
+            // cannot trigger the local-wins branch.
+            if (buildDefaults !== null) {
+                const currentWidgets = useDashboardStore.getState().widgets;
+                if (currentWidgets === null || currentWidgets.length === 0) {
+                    const { widgets: defaultWidgets, layouts: defaultLayouts } =
+                        buildDefaults();
+                    writeJson(STORAGE_KEYS.WIDGETS, defaultWidgets);
+                    writeJson(STORAGE_KEYS.LAYOUTS, defaultLayouts);
+                    set({ widgets: defaultWidgets, layouts: defaultLayouts });
+                }
+            }
             setServerSyncEnabled(true);
             queueServerPush();
             return { source: "seeded" };
