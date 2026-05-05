@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import perf_counter
@@ -108,16 +108,33 @@ class MonitorCollectorManager:
                 executor.submit(self._collect_target, target, "startup"): target["id"]
                 for target in enabled_targets
             }
-            for future in futures:
-                try:
-                    future.result(timeout=60)
-                except Exception as exc:
+            # as_completed: 완료된 future 부터 즉시 처리 → wall time = max(개별) + overhead
+            # (기존 for future in futures: 는 dict 삽입 순서대로 순차 대기 → worst N×60s)
+            overall_timeout = max(120, len(futures) * 5)
+            completed = 0
+            try:
+                for future in as_completed(futures, timeout=overall_timeout):
                     target_id = futures[future]
-                    self._logger.error(
-                        "Initial monitor collection failed targetId=%s: %s",
-                        target_id, exc,
-                    )
-            self._logger.info("Initial monitor collection completed.")
+                    try:
+                        future.result()
+                        completed += 1
+                    except Exception as exc:
+                        completed += 1
+                        self._logger.error(
+                            "Initial monitor collection failed targetId=%s: %s",
+                            target_id, exc,
+                        )
+            except FutureTimeoutError:
+                pending = len(futures) - completed
+                self._logger.warning(
+                    "Initial monitor collection overall timeout after %.0fs — "
+                    "%d/%d completed, %d skipped. Boot continues.",
+                    overall_timeout, completed, len(futures), pending,
+                )
+            self._logger.info(
+                "Initial monitor collection completed (%d/%d targets).",
+                completed, len(futures),
+            )
 
         for target in enabled_targets:
             thread = threading.Thread(

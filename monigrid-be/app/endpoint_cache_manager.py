@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Callable
@@ -95,15 +95,32 @@ class EndpointCacheManager:
                 ): ep.api_id
                 for ep in enabled_endpoints
             }
-            for future in futures:
-                try:
-                    future.result(timeout=60)
-                except Exception as exc:
+            # as_completed: 완료된 future 부터 즉시 처리 → wall time = max(개별) + overhead
+            # (기존 for future in futures: 는 dict 삽입 순서대로 순차 대기 → worst N×60s)
+            overall_timeout = max(120, len(futures) * 5)
+            completed = 0
+            try:
+                for future in as_completed(futures, timeout=overall_timeout):
                     api_id = futures[future]
-                    self._logger.error(
-                        "Initial cache warm-up failed apiId=%s: %s", api_id, exc,
-                    )
-            self._logger.info("Initial cache warm-up completed.")
+                    try:
+                        future.result()
+                        completed += 1
+                    except Exception as exc:
+                        completed += 1
+                        self._logger.error(
+                            "Initial cache warm-up failed apiId=%s: %s", api_id, exc,
+                        )
+            except FutureTimeoutError:
+                pending = len(futures) - completed
+                self._logger.warning(
+                    "Initial cache warm-up overall timeout after %.0fs — "
+                    "%d/%d completed, %d skipped. Boot continues.",
+                    overall_timeout, completed, len(futures), pending,
+                )
+            self._logger.info(
+                "Initial cache warm-up completed (%d/%d endpoints).",
+                completed, len(futures),
+            )
 
         for endpoint in enabled_endpoints:
             thread = threading.Thread(
