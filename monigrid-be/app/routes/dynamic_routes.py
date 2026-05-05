@@ -65,8 +65,9 @@ def register(app, backend, limiter) -> None:
             }), 404
         except QueryExecutionTimeoutError as exc:
             return jsonify({
-                "error": "query_timeout",
                 "message": str(exc),
+                "apiId": exc.api_id,
+                "detail": f"timeoutSec={exc.timeout_sec}",
             }), 504
         except CachedEndpointError as error:
             return jsonify({

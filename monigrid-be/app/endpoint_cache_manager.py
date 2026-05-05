@@ -31,6 +31,11 @@ from .exceptions import CachedEndpointError, QueryExecutionTimeoutError
 QueryRunner = Callable[[ApiEndpointConfig, str], Any]
 ConnectionResetter = Callable[[str], None]
 
+# Owner thread 의 JDBC timeout 이후 set_result/set_exception 완료까지
+# 허용하는 추가 대기 시간. JDBC FutureTimeoutError → connection discard →
+# refresh_endpoint_cache 의 cleanup 완료까지의 owner-side overhead 를 커버.
+_COALESCE_OWNER_OVERHEAD_SEC: float = 5.0
+
 
 class EndpointCacheManager:
     """Caches endpoint query results and refreshes them on a schedule."""
@@ -367,7 +372,7 @@ class EndpointCacheManager:
                     "Cache MISS coalesced apiId=%s — waiting on in-flight refresh clientIp=%s",
                     api_id, client_ip,
                 )
-            waiter_timeout = endpoint.query_timeout_sec + 5
+            waiter_timeout = endpoint.query_timeout_sec + _COALESCE_OWNER_OVERHEAD_SEC
             try:
                 refreshed_entry = fut.result(timeout=waiter_timeout)
             except FutureTimeoutError:
