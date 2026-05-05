@@ -30,6 +30,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -980,6 +981,301 @@ class SettingsStore:
             except Exception:
                 pass
         self._conn.commit()
+
+    # ── batch monitor target write ────────────────────────────────────────
+    #
+    # Helpers (no @_sync — called from an already-locked context):
+
+    _MONITOR_TARGET_COLS = frozenset(
+        {"id", "type", "label", "spec", "interval_sec", "enabled"}
+    )
+
+    def _prepare_monitor_target_fields(
+        self, item: dict[str, Any], target_id: str
+    ) -> tuple[str, str | None, str, int, int]:
+        """Validate + normalise a monitor-target payload.
+
+        Returns (target_type, label, spec_json, interval_sec, enabled_int).
+        Raises ValueError on invalid input.
+        """
+        target_type = str(item.get("type") or "").strip().lower()
+        if target_type not in self._MONITOR_TARGET_TYPES:
+            raise ValueError(
+                f"monitor target type must be one of {self._MONITOR_TARGET_TYPES}, "
+                f"got {target_type!r}"
+            )
+        spec = item.get("spec")
+        if not isinstance(spec, dict):
+            raise ValueError("monitor target spec must be an object")
+        if target_type == "server_resource":
+            spec = {
+                **spec,
+                "criteria": self._normalize_server_resource_criteria(
+                    spec.get("criteria"),
+                ),
+            }
+        label = str(item.get("label") or "").strip() or None
+        interval_sec = max(1, int(item.get("interval_sec") or 30))
+        enabled = 1 if item.get("enabled", True) else 0
+        spec_json = json.dumps(spec, ensure_ascii=False)
+        return target_type, label, spec_json, interval_sec, enabled
+
+    def _fetch_monitor_target_no_commit(self, target_id: str) -> dict[str, Any] | None:
+        """SELECT a single monitor target row (no commit, caller holds lock)."""
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT id, type, label, spec, interval_sec, enabled "
+                "FROM monigrid_monitor_targets WHERE id = ?",
+                [target_id],
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return _row_to_monitor_target(row) if row else None
+
+    def _insert_monitor_target_no_commit(self, item: dict[str, Any]) -> dict[str, Any]:
+        """INSERT a new monitor-target row; generate a fresh UUID for the id.
+
+        Does NOT commit.  Returns the inserted row dict (with generated id).
+        Raises ValueError on invalid payload.
+        """
+        # Strip FE-only internal fields (e.g. _isNew, _isDeleted, _clientId).
+        clean = {k: v for k, v in item.items() if not k.startswith("_")}
+
+        new_id = str(uuid.uuid4())
+        target_type, label, spec_json, interval_sec, enabled = (
+            self._prepare_monitor_target_fields(clean, new_id)
+        )
+
+        self._upsert(
+            table="monigrid_monitor_targets",
+            key_col="id",
+            key_value=new_id,
+            values={
+                "type": target_type,
+                "label": label,
+                "spec": spec_json,
+                "interval_sec": interval_sec,
+                "enabled": enabled,
+            },
+            also_set_updated_at=True,
+        )
+        stored = self._fetch_monitor_target_no_commit(new_id)
+        assert stored is not None
+        return stored
+
+    def _update_monitor_target_no_commit(
+        self, target_id: str, item: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """UPDATE an existing monitor-target row.
+
+        Does NOT commit.  Returns the updated row dict, or None if the row
+        did not exist (rowcount == 0 after upsert — treated as not-found).
+        Raises ValueError on invalid payload.
+        """
+        # Strip FE-only internal fields.
+        clean = {k: v for k, v in item.items() if not k.startswith("_")}
+
+        target_type, label, spec_json, interval_sec, enabled = (
+            self._prepare_monitor_target_fields(clean, target_id)
+        )
+
+        # Use a plain UPDATE so we get an accurate "not found" signal via
+        # rowcount, rather than silently inserting via the upsert helper.
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "UPDATE monigrid_monitor_targets "
+                "SET type = ?, label = ?, spec = ?, interval_sec = ?, enabled = ? "
+                "WHERE id = ?",
+                [target_type, label, spec_json, interval_sec, enabled, target_id],
+            )
+            rowcount = cur.rowcount if cur.rowcount is not None else -1
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+        if rowcount == 0:
+            return None
+        return self._fetch_monitor_target_no_commit(target_id)
+
+    def _delete_monitor_target_no_commit(self, target_id: str) -> int:
+        """DELETE a monitor-target row.  Does NOT commit.  Returns rowcount."""
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "DELETE FROM monigrid_monitor_targets WHERE id = ?",
+                [target_id],
+            )
+            rowcount = cur.rowcount if cur.rowcount is not None else -1
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return rowcount
+
+    @_sync
+    def apply_monitor_targets_batch(
+        self,
+        *,
+        creates: list[dict],
+        updates: list[dict],
+        deletes: list[str],
+    ) -> dict:
+        """Atomic batch CRUD on monigrid_monitor_targets.
+
+        Applies creates → updates → deletes in a single transaction.
+        On any failure the whole transaction is rolled back and a structured
+        error dict is returned.  On full success the transaction is committed.
+
+        Returns on success:
+            {"success": True, "results": {"created": [...], "updated": [...], "deleted": [...]}}
+
+        Returns on failure (after rollback):
+            {"success": False, "error": str, "failedItem": {"kind": ..., "index": ...,
+             "id": ..., "message": ...}}
+        """
+        # ── pre-validation: reject ID overlap between updates and deletes ──
+        update_ids = {str(u.get("id") or "").strip() for u in updates if u.get("id")}
+        delete_set = {str(d).strip() for d in deletes if str(d).strip()}
+        overlap = update_ids & delete_set
+        if overlap:
+            overlap_id = next(iter(overlap))
+            return {
+                "success": False,
+                "error": f"id {overlap_id!r} appears in both updates and deletes",
+                "failedItem": {
+                    "kind": "delete",
+                    "index": next(
+                        i for i, d in enumerate(deletes) if str(d).strip() == overlap_id
+                    ),
+                    "id": overlap_id,
+                    "message": f"id {overlap_id!r} cannot be updated and deleted in the same batch",
+                },
+            }
+
+        created_rows: list[dict] = []
+        updated_rows: list[dict] = []
+        deleted_ids: list[str] = []
+
+        try:
+            # ── creates ───────────────────────────────────────────────────
+            for idx, item in enumerate(creates):
+                try:
+                    row = self._insert_monitor_target_no_commit(item)
+                    created_rows.append(row)
+                except Exception as exc:
+                    self._conn.rollback()
+                    msg = str(exc)
+                    self._logger.warning(
+                        "apply_monitor_targets_batch: create[%d] failed — rolled back: %s",
+                        idx, msg,
+                    )
+                    return {
+                        "success": False,
+                        "error": msg,
+                        "failedItem": {
+                            "kind": "create",
+                            "index": idx,
+                            "id": None,
+                            "message": msg,
+                        },
+                    }
+
+            # ── updates ───────────────────────────────────────────────────
+            for idx, item in enumerate(updates):
+                target_id = str(item.get("id") or "").strip()
+                try:
+                    row = self._update_monitor_target_no_commit(target_id, item)
+                    if row is None:
+                        raise ValueError(
+                            f"monitor target id={target_id!r} not found"
+                        )
+                    updated_rows.append(row)
+                except Exception as exc:
+                    self._conn.rollback()
+                    msg = str(exc)
+                    self._logger.warning(
+                        "apply_monitor_targets_batch: update[%d] id=%s failed — rolled back: %s",
+                        idx, target_id, msg,
+                    )
+                    return {
+                        "success": False,
+                        "error": msg,
+                        "failedItem": {
+                            "kind": "update",
+                            "index": idx,
+                            "id": target_id or None,
+                            "message": msg,
+                        },
+                    }
+
+            # ── deletes ───────────────────────────────────────────────────
+            for idx, raw_id in enumerate(deletes):
+                target_id = str(raw_id).strip()
+                try:
+                    self._delete_monitor_target_no_commit(target_id)
+                    deleted_ids.append(target_id)
+                except Exception as exc:
+                    self._conn.rollback()
+                    msg = str(exc)
+                    self._logger.warning(
+                        "apply_monitor_targets_batch: delete[%d] id=%s failed — rolled back: %s",
+                        idx, target_id, msg,
+                    )
+                    return {
+                        "success": False,
+                        "error": msg,
+                        "failedItem": {
+                            "kind": "delete",
+                            "index": idx,
+                            "id": target_id or None,
+                            "message": msg,
+                        },
+                    }
+
+            # ── all ops succeeded — commit ─────────────────────────────
+            self._conn.commit()
+            self._logger.info(
+                "apply_monitor_targets_batch: committed creates=%d updates=%d deletes=%d",
+                len(created_rows), len(updated_rows), len(deleted_ids),
+            )
+            return {
+                "success": True,
+                "results": {
+                    "created": created_rows,
+                    "updated": updated_rows,
+                    "deleted": deleted_ids,
+                },
+            }
+
+        except Exception as exc:
+            # Catch-all for unexpected errors (e.g. connection loss mid-batch).
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            msg = str(exc)
+            self._logger.error(
+                "apply_monitor_targets_batch: unexpected error — rolled back: %s", msg,
+            )
+            return {
+                "success": False,
+                "error": msg,
+                "failedItem": {
+                    "kind": "create",
+                    "index": 0,
+                    "id": None,
+                    "message": msg,
+                },
+            }
 
     # ── user preferences (per-user UI state) ─────────────────────────────
     #
