@@ -28,7 +28,7 @@ def _clamp(value, lo, hi):
 
 
 def _normalise_count(value: Any) -> int:
-    return _clamp(int(value if value is not None else 4), 1, 10)
+    return _clamp(int(value if value is not None else 4), 1, MAX_PING_COUNT)
 
 
 def _normalise_timeout(value: Any) -> float:
@@ -106,6 +106,9 @@ def run_ping_test(host: str, count: int, timeout: float) -> dict[str, Any]:
     )
     started = _time.monotonic()
     try:
+        # safe_wall 은 OS 레벨 hard kill. ping 의 per-packet -W 는 일부러 변경하지
+        # 않음 — 정상 도달 가능 host 의 측정 의미를 보존하고, wall ceiling 으로만
+        # 악성/오용 케이스를 차단.
         result = subprocess.run(
             ping_cmd, capture_output=True, text=True, timeout=safe_wall,
         )
