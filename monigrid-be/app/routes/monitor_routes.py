@@ -121,6 +121,59 @@ def register(app, backend, limiter) -> None:
             return jsonify({"message": "monitor target not found"}), 404
         return jsonify(snapshot_to_dict(snapshot)), 200
 
+    @app.route("/dashboard/monitor-targets/batch", methods=["POST"])
+    @require_auth
+    @limiter.limit(rl.monitor_targets_batch)
+    @require_admin
+    def apply_monitor_targets_batch_route():
+        body = request.get_json(silent=True) or {}
+        creates = body.get("creates") or []
+        updates = body.get("updates") or []
+        deletes = body.get("deletes") or []
+
+        if not isinstance(creates, list) or not isinstance(updates, list) or not isinstance(deletes, list):
+            return jsonify({
+                "success": False,
+                "error": "creates, updates, deletes must be arrays",
+                "failedItem": {"kind": "unknown", "index": -1, "id": None, "message": "invalid request shape"},
+            }), 400
+
+        # Empty batch → no-op (don't trigger reload for nothing)
+        if not creates and not updates and not deletes:
+            return jsonify({
+                "success": True,
+                "results": {"created": [], "updated": [], "deleted": []},
+                "reloadTriggered": False,
+            }), 200
+
+        try:
+            result = backend.apply_monitor_targets_batch(
+                creates=creates, updates=updates, deletes=deletes,
+            )
+        except Exception as exc:
+            backend.logger.exception(
+                "Monitor targets batch failed clientIp=%s", get_client_ip(),
+            )
+            return jsonify({
+                "success": False,
+                "error": "internal error",
+                "failedItem": {"kind": "unknown", "index": -1, "id": None, "message": str(exc)},
+            }), 500
+
+        if result.get("success"):
+            result["reloadTriggered"] = True
+            backend.logger.info(
+                "Monitor targets batch applied creates=%d updates=%d deletes=%d clientIp=%s",
+                len(creates), len(updates), len(deletes), get_client_ip(),
+            )
+            return jsonify(result), 200
+        else:
+            backend.logger.warning(
+                "Monitor targets batch rejected error=%s clientIp=%s",
+                result.get("error"), get_client_ip(),
+            )
+            return jsonify(result), 400
+
 
 def _mask_spec(target: dict) -> dict:
     from app.monitor_collector_manager import _redact_spec
