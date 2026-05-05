@@ -865,7 +865,7 @@ GET /logs?start_date=2026-04-16&end_date=2026-04-16&max_lines=1000
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `VITE_APP_VERSION` | `2.0.0` | 프론트엔드 버전 (푸터 표시) |
+| `VITE_APP_VERSION` | `2.0.0` | (deprecated) 빌드 시점 식별자. 푸터 버전 표시는 이제 monigrid_settings_kv 의 `version` 키로 통합됨 (#8) |
 | `VITE_COMPANY_NAME` | `Monitoring Dashboard` | 푸터 저작권 회사명 |
 | `VITE_DEBUG` | `false` | 디버그 모드 |
 

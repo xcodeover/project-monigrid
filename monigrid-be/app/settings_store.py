@@ -593,6 +593,17 @@ class SettingsStore:
             if scalar in config_dict:
                 self._upsert_kv(scalar, json.dumps(config_dict[scalar], ensure_ascii=False))
 
+    @_sync
+    def set_kv_scalar(self, key: str, value: Any) -> None:
+        """Persist a single KV scalar (value JSON-serialised). Allowed keys
+        are those declared in ``_KV_SCALARS`` — explicit allow-list to
+        prevent accidental writes to other rows.
+        """
+        if key not in self._KV_SCALARS:
+            raise ValueError(f"unknown KV scalar key: {key!r}")
+        self._upsert_kv(key, json.dumps(value, ensure_ascii=False))
+        self._conn.commit()
+
     def _upsert_kv(self, section: str, value_json: str) -> None:
         self._upsert(
             table="monigrid_settings_kv",

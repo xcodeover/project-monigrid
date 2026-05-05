@@ -60,7 +60,7 @@ def register(app, backend, limiter) -> None:
             return jsonify({"message": "title must be 200 characters or fewer"}), 400
 
         # Persist to KV store
-        backend.settings_store._upsert_kv("dashboard_title", json.dumps(title))
+        backend.settings_store.set_kv_scalar("dashboard_title", title)
 
         # Update in-memory config (frozen dataclass → use dataclasses.replace)
         backend.config = dataclasses.replace(backend.config, dashboard_title=title)
