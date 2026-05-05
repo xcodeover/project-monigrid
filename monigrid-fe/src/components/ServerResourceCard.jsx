@@ -346,7 +346,7 @@ const ServerResourceCard = ({
                 return next;
             });
         }
-    }, [useSnapshot, targetIds, widgetConfig]);
+    }, [useSnapshot, targetIds]);
 
     // stable key for detecting server list changes.
     // snapshot mode: tracks the target id set.
