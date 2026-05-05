@@ -301,7 +301,7 @@ dist\
 - [ ] `config.json` 내 `auth.username`, `auth.password`를 실제 운영 계정으로 변경
 - [ ] `drivers/` 에 연결할 DB 종류에 맞는 JDBC JAR가 있는지 확인
 - [ ] 방화벽에서 백엔드 포트 (기본 5000) 허용
-- [ ] (선택) `.env` 파일로 `JWT_SECRET_KEY` 등 보안 설정 오버라이드
+- [ ] **(필수)** `.env` 파일로 `JWT_SECRET_KEY` 설정 — 기본값(`default-secret-key`) 사용 시 운영 환경에서 서버가 시작되지 않음
 
 ### 6.4 EXE 직접 실행
 
@@ -848,7 +848,7 @@ curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
 | `AUTH_USERNAME` | 로그인 계정 오버라이드 | config.json 값 |
 | `AUTH_PASSWORD` | 로그인 비밀번호 오버라이드 | config.json 값 |
 | `ADMIN_USERNAME` | 관리자 판별 사용자명 | `admin` |
-| `JWT_SECRET_KEY` | JWT 서명 키 (운영 시 반드시 변경) | `default-secret-key` |
+| `JWT_SECRET_KEY` | JWT 서명 키 — **운영 필수 설정**. 기본값 그대로 사용 시 `FLASK_ENV != development` 환경에서 RuntimeError로 부팅 실패 | `default-secret-key` |
 | `JWT_ALGORITHM` | JWT 알고리즘 | `HS256` |
 | `JWT_EXPIRATION_HOURS` | JWT 만료 시간 (시간) | `24` |
 | `LOG_LEVEL` | 로그 레벨 | `INFO` |
@@ -865,7 +865,7 @@ curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
 
 ### 보안 권장 사항
 
-운영 환경에서는 반드시 다음 환경변수를 변경하세요:
+운영 환경에서는 반드시 다음 환경변수를 설정하세요. `JWT_SECRET_KEY`는 기본값 사용 시 서버가 시작되지 않습니다:
 
 ```env
 JWT_SECRET_KEY=your-very-long-random-secret-key-here
