@@ -168,6 +168,14 @@ const WidgetRendererInner = ({
         (cfg, key) => onUpdateWidget(widgetId, { [key]: cfg }),
         [onUpdateWidget, widgetId],
     );
+    const handleServerConfigChange = useCallback(
+        (cfg) => handleWidgetConfigChange(cfg, "serverConfig"),
+        [handleWidgetConfigChange],
+    );
+    const handleNetworkConfigChange = useCallback(
+        (cfg) => handleWidgetConfigChange(cfg, "networkConfig"),
+        [handleWidgetConfigChange],
+    );
 
     const sizeBounds = {
         minW: currentLayout?.minW ?? MIN_WIDGET_W,
@@ -255,9 +263,7 @@ const WidgetRendererInner = ({
                 refreshIntervalSec={widget.refreshIntervalSec ?? 30}
                 onRefreshIntervalChange={handleRefreshIntervalChange}
                 onWidgetMetaChange={handleWidgetMetaChange}
-                onWidgetConfigChange={(cfg) =>
-                    handleWidgetConfigChange(cfg, "serverConfig")
-                }
+                onWidgetConfigChange={handleServerConfigChange}
                 onAlarmChange={handleAlarmChange}
                 onSizeChange={handleSizeChange}
             />
@@ -275,9 +281,7 @@ const WidgetRendererInner = ({
                 refreshIntervalSec={widget.refreshIntervalSec ?? 10}
                 onRefreshIntervalChange={handleRefreshIntervalChange}
                 onWidgetMetaChange={handleWidgetMetaChange}
-                onWidgetConfigChange={(cfg) =>
-                    handleWidgetConfigChange(cfg, "networkConfig")
-                }
+                onWidgetConfigChange={handleNetworkConfigChange}
                 onAlarmChange={handleAlarmChange}
                 onSizeChange={handleSizeChange}
             />
