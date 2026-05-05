@@ -123,7 +123,7 @@ class LogReader:
                 # Date rotate — new file, start from beginning
                 seek_offset = 0
                 prev_line_count = 0
-                self._logger.debug(
+                self._logger.info(
                     "log_reader: date rotate detected (%s → %s), resetting offset",
                     prev_file, active_filename,
                 )
@@ -138,7 +138,7 @@ class LogReader:
                     # Truncation / inode change — reset
                     seek_offset = 0
                     prev_line_count = 0
-                    self._logger.debug(
+                    self._logger.info(
                         "log_reader: truncation detected (offset %d > size %d), resetting",
                         prev_offset, current_size,
                     )
@@ -166,16 +166,23 @@ class LogReader:
                     for line in f:
                         new_line_count += 1
                         tail.append(line.rstrip("\n"))
+                    # NOTE: f.tell()은 for 루프가 이터레이터를 완전히 소진한 후에만 안전합니다.
+                    # 루프 중간에 break를 추가하면 텍스트 모드에서 OSError가 발생합니다.
                     end_offset = f.tell()
                     lines = list(tail)
                 else:
                     # Subsequent calls (or seek_offset set from prev_follow):
                     # read only newly appended bytes.
+                    # 메모리 보호: 폴 사이에 대량의 로그가 쌓여도 max_lines 이상 메모리를 차지하지 않음.
                     f.seek(seek_offset)
+                    tail_buf: deque[str] = deque(maxlen=max_lines)
                     for line in f:
                         new_line_count += 1
-                        lines.append(line.rstrip("\n"))
+                        tail_buf.append(line.rstrip("\n"))
+                    # NOTE: f.tell()은 for 루프가 이터레이터를 완전히 소진한 후에만 안전합니다.
+                    # 루프 중간에 break를 추가하면 텍스트 모드에서 OSError가 발생합니다.
                     end_offset = f.tell()
+                    lines = list(tail_buf)
 
         except Exception as error:
             self._logger.error("Failed to read log file '%s': %s", log_file, error)
@@ -186,11 +193,11 @@ class LogReader:
             return [], next_cursor, date_key, date_key
 
         cumulative_lines = prev_line_count + new_line_count
-        trimmed = lines[-max_lines:] if len(lines) > max_lines else lines
+        # lines는 deque(maxlen=max_lines)로 이미 max_lines 이하임 — 별도 trim 불필요.
         next_cursor = encode_log_cursor(
             {"__follow__": {"file": active_filename, "offset": end_offset, "line": cumulative_lines}}
         )
-        return trimmed, next_cursor, date_key, date_key
+        return lines, next_cursor, date_key, date_key
 
     # ── history mode (line-count cursor, unchanged) ──────────────────────────
 
@@ -230,7 +237,7 @@ class LogReader:
                     # stays bounded by max_lines regardless of file size.
                     total = 0
                     tail: deque[str] = deque(maxlen=max_lines)
-                    with open(log_file, "r", encoding="utf-8") as f:
+                    with open(log_file, "r", encoding="utf-8", errors="replace") as f:
                         for line in f:
                             total += 1
                             tail.append(line.rstrip("\n"))
