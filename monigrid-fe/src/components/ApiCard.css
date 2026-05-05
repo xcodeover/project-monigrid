@@ -10,6 +10,11 @@
     backdrop-filter: var(--card-blur);
 }
 
+.api-card:focus,
+.api-card:focus-visible {
+    outline: none;
+}
+
 .api-card-header {
     background: var(--card-header-bg);
     padding: 12px 14px 10px;

@@ -236,6 +236,7 @@ const ApiCard = ({
 
     const columnWidths = tableSettings?.columnWidths ?? {};
     const [localColumnWidths, setLocalColumnWidths] = useState(columnWidths);
+    const cardRef = useRef(null);
     const columnWidthTimerRef = useRef(null);
 
     // Sync local widths when external tableSettings change (e.g., from store load)
@@ -481,7 +482,7 @@ const ApiCard = ({
     }, [selectedRow, dataRows]);
 
     return (
-        <div className='api-card' tabIndex={0} onKeyDown={handleKeyDown}>
+        <div ref={cardRef} className='api-card' tabIndex={-1} onKeyDown={handleKeyDown}>
             <div className='api-card-header'>
                 <div className='api-card-title-section'>
                     <div className='api-card-title-row'>
@@ -614,7 +615,10 @@ const ApiCard = ({
                     error={error}
                     maxRows={20}
                     showHeader={false}
-                    onRowClick={(row) => setClipboardRow(row)}
+                    onRowClick={(row) => {
+                        setClipboardRow(row);
+                        cardRef.current?.focus();
+                    }}
                     onRowDoubleClick={(row) => setSelectedRow(row)}
                 />
             </div>
