@@ -9,7 +9,7 @@ import {
     rememberApiBaseUrl,
     resolveEndpointWithBase,
 } from "../services/api";
-import { monitorService } from "../services/dashboardService";
+import { monitorService, titleService } from "../services/dashboardService";
 import { API_BASE_URL as BUILDTIME_API_BASE_URL } from "../services/http";
 import {
     countRowsMatchingCriteria,
@@ -59,6 +59,9 @@ const ResponsiveGridLayout = WidthProvider(Responsive);
 const COMPANY_NAME =
     import.meta.env.VITE_COMPANY_NAME || "Monitoring Dashboard";
 const CURRENT_YEAR = new Date().getFullYear();
+// Build-time title fallback — used when no KV override is set by admin.
+// LoginPage intentionally keeps its own copy (unauthenticated, no KV access).
+const APP_TITLE = import.meta.env.VITE_APP_TITLE || "Monitoring Dashboard";
 // 빌드 시점 기본 URL 해석은 services/http.js에 일원화되어 있다.
 // (VITE_API_URL이 명시적 빈 문자열이면 same-origin 모드 → window.location.origin)
 // localStorage에 저장된 값이 있으면 그것을 우선한다.
@@ -125,6 +128,8 @@ const DashboardPage = () => {
     const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(rememberedApiBaseUrl);
     const [apiBaseUrlSaved, setApiBaseUrlSaved] = useState(false);
     const [backendVersion, setBackendVersion] = useState(null);
+    const [dashboardTitle, setDashboardTitle] = useState("");
+    const [dashboardTitleDraft, setDashboardTitleDraft] = useState("");
     const [isFullscreen, setIsFullscreen] = useState(
         () => typeof document !== "undefined" && !!document.fullscreenElement,
     );
@@ -184,7 +189,12 @@ const DashboardPage = () => {
                 // (public liveness probe). The latter intentionally no
                 // longer leaks the deployed build version.
                 const res = await dashboardService.getApiData(null, "/dashboard/health");
-                if (!cancelled && res?.version) setBackendVersion(res.version);
+                if (cancelled) return;
+                if (res?.version) setBackendVersion(res.version);
+                // dashboardTitle: empty string → FE falls back to APP_TITLE
+                const kvTitle = res?.dashboardTitle ?? "";
+                setDashboardTitle(kvTitle);
+                setDashboardTitleDraft(kvTitle);
             } catch {
                 /* ignore */
             }
@@ -194,6 +204,11 @@ const DashboardPage = () => {
             cancelled = true;
         };
     }, []);
+
+    // Sync browser tab title whenever the KV-driven title changes
+    useEffect(() => {
+        document.title = dashboardTitle || APP_TITLE;
+    }, [dashboardTitle]);
 
     useEffect(() => {
         setFontSizeDraft(
@@ -662,6 +677,17 @@ const DashboardPage = () => {
         setApiBaseUrlSaved(false);
     };
 
+    const handleApplyDashboardTitle = async (newTitle) => {
+        const trimmed = String(newTitle ?? "").trim();
+        try {
+            await titleService.setDashboardTitle(trimmed);
+            setDashboardTitle(trimmed);
+            setDashboardTitleDraft(trimmed);
+        } catch (err) {
+            console.error("대시보드 타이틀 저장 실패", err);
+        }
+    };
+
     const widgetFontSize =
         dashboardSettings?.widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE;
 
@@ -672,6 +698,7 @@ const DashboardPage = () => {
                 user={user}
                 isAdmin={isAdmin}
                 isFullscreen={isFullscreen}
+                dashboardTitle={dashboardTitle}
                 onToggleFullscreen={handleToggleFullscreen}
                 onOpenSettings={() => setShowDashboardSettings(true)}
                 onOpenConfigEditor={() => setShowConfigPasswordPrompt(true)}
@@ -714,6 +741,10 @@ const DashboardPage = () => {
                     configErrorMessage={configErrorMessage}
                     onExportConfig={handleExportConfig}
                     onImportConfigFromText={handleImportConfigFromText}
+                    isAdmin={isAdmin}
+                    dashboardTitleDraft={dashboardTitleDraft}
+                    onDashboardTitleDraftChange={setDashboardTitleDraft}
+                    onApplyDashboardTitle={handleApplyDashboardTitle}
                 />
             )}
 

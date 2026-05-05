@@ -20,12 +20,19 @@ const APP_TITLE = import.meta.env.VITE_APP_TITLE || "Monitoring Dashboard";
  *
  * Pure presentational — receives the widget count, the resolved user,
  * and a set of toolbar callbacks. Owns no state.
+ *
+ * `dashboardTitle` is the KV-persisted override set by admin via the settings
+ * modal. Falls back to the build-time `APP_TITLE` (VITE_APP_TITLE env var →
+ * "Monitoring Dashboard") when empty or not yet loaded.
+ * Note: LoginPage intentionally keeps its own build-time title — unauthenticated
+ * users cannot access the authenticated /dashboard/health endpoint.
  */
 const DashboardHeader = ({
     widgetCount,
     user,
     isAdmin,
     isFullscreen,
+    dashboardTitle,
     onToggleFullscreen,
     onOpenSettings,
     onOpenConfigEditor,
@@ -36,6 +43,7 @@ const DashboardHeader = ({
     onOpenLogs,
     onLogout,
 }) => {
+    const resolvedTitle = dashboardTitle || APP_TITLE;
     return (
         <header
             className={`dashboard-header${isFullscreen ? " dashboard-header-compact" : ""}`}
@@ -43,7 +51,7 @@ const DashboardHeader = ({
             <div className='header-left'>
                 <h1 className='app-title'>
                     <AppLogo size={34} className='app-title-logo' />
-                    <span className='app-title-text'>{APP_TITLE}</span>
+                    <span className='app-title-text'>{resolvedTitle}</span>
                 </h1>
                 <div className='header-subtitle-row'>
                     <p>Real-time Application Status &amp; Alerts</p>

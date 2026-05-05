@@ -580,6 +580,7 @@ class SettingsStore:
     _KV_SCALARS = (
         "version",
         "global_jdbc_jars",
+        "dashboard_title",
     )
 
     @_sync

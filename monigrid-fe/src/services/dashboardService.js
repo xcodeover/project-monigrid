@@ -308,6 +308,19 @@ export const cacheService = {
     },
 };
 
+// ── Dashboard title (admin write, authenticated read via /dashboard/health) ───
+
+export const titleService = {
+    /**
+     * Admin-only: persist a new dashboard display title to the KV store.
+     * An empty string resets the title so the FE falls back to VITE_APP_TITLE.
+     */
+    setDashboardTitle: async (title) => {
+        const response = await apiClient.put("/dashboard/settings/title", { title });
+        return response.data;
+    },
+};
+
 // ── Backend config management (admin only) ───────────────────────────────────
 
 export const configService = {
@@ -473,6 +486,7 @@ const dashboardService = {
     ...logService,
     refreshEndpointCache: cacheService.refreshEndpointCache,
     ...configService,
+    ...titleService,
 };
 
 export default dashboardService;

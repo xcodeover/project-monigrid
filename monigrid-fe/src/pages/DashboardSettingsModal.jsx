@@ -26,6 +26,10 @@ const DashboardSettingsModal = ({
     configErrorMessage,
     onExportConfig,
     onImportConfigFromText,
+    isAdmin,
+    dashboardTitleDraft,
+    onDashboardTitleDraftChange,
+    onApplyDashboardTitle,
 }) => {
     return (
         <div className='modal-overlay'>
@@ -118,6 +122,35 @@ const DashboardSettingsModal = ({
                             </button>
                         </div>
                     </div>
+
+                    {isAdmin && (
+                        <div className='form-group'>
+                            <label htmlFor='dashboard-title-input'>
+                                대시보드 타이틀
+                            </label>
+                            <div className='inline-input-group'>
+                                <input
+                                    id='dashboard-title-input'
+                                    type='text'
+                                    value={dashboardTitleDraft ?? ""}
+                                    onChange={(e) =>
+                                        onDashboardTitleDraftChange(e.target.value)
+                                    }
+                                    placeholder='Monitoring Dashboard'
+                                    maxLength={200}
+                                    style={{ flex: 1 }}
+                                />
+                                <button
+                                    className='secondary-btn'
+                                    onClick={() =>
+                                        onApplyDashboardTitle(dashboardTitleDraft)
+                                    }
+                                >
+                                    저장
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
                     <div className='form-group'>
                         <label htmlFor='config-file-upload'>

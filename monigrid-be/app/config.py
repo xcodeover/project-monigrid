@@ -82,6 +82,7 @@ _DEFAULT_RATE_LIMITS = RateLimitConfig(
 @dataclass(frozen=True)
 class AppConfig:
     version: str
+    dashboard_title: str
     host: str
     port: int
     thread_pool_size: int
@@ -282,8 +283,12 @@ def build_app_config(raw: dict[str, Any], base_dir: str) -> AppConfig:
     # NOT display as "0.0.0" in the frontend footer.
     config_version = str(raw.get("version") or "").strip() or _BUILD_VERSION
 
+    # dashboard_title: empty string → FE falls back to VITE_APP_TITLE
+    dashboard_title = str(raw.get("dashboard_title") or "").strip()
+
     return AppConfig(
         version=config_version,
+        dashboard_title=dashboard_title,
         host=str(server.get("host", "0.0.0.0")),
         port=int(server.get("port", 5000)),
         thread_pool_size=max(1, int(server.get("thread_pool_size", 8))),
