@@ -14,6 +14,7 @@ from app.utils import get_client_ip
 
 
 def register(app, backend, limiter) -> None:
+    rl = backend.config.rate_limits
 
     @app.route("/dashboard/monitor-targets", methods=["GET"])
     @require_auth
@@ -110,6 +111,7 @@ def register(app, backend, limiter) -> None:
     @app.route("/dashboard/monitor-snapshot/<target_id>/refresh", methods=["POST"])
     @require_auth
     @require_admin
+    @limiter.limit(rl.monitor_refresh)
     def refresh_monitor_target(target_id: str):
         # On-demand refresh forces an SSH/WMI/HTTP probe regardless of the
         # background scheduler, so it's a privileged operation: a single user

@@ -62,6 +62,7 @@ class RateLimitConfig:
     network_test_batch: str
     server_resources: str
     server_resources_batch: str
+    monitor_refresh: str
 
 
 _DEFAULT_RATE_LIMITS = RateLimitConfig(
@@ -74,6 +75,7 @@ _DEFAULT_RATE_LIMITS = RateLimitConfig(
     network_test_batch="60/minute",
     server_resources="60/minute",
     server_resources_batch="60/minute",
+    monitor_refresh="10/minute",
 )
 
 
@@ -272,6 +274,7 @@ def build_app_config(raw: dict[str, Any], base_dir: str) -> AppConfig:
         network_test_batch=_rl("network_test_batch"),
         server_resources=_rl("server_resources"),
         server_resources_batch=_rl("server_resources_batch"),
+        monitor_refresh=_rl("monitor_refresh"),
     )
 
     # Prefer version from config.json (user-editable), but fall back to the
