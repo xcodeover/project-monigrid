@@ -11,6 +11,7 @@
 5-1. [Phase 2 운영 변경사항](#5-1-phase-2-운영-변경사항)
 5-2. [Phase 3 운영 변경사항](#5-2-phase-3-운영-변경사항)
 5-3. [Phase 4 운영 변경사항](#5-3-phase-4-운영-변경사항)
+5-4. [일괄 저장](#5-4-일괄-저장-6)
 6. [데이터베이스 연결 관리](#6-데이터베이스-연결-관리)
 7. [데이터 API 관리](#7-데이터-api-관리)
 8. [SQL 편집기](#8-sql-편집기)
@@ -497,6 +498,44 @@ Phase 4(IO/UX 개선) 에서 도입된 운영자 가시성 변경 사항 3가지
 
 - 알림 이력 페이지가 **30초마다 자동 갱신**되어 새 incident 가 즉시 반영됩니다.
 - 브라우저 탭이 백그라운드(`hidden`) 상태일 때는 폴링이 일시 정지됩니다 (Phase 3 패턴 적용). 탭 활성화 시 즉시 재개됩니다.
+
+---
+
+## 5-4. 일괄 저장 (#6)
+
+### 5-4-1. 모니터 대상 / 데이터 API 일괄 저장
+
+- **백엔드 설정 → 모니터 대상 탭 / 데이터 API 탭** 의 항목 변경/추가/삭제는 이제 **하단 "저장 & 적용" 버튼 1회** 로 일괄 반영됩니다.
+- 이전: 항목별 저장 버튼을 매번 눌러야 했고, 매번 backend reload 가 트리거되어 N개 변경 시 N×수십초 소요.
+- 변경 사항은 시각적으로 표시:
+  - 신규: `+ 녹색 좌측 바`
+  - 수정: `● 노란 점`
+  - 삭제 예정: 회색 + 취소선 + `↺ 복원` 버튼 (실제 삭제는 저장 시점)
+- 삭제 예정 항목은 리스트 맨 아래로 자동 정렬됩니다.
+- atomic 트랜잭션 — 한 항목이라도 실패하면 **전체 롤백**, 응답에 `failedItem` 으로 어느 항목이 문제인지 안내됩니다.
+- monitor 대상 batch 는 **단일 reload** 로 처리되어 이전 대비 압도적으로 빠릅니다 (예: 5건 변경 ~50초 → 1~3초).
+
+### 5-4-2. 모달 닫기 가드
+
+- 변경 사항이 있는 상태에서 **X 버튼 / Esc** 시도 시 confirm dialog: `"저장하지 않은 변경 사항 N건이 있습니다. 폐기하고 닫으시겠습니까?"`
+- 모달 영역 바깥 클릭으로 닫히지 않습니다 (Phase A #5 와 동일 정책).
+- 저장 진행 중에는 close 가 차단됩니다.
+
+### 5-4-3. 신규 BE endpoint
+
+| Endpoint | Method | Rate limit (KV key) |
+|---|---|---|
+| `/dashboard/monitor-targets/batch` | POST (admin) | `monitor_targets_batch` (default `10/minute`) |
+
+기존 개별 endpoint (`POST/PUT/DELETE /dashboard/monitor-targets/<id>`) 는 호환을 위해 유지됩니다.
+
+### 5-4-4. 새 rate limit 키
+
+`monigrid_settings_kv` 의 `rate_limits` JSON 에 `monitor_targets_batch` 가 추가되었습니다. 기존 deployment 는 자동으로 default `"10/minute"` 로 fallback (안전한 backward compat).
+
+### 5-4-5. 검증 정책
+
+각 row 는 **입력 즉시** per-field 검증되어 invalid 면 빨간 테두리 표시. "저장 & 적용" 버튼은 항상 활성 — 시도 시 invalid 가 있으면 **첫 invalid row 로 자동 스크롤** + alert.
 
 ---
 
