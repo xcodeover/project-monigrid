@@ -90,9 +90,19 @@ const AlarmBanner = () => {
 
     const isAlarming = alarmedWidgets.size > 0;
     const beepTimerRef = useRef(null);
-    const lastAlarmSizeRef = useRef(0);
+    // Tracks the sorted join-key of the last alarm set that was processed.
+    // Using a string key (instead of size) ensures member-swap detection:
+    // e.g. A→B with equal size produces a different key → effect re-fires.
+    const lastAlarmKeyRef = useRef("");
     const alarmSoundRef = useRef(alarmSound);
     alarmSoundRef.current = alarmSound;
+
+    // Stable string key derived from Set members — sort() makes it
+    // deterministic regardless of insertion order or browser iteration order.
+    const alarmKey = useMemo(
+        () => Array.from(alarmedWidgets).sort().join(","),
+        [alarmedWidgets],
+    );
 
     const stopBeepLoop = useCallback(() => {
         if (beepTimerRef.current) {
@@ -107,17 +117,18 @@ const AlarmBanner = () => {
             return;
         }
 
-        // New alarm triggered — play immediately, then every 8 s
-        const newAlarm = alarmedWidgets.size > lastAlarmSizeRef.current;
+        // New alarm triggered when the member set has changed (includes
+        // member-swap: same size but different widgets, e.g. ack A + B goes dead).
+        const newAlarm = alarmKey !== lastAlarmKeyRef.current;
         if (newAlarm || !beepTimerRef.current) {
             playSound(alarmSoundRef.current);
             stopBeepLoop();
             beepTimerRef.current = setInterval(() => playSound(alarmSoundRef.current), 8000);
         }
-        lastAlarmSizeRef.current = alarmedWidgets.size;
+        lastAlarmKeyRef.current = alarmKey;
 
         return stopBeepLoop;
-    }, [isAlarming, acknowledged, soundEnabled, alarmedWidgets.size, stopBeepLoop]);
+    }, [isAlarming, acknowledged, soundEnabled, alarmKey, stopBeepLoop]);
 
     // Memoise the formatted alarm list so the spread + slice + join doesn't
     // run on every render of the parent (this banner re-renders whenever
