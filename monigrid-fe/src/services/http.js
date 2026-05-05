@@ -248,9 +248,17 @@ apiClient.interceptors.request.use(
 let _onUnauthorized = null;
 // Token-expiry bursts produce 30+ concurrent 401s (one per polling widget).
 // Without a latch, the unauthorized handler ran 30 times — each pass mutated
-// Zustand stores and reassigned window.location. Latch is reset by
-// registerUnauthorizedHandler so a fresh login re-arms naturally.
+// Zustand stores and called navigate(). Latch is reset in two ways:
+//   1. registerUnauthorizedHandler — called on initial AppRoutes mount.
+//   2. resetUnauthorizedLatch — called by LoginPage on successful login so that
+//      a second token expiration after re-login is not silently swallowed.
+//      (With SPA navigation AppRoutes does NOT unmount on /login, so path 1
+//      alone is no longer sufficient.)
 let _unauthorizedLatched = false;
+
+export const resetUnauthorizedLatch = () => {
+    _unauthorizedLatched = false;
+};
 
 export const registerUnauthorizedHandler = (handler) => {
     _onUnauthorized = typeof handler === "function" ? handler : null;
@@ -290,7 +298,17 @@ apiClient.interceptors.response.use(
                 // a full-page reload. The handler is responsible for flushing
                 // any pending push, disabling server sync, and calling navigate().
                 try {
-                    _onUnauthorized();
+                    const result = _onUnauthorized();
+                    if (result && typeof result.catch === "function") {
+                        result.catch((handlerError) => {
+                            if (typeof console !== "undefined") {
+                                console.warn(
+                                    "[http] unauthorized handler rejected:",
+                                    handlerError?.message || handlerError,
+                                );
+                            }
+                        });
+                    }
                 } catch (handlerError) {
                     if (typeof console !== "undefined") {
                         console.warn(

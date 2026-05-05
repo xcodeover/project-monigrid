@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { authService } from "../services/api";
+import { resetUnauthorizedLatch } from "../services/http";
 import AppLogo from "../components/AppLogo.jsx";
 import PasswordInput from "../components/PasswordInput.jsx";
 import "./LoginPage.css";
@@ -57,6 +58,7 @@ const LoginPage = () => {
                 throw new Error("Invalid login response");
             }
             login(response.user, response.token);
+            resetUnauthorizedLatch();
             navigate("/dashboard");
         } catch (err) {
             setError(getLoginErrorMessage(err));
