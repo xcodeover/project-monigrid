@@ -23,6 +23,9 @@ export default defineConfig({
                     // Grid layout — loaded with dashboard
                     if (id.includes("react-grid-layout") || id.includes("react-resizable")) return "grid";
 
+                    // Virtualized list — only loaded by LogViewerPage
+                    if (id.includes("react-window")) return "react-window";
+
                     // Everything else from node_modules → single vendor chunk
                     // (includes react, react-dom, react-router-dom, zustand, axios,
                     //  jsx-runtime, use-sync-external-store, etc.)

@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { FixedSizeList } from "react-window";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { dashboardService } from "../services/api";
@@ -22,9 +23,50 @@ export default function LogViewerPage() {
     const [logCursor, setLogCursor] = useState(null);
     const logCursorRef = useRef(null);
 
+    // Virtualized list refs
+    const listRef = useRef(null);
+    const logContentRef = useRef(null);
+    const [listHeight, setListHeight] = useState(400);
+    // Track whether user has scrolled away from bottom
+    const isAtBottomRef = useRef(true);
+
     useEffect(() => {
         logCursorRef.current = logCursor;
     }, [logCursor]);
+
+    // ResizeObserver: track log-content container height for FixedSizeList.
+    // Re-runs when logs go from empty→non-empty (container mounts conditionally).
+    useEffect(() => {
+        const el = logContentRef.current;
+        if (!el) return;
+        const observer = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const h = entry.contentRect.height;
+                if (h > 0) setListHeight(h);
+            }
+        });
+        observer.observe(el);
+        return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [logs.length > 0]);
+
+    // Auto-scroll: when LIVE mode appends logs, scroll to bottom if user is already at bottom
+    useEffect(() => {
+        if (logs.length === 0) return;
+        if (isAtBottomRef.current && listRef.current) {
+            listRef.current.scrollToItem(logs.length - 1, "end");
+        }
+    }, [logs.length]);
+
+    const handleListScroll = useCallback(({ scrollOffset, scrollUpdateWasRequested }) => {
+        // Only track user-initiated scrolls (not programmatic scrollToItem calls)
+        if (scrollUpdateWasRequested) return;
+        // FixedSizeList doesn't expose scrollHeight directly, estimate via itemSize
+        const LINE_HEIGHT = 34;
+        const totalHeight = logs.length * LINE_HEIGHT;
+        const atBottom = scrollOffset + listHeight >= totalHeight - LINE_HEIGHT * 2;
+        isAtBottomRef.current = atBottom;
+    }, [logs.length, listHeight]);
 
     useEffect(() => {
         if (!isAuthenticated) {
@@ -249,12 +291,22 @@ export default function LogViewerPage() {
                         선택한 기간에 로그가 없습니다.
                     </div>
                 ) : (
-                    <div className='log-content'>
-                        {logs.map((log, index) => (
-                            <div key={index} className='log-line'>
-                                {log}
-                            </div>
-                        ))}
+                    <div className='log-content' ref={logContentRef}>
+                        <FixedSizeList
+                            ref={listRef}
+                            height={listHeight}
+                            itemCount={logs.length}
+                            itemSize={34}
+                            width='100%'
+                            onScroll={handleListScroll}
+                            overscanCount={5}
+                        >
+                            {({ index, style }) => (
+                                <div style={style} className='log-line'>
+                                    {logs[index]}
+                                </div>
+                            )}
+                        </FixedSizeList>
                     </div>
                 )}
             </section>

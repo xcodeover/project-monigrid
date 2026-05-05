@@ -246,20 +246,26 @@
 .log-content {
     flex: 1;
     min-height: 0;
-    overflow: auto;
-    padding: 16px 18px;
+    /* overflow handled by FixedSizeList internally */
+    overflow: hidden;
+    padding: 8px 0;
     font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
     font-size: 13px;
     line-height: 1.65;
     color: #d7dfec;
-    white-space: pre-wrap;
-    word-break: break-word;
 }
 
+/* itemSize=34 in FixedSizeList: line-height≈22px + padding 6px top+bottom = 34px */
 .log-line {
-    padding: 6px 10px;
+    height: 34px;
+    box-sizing: border-box;
+    padding: 6px 28px;
     border-left: 3px solid transparent;
-    border-radius: 8px;
+    border-radius: 4px;
+    white-space: pre;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 22px;
 }
 
 .log-line:hover {
