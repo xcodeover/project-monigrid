@@ -366,6 +366,12 @@ const ApiCard = ({
         }, 300);
     }, [columnWidths, onTableSettingsChange]);
 
+    // stable key: 컬럼 set 이 동일하면 같은 문자열 → 폴링마다 새 배열 ref 가 와도 effect 재실행 방지
+    const availableColumnsKey = useMemo(
+        () => availableColumns.slice().sort().join("|"),
+        [availableColumns],
+    );
+
     useEffect(() => {
         if (availableColumns.length === 0) {
             return;
@@ -385,7 +391,8 @@ const ApiCard = ({
             setLocalColumnWidths(nextWidths);
             onTableSettingsChange({ columnWidths: nextWidths });
         }
-    }, [availableColumns]); // only run when columns change, not on every width update
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [availableColumnsKey]); // stable key: 컬럼 set 이 진짜 바뀔 때만 실행
 
     const criteriaTimerRef = useRef(null);
 
