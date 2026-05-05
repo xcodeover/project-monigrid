@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Callable
@@ -367,7 +367,17 @@ class EndpointCacheManager:
                     "Cache MISS coalesced apiId=%s — waiting on in-flight refresh clientIp=%s",
                     api_id, client_ip,
                 )
-            refreshed_entry = fut.result()
+            waiter_timeout = endpoint.query_timeout_sec + 5
+            try:
+                refreshed_entry = fut.result(timeout=waiter_timeout)
+            except FutureTimeoutError:
+                # Owner thread died before calling set_result/set_exception
+                # (e.g. OOM kill, unhandled BaseException that bypassed the
+                # finally block). Pop the stale Future so the next caller
+                # becomes a new owner and retries the refresh instead of
+                # waiting on the same dead Future.
+                self._in_flight.pop(api_id, None)
+                raise QueryExecutionTimeoutError(endpoint.api_id, waiter_timeout)
 
         if refreshed_entry.data is not None:
             return refreshed_entry.data
