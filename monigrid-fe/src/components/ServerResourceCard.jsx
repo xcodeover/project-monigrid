@@ -218,9 +218,10 @@ const ServerResourceCard = ({
         // Skip polling while tab is hidden to avoid wasted requests.
         // The visibility-flip effect triggers an immediate fetch on return.
         // NOTE: 탭이 숨겨진 동안에는 알람 감지가 최대 폴링 주기만큼 지연된다.
-        if (document.hidden) return;
+        // Hidden tab: neutral result — don't count as success or failure.
+        if (document.hidden) return true;
         if (useSnapshot) {
-            if (targetIds.length === 0) return;
+            if (targetIds.length === 0) return true;
             setDiskCycleIdx((prev) => prev + 1);
             try {
                 const res = await monitorService.getSnapshot(targetIds);
@@ -252,6 +253,9 @@ const ServerResourceCard = ({
                     });
                     return next;
                 });
+                // HTTP 200 received from BE — network is up regardless of
+                // individual server status (dead servers are app-level signals).
+                return true;
             } catch (err) {
                 const errorMsg = err?.response?.data?.message || err?.message || "스냅샷 조회 실패";
                 setServerStates((prev) => {
@@ -267,12 +271,13 @@ const ServerResourceCard = ({
                     });
                     return next;
                 });
+                // Network/server error — signal failure so backoff engages.
+                return false;
             }
-            return;
         }
 
         const list = serversRef.current;
-        if (list.length === 0) return;
+        if (list.length === 0) return true;
         setDiskCycleIdx((prev) => prev + 1);
 
         const batchPayload = list.map((srv) => {
@@ -337,6 +342,8 @@ const ServerResourceCard = ({
                 });
                 return next;
             });
+            // BE answered — network success regardless of per-server metric results.
+            return true;
         } catch (err) {
             const errorMsg =
                 err?.response?.data?.message || err?.message || "요청 실패";
@@ -353,6 +360,8 @@ const ServerResourceCard = ({
                 });
                 return next;
             });
+            // Network/server error — signal failure so backoff engages.
+            return false;
         }
     // widgetConfig 변경은 targetIds (useMemo above) 통해 전파됨 — widgetConfig 를 deps 에 다시 넣지 말 것.
     }, [useSnapshot, targetIds]);
@@ -373,13 +382,14 @@ const ServerResourceCard = ({
     const failCountRef = useRef(0);
 
     // Wrap fetchAllServers to track success/failure for backoff purposes.
+    // fetchAllServers returns true on network success, false on network failure.
+    // App-level dead signals (server reports error from a 200 response) do NOT
+    // increment the counter — backoff should only engage on network failures.
     const fetchAllServersWithTracking = useCallback(async () => {
-        try {
-            await fetchAllServers();
+        const ok = await fetchAllServers();
+        if (ok) {
             failCountRef.current = 0;
-        } catch {
-            // fetchAllServers swallows its own errors via setState; this catch
-            // is a safety net.
+        } else {
             failCountRef.current += 1;
         }
     }, [fetchAllServers]);

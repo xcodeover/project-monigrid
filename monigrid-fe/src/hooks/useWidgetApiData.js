@@ -346,8 +346,8 @@ const useWidgetApiData = (widgets) => {
                     // visibilitychange effect below fires an immediate refetch
                     // when the user returns, so no stale data is shown.
                     // NOTE: 탭이 숨겨진 동안에는 알람 감지가 최대 폴링 주기만큼 지연된다.
-                    // While hidden we still re-arm at base interval so that
-                    // when the tab becomes visible the backoff state is current.
+                    // Scheduled tick fires while hidden — re-arm at current backoff
+                    // delay (preserves backoff state across the hidden period).
                     if (!document.hidden) {
                         const latest = widgetsRef.current.find((w) => w.id === widgetId);
                         if (latest) await fetchWidget(latest);

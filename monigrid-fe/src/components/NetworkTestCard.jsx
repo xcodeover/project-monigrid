@@ -265,9 +265,10 @@ const NetworkTestCard = ({
         // Skip polling while tab is hidden to avoid wasted requests.
         // The visibility-flip effect triggers an immediate fetch on return.
         // NOTE: 탭이 숨겨진 동안에는 알람 감지가 최대 폴링 주기만큼 지연된다.
-        if (document.hidden) return;
+        // Hidden tab: neutral result — don't count as success or failure.
+        if (document.hidden) return true;
         if (useSnapshot) {
-            if (targetIds.length === 0) return;
+            if (targetIds.length === 0) return true;
             try {
                 const res = await monitorService.getSnapshot(targetIds);
                 const items = Array.isArray(res?.items) ? res.items : [];
@@ -299,6 +300,9 @@ const NetworkTestCard = ({
                     });
                     return next;
                 });
+                // HTTP 200 received from BE — network is up regardless of
+                // individual target status (dead targets are app-level signals).
+                return true;
             } catch (err) {
                 const errorMsg = err?.response?.data?.message || err?.message || "스냅샷 조회 실패";
                 setTargetStates((prev) => {
@@ -314,12 +318,13 @@ const NetworkTestCard = ({
                     });
                     return next;
                 });
+                // Network/server error — signal failure so backoff engages.
+                return false;
             }
-            return;
         }
 
         const list = targetsRef.current;
-        if (list.length === 0) return;
+        if (list.length === 0) return true;
 
         setTargetStates((prev) => {
             const next = { ...prev };
@@ -369,6 +374,8 @@ const NetworkTestCard = ({
                 });
                 return next;
             });
+            // BE answered — network success regardless of per-target probe results.
+            return true;
         } catch (err) {
             setTargetStates((prev) => {
                 const next = { ...prev };
@@ -383,6 +390,8 @@ const NetworkTestCard = ({
                 });
                 return next;
             });
+            // Network/server error — signal failure so backoff engages.
+            return false;
         }
     }, [useSnapshot, targetIds]);
 
@@ -399,14 +408,14 @@ const NetworkTestCard = ({
     const failCountRef = useRef(0);
 
     // Wrap checkAllTargets to track success/failure for backoff purposes.
-    // Returns true on success, false on failure (network-level error).
+    // checkAllTargets returns true on network success, false on network failure.
+    // App-level dead signals (target.status="dead" from a 200 response) do NOT
+    // increment the counter — backoff should only engage on network failures.
     const checkAllTargetsWithTracking = useCallback(async () => {
-        try {
-            await checkAllTargets();
+        const ok = await checkAllTargets();
+        if (ok) {
             failCountRef.current = 0;
-        } catch {
-            // checkAllTargets swallows its own errors via setState; this catch
-            // is a safety net. The internal catch already updates targetStates.
+        } else {
             failCountRef.current += 1;
         }
     }, [checkAllTargets]);
