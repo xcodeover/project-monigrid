@@ -84,9 +84,106 @@ def scenario_2_reload_lock_serializes_concurrent_reloads():
     assert e3 == f"{second_label}_exit", f"fourth event must be {second_label}_exit, got {e3}"
 
 
+def _be_login_admin(base_url: str = "http://127.0.0.1:5000") -> str | None:
+    """Login as admin. Returns token or None if BE down / admin auth unavailable."""
+    import json
+    import urllib.request
+    import urllib.error
+    try:
+        req = urllib.request.Request(
+            f"{base_url}/auth/login",
+            data=json.dumps({"username": "admin", "password": "admin"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.load(r).get("token")
+    except urllib.error.URLError:
+        return None
+    except urllib.error.HTTPError:
+        return None
+    except Exception:
+        return None
+
+
+def _http(method: str, path: str, token: str, body=None,
+          base_url: str = "http://127.0.0.1:5000"):
+    import json
+    import urllib.request
+    import urllib.error
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(base_url + path, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status, json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode("utf-8") or "{}")
+
+
+def scenario_3_partial_apply_response_shape_via_be():
+    """[requires running BE + admin login]
+    PUT /dashboard/config 응답이 5B shape (applied/skipped/errors) 포함."""
+    token = _be_login_admin()
+    if token is None:
+        print("  (skipped — BE unreachable or admin login unavailable)")
+        return
+    status, cfg = _http("GET", "/dashboard/config", token)
+    if status != 200:
+        print(f"  (skipped — GET /dashboard/config returned {status})")
+        return
+    # PUT 같은 config 다시 보내기 — diff 비어있어야 함
+    status, resp = _http("PUT", "/dashboard/config", token, cfg)
+    assert status in (200, 207), f"unexpected {status}: {resp}"
+    assert "applied" in resp, f"response must include 'applied': {resp}"
+    assert "skipped" in resp, f"response must include 'skipped': {resp}"
+    assert "errors" in resp, f"response must include 'errors': {resp}"
+    assert resp.get("saved") is True
+    assert resp.get("reloaded") is True
+    assert isinstance(resp["applied"], list)
+
+
+def scenario_4_concurrent_reload_serialization_via_be():
+    """[requires running BE + admin login]
+    POST /dashboard/reload-config 를 3개 동시에 호출해도 lock 으로 직렬화."""
+    token = _be_login_admin()
+    if token is None:
+        print("  (skipped — BE unreachable or admin login unavailable)")
+        return
+
+    timings: list[tuple[float, float]] = []
+    timings_lock = threading.Lock()
+
+    def fire():
+        t0 = time.perf_counter()
+        _http("POST", "/dashboard/reload-config", token, {})
+        t1 = time.perf_counter()
+        with timings_lock:
+            timings.append((t0, t1))
+
+    ts = [threading.Thread(target=fire) for _ in range(3)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+
+    timings.sort(key=lambda p: p[0])
+    durations = [t1 - t0 for (t0, t1) in timings]
+    completion_times = [t1 - timings[0][0] for (_, t1) in timings]
+    assert completion_times[0] < completion_times[1] < completion_times[2], \
+        f"reload calls must serialize, got completion_times={completion_times}"
+    mean_dur = sum(durations) / len(durations)
+    # Third completion should show queueing — at least 1.5x mean duration.
+    # (이전 nuclear race 시점에는 거의 동시에 끝났음.)
+    assert completion_times[2] >= mean_dur * 1.5, \
+        f"third completion ({completion_times[2]:.2f}s) must show queueing — mean dur {mean_dur:.2f}s"
+
+
 SCENARIOS = [
     scenario_1_clear_ssh_pool_for_host_only_drains_target_host,
     scenario_2_reload_lock_serializes_concurrent_reloads,
+    scenario_3_partial_apply_response_shape_via_be,
+    scenario_4_concurrent_reload_serialization_via_be,
 ]
 
 
