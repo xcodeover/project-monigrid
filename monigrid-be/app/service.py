@@ -15,6 +15,7 @@ which sub-service does the work:
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -56,6 +57,10 @@ class MonitoringBackend:
         self._config_reloader = config_reloader
         self.logger = logger
         self.config = initial_config
+        # Phase 5B: serializes reload() / apply_partial_config_reload /
+        # apply_monitor_targets_partial. Without this, two admins saving
+        # at the same moment would race on db_pools / config swap.
+        self._reload_lock = threading.Lock()
         # Two pools so JDBC work isn't held hostage by IO-bound monitor
         # probes (SSH handshakes, HTTP health checks, ICMP/TCP probes) that
         # can each pin a worker for hundreds of ms. The monitor pool is
@@ -363,6 +368,15 @@ class MonitoringBackend:
             pool.close_all()
 
     def reload(self) -> None:
+        """Nuclear reload — recreates all executors / pools / cache / monitor
+        threads. Phase 5B kept this as an explicit escape hatch (e.g. admin
+        wants a fresh state). Most config save / monitor target save flows
+        now use apply_partial_config_reload / apply_monitor_targets_partial.
+        """
+        with self._reload_lock:
+            self._reload_unlocked()
+
+    def _reload_unlocked(self) -> None:
         new_config = self._config_reloader()
 
         # JPype only honours the classpath given at startJVM time. If the

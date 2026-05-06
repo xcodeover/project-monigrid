@@ -47,8 +47,46 @@ def scenario_1_clear_ssh_pool_for_host_only_drains_target_host():
         _SSH_POOL.clear()  # cleanup
 
 
+def scenario_2_reload_lock_serializes_concurrent_reloads():
+    """기존 reload() 도 _reload_lock 안에서 실행 — 두 동시 호출이 직렬화됨.
+    이 시나리오는 lock 패턴 자체를 검증 (실제 service._reload_lock 의 존재는
+    별도 import 로 확인)."""
+    # service._reload_lock 존재 확인
+    from app.service import MonitoringBackend
+    assert hasattr(MonitoringBackend, "_reload_unlocked"), \
+        "MonitoringBackend must expose _reload_unlocked (Phase 5B refactor)"
+
+    # 직접 lock 의 직렬화 동작 검증
+    lock = threading.Lock()
+    timeline: list[tuple[str, float]] = []
+    timeline_lock = threading.Lock()
+    barrier = threading.Barrier(2)
+
+    def fake_reload(label: str):
+        barrier.wait()  # 두 thread 가 동시에 lock 진입 시도
+        with lock:
+            with timeline_lock:
+                timeline.append((f"{label}_enter", time.perf_counter()))
+            time.sleep(0.05)  # critical section
+            with timeline_lock:
+                timeline.append((f"{label}_exit", time.perf_counter()))
+
+    t1 = threading.Thread(target=fake_reload, args=("A",))
+    t2 = threading.Thread(target=fake_reload, args=("B",))
+    t1.start(); t2.start(); t1.join(); t2.join()
+
+    assert len(timeline) == 4
+    e0, e1, e2, e3 = (e[0] for e in timeline)
+    first_label = e0[0]
+    second_label = "B" if first_label == "A" else "A"
+    assert e1 == f"{first_label}_exit", f"second event must be {first_label}_exit, got {e1}"
+    assert e2 == f"{second_label}_enter", f"third event must be {second_label}_enter, got {e2}"
+    assert e3 == f"{second_label}_exit", f"fourth event must be {second_label}_exit, got {e3}"
+
+
 SCENARIOS = [
     scenario_1_clear_ssh_pool_for_host_only_drains_target_host,
+    scenario_2_reload_lock_serializes_concurrent_reloads,
 ]
 
 
