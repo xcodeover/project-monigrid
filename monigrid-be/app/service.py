@@ -201,17 +201,25 @@ class MonitoringBackend:
         return self.settings_store.get_monitor_target(target_id)
 
     def upsert_monitor_target(self, item: dict[str, Any]) -> dict[str, Any]:
-        stored = self.settings_store.upsert_monitor_target(item)
-        # New / updated targets need the collector to re-schedule.
-        self._monitor_collector.reload()
+        """Phase 5B: single-item upsert routes to partial path. Existing
+        FE callers receive the same shape (stored target dict).
+        """
+        with self._reload_lock:
+            stored = self.settings_store.upsert_monitor_target(item)
+            # If id was already known → update_target_in_place; else add_target.
+            if stored["id"] in self._monitor_collector._targets_by_id:
+                self._monitor_collector.update_target_in_place(
+                    stored, ssh_credentials_changed=True,
+                )
+            else:
+                self._monitor_collector.add_target(stored)
         return stored
 
     def delete_monitor_target(self, target_id: str) -> None:
-        self.settings_store.delete_monitor_target(target_id)
-        # Surgical cleanup before the full reload — keeps the in-memory
-        # snapshot consistent even if reload() is later short-circuited.
-        self._monitor_collector.forget_target(target_id)
-        self._monitor_collector.reload()
+        """Phase 5B: single-item delete routes to partial path."""
+        with self._reload_lock:
+            self.settings_store.delete_monitor_target(target_id)
+            self._monitor_collector.remove_target(target_id)
 
     def apply_monitor_targets_batch(
         self,

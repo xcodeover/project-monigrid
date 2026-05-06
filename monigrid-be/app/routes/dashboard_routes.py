@@ -184,39 +184,45 @@ def register(app, backend, limiter) -> None:
     @require_auth
     @require_admin
     def update_config():
-        """Persist the config back into the settings DB and reload."""
+        """Persist the config back into the settings DB and apply partial reload.
+
+        Phase 5B: replaced nuclear backend.reload() with apply_partial_config_reload
+        — only changed connections/APIs/globals are mutated. Response now includes
+        applied/skipped/errors arrays for partial-reload diagnostics.
+        """
         client_ip = get_client_ip()
         config_data = request.get_json(silent=True)
         if not config_data or not isinstance(config_data, dict):
             return jsonify({"message": "invalid config JSON"}), 400
 
         try:
-            backend.settings_store.save_config_dict(config_data)
-            backend.logger.info("Config updated in settings DB by admin clientIp=%s", client_ip)
+            partial_result = backend.apply_partial_config_reload(config_data)
         except Exception:
-            backend.logger.exception("Config write to settings DB failed clientIp=%s", client_ip)
-            return jsonify({"message": "failed to write config", "detail": "internal error"}), 500
-
-        try:
-            backend.reload()
-        except Exception:
-            backend.logger.exception("Config reload after update failed clientIp=%s", client_ip)
+            backend.logger.exception("Partial config reload failed clientIp=%s", client_ip)
             return jsonify({
-                "message": "config saved but reload failed",
+                "message": "config save+reload failed",
                 "detail": "internal error",
-                "saved": True,
+                "saved": False,
                 "reloaded": False,
             }), 500
 
-        backend.logger.info("Config updated and reloaded successfully clientIp=%s", client_ip)
+        backend.logger.info(
+            "Config updated and partially reloaded successfully clientIp=%s applied=%d errors=%d",
+            client_ip, len(partial_result["applied"]), len(partial_result["errors"]),
+        )
         enabled_apis = [ep for ep in backend.config.apis.values() if ep.enabled]
-        return jsonify({
+        body = {
             "message": "config updated and reloaded",
             "saved": True,
             "reloaded": True,
             "endpointCount": len(enabled_apis),
             "connectionCount": len(backend.config.connections),
-        }), 200
+            "applied": partial_result["applied"],
+            "skipped": partial_result["skipped"],
+            "errors": partial_result["errors"],
+        }
+        status_code = 207 if partial_result["errors"] else 200
+        return jsonify(body), status_code
 
     @app.route("/dashboard/reload-config", methods=["POST"])
     @require_auth

@@ -161,12 +161,18 @@ def register(app, backend, limiter) -> None:
             }), 500
 
         if result.get("success"):
+            # Phase 5B: nuclear reload 제거 → reloadTriggered 는 의미 없지만
+            # FE 호환성 위해 유지 (admin manual 의 5-5 절 참조).
             result["reloadTriggered"] = True
             backend.logger.info(
-                "Monitor targets batch applied creates=%d updates=%d deletes=%d clientIp=%s",
-                len(creates), len(updates), len(deletes), get_client_ip(),
+                "Monitor targets batch applied creates=%d updates=%d deletes=%d "
+                "applied=%d errors=%d clientIp=%s",
+                len(creates), len(updates), len(deletes),
+                len(result.get("applied", [])), len(result.get("errors", [])),
+                get_client_ip(),
             )
-            return jsonify(result), 200
+            status_code = 207 if result.get("errors") else 200
+            return jsonify(result), status_code
         else:
             backend.logger.warning(
                 "Monitor targets batch rejected error=%s clientIp=%s",
