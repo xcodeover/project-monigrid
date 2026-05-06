@@ -61,6 +61,10 @@ class MonitoringBackend:
         # apply_monitor_targets_partial. Without this, two admins saving
         # at the same moment would race on db_pools / config swap.
         self._reload_lock = threading.Lock()
+        # I-2: track jars that were already missing at boot. Reload only
+        # warns for *newly* missing jars (e.g., admin added a connection
+        # pointing at a jar not on the JVM classpath).
+        self._known_missing_jars: set[str] = set()
         # Two pools so JDBC work isn't held hostage by IO-bound monitor
         # probes (SSH handshakes, HTTP health checks, ICMP/TCP probes) that
         # can each pin a worker for hundreds of ms. The monitor pool is
@@ -144,12 +148,49 @@ class MonitoringBackend:
         for ep in enabled_apis:
             _startup_log(self.logger, "Hosted API id=%s path=%s", ep.api_id, ep.rest_api_path)
 
+        # I-2: announce loaded JDBC drivers once at boot. Subsequent
+        # reload() calls only WARN about *newly* missing jars.
+        self._log_loaded_jdbc_drivers()
+
     # ── Cache management (delegated to EndpointCacheManager) ──────────────
 
     def _stop_background_refreshers(self) -> None:
         # Kept for monigrid_be.py shutdown hook (still calls this name).
         self._cache_manager.stop()
         self._monitor_collector.stop()
+
+    # ── JVM classpath logging (I-2) ───────────────────────────────────────
+
+    def _log_loaded_jdbc_drivers(self) -> None:
+        all_jars = list(dict.fromkeys(
+            jar
+            for conn in self.config.connections.values()
+            for jar in conn.jdbc_jars
+        ))
+        self.logger.info("Loaded JDBC drivers: %d jars", len(all_jars))
+        initial_missing = set(jvm_classpath_missing(all_jars))
+        if initial_missing:
+            self.logger.info(
+                "JDBC jars not on classpath at boot (will be ignored on reload): %s",
+                sorted(initial_missing),
+            )
+            self._known_missing_jars |= initial_missing
+
+    def _check_classpath_for_reload(self, new_config: AppConfig) -> None:
+        new_jars = list(dict.fromkeys(
+            jar
+            for conn in new_config.connections.values()
+            for jar in conn.jdbc_jars
+        ))
+        current_missing = set(jvm_classpath_missing(new_jars))
+        newly_missing = current_missing - self._known_missing_jars
+        if newly_missing:
+            self.logger.warning(
+                "JDBC jars not on classpath — queries against the new connections "
+                "will fail until BE restart. newly_missing=%s",
+                sorted(newly_missing),
+            )
+            self._known_missing_jars |= newly_missing
 
     # ── Monitor collector (server-resource / network targets) ─────────────
 
@@ -382,23 +423,10 @@ class MonitoringBackend:
         # JPype only honours the classpath given at startJVM time. If the
         # operator added a connection pointing at a jar that wasn't loaded
         # on this process's start, every query against that connection
-        # will throw ClassNotFoundException until the BE is restarted —
-        # surface that loudly here so the operator doesn't have to grep
-        # for the cryptic JVM error.
-        new_jars = list(dict.fromkeys(
-            jar
-            for conn in new_config.connections.values()
-            for jar in conn.jdbc_jars
-        ))
-        missing_jars = jvm_classpath_missing(new_jars)
-        if missing_jars:
-            self.logger.error(
-                "Reload introduced JDBC jars not on the running JVM classpath — "
-                "queries against the new connections will fail with "
-                "ClassNotFoundException until the BE process is restarted. "
-                "missing=%s",
-                missing_jars,
-            )
+        # will throw ClassNotFoundException until the BE is restarted.
+        # I-2: WARN only for newly-missing jars; already-known missing jars
+        # stay silent to avoid alert fatigue.
+        self._check_classpath_for_reload(new_config)
 
         old_jdbc_executor = self.jdbc_executor
         old_monitor_executor = self.monitor_executor
