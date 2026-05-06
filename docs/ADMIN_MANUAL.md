@@ -1166,3 +1166,78 @@ python migrate_settings_db.py --from initsetting.json --to initsetting.oracle.js
 - `initsetting.json` / `initsetting.*.json` 에는 DB 자격 증명이 들어가므로 `.gitignore` 로 저장소 커밋이 차단됩니다. 로컬에서만 관리하세요.
 - 이관 직후 신규 DB 로 기동할 때도 기존 환경변수(`JWT_SECRET_KEY` 등) 를 동일하게 유지하세요 — 기존 토큰의 무효화를 막고 싶을 때 중요합니다.
 - Oracle → MSSQL 과 같이 방언을 바꿀 때는 MSSQL 의 `databaseName=master` 등 대상 파라미터가 실제 운영 DB 로 바뀌었는지 반드시 확인하세요. 테스트 완료 후 운영 DB 명으로 `initsetting.json` 을 교체합니다.
+
+## 5-5. Phase 5B — Partial Config Reload (2026-05-07)
+
+이전까지 `PUT /dashboard/config` 와 monitor target 저장은 **모든 connection pool / executor / cache / monitor thread 를 재생성**하는 nuclear reload 였다 (`backend.reload()`). 그래서 connection title 한 글자만 수정해도 다른 사용자의 위젯 cache 가 비워지면서 **모든 client 가 동시에 cache miss → 같은 timestamp 의 같은 데이터 수신 → 동시 알람** 현상이 발생할 수 있었다.
+
+5B 부터는 **변경된 항목만** in-memory 에 적용한다. 변경 안 된 connection pool / endpoint cache / monitor thread 는 절대 건드리지 않는다.
+
+### 응답 shape 변화
+
+`PUT /dashboard/config` 응답에 `applied` / `skipped` / `errors` 배열 추가:
+
+```json
+{
+  "saved": true,
+  "reloaded": true,
+  "endpointCount": 2,
+  "connectionCount": 1,
+  "applied": [
+    {"resource": "api", "id": "status", "action": "data_changed_with_cache_invalidate"}
+  ],
+  "skipped": [
+    {"resource": "global", "field": "thread_pool_size", "reason": "requires_restart"}
+  ],
+  "errors": []
+}
+```
+
+`errors` 배열이 비어있지 않으면 HTTP **207 Multi-Status**. FE 가 부분 실패를 사용자에게 알림. 다른 항목은 적용되었으므로 settings DB 와 in-memory 가 일관 (실패한 항목만 다음 BE 재시작 시 자동 복구).
+
+`POST /dashboard/monitor-targets/batch` 응답에도 `applied` / `errors` 추가됨. 동일하게 errors 있을 시 207.
+
+### Runtime-immutable 필드
+
+다음 필드 변경은 settings DB 에는 저장되지만 **BE 재시작 후에 적용**된다:
+
+- `thread_pool_size` (ThreadPoolExecutor 는 runtime resize 불가)
+- `server.host`, `server.port` (BE listen socket)
+- `rate_limits.*` (Flask-Limiter 가 데코 시점 캡처)
+
+이 필드들이 변경된 경우 응답의 `skipped` 배열에 등장 + BE 로그에 WARNING 1줄. 운영자는 의도된 변경 후 BE 서비스 재시작 (NSSM stop/start) 필요.
+
+### Escape hatch — POST /dashboard/reload-config
+
+기존 nuclear reload 는 보존됐다. 다음 경우에 명시적으로 호출:
+
+- JDBC driver jar 를 새로 추가했는데 BE 재시작 없이 동작 확인하고 싶을 때 (실제로는 JVM classpath 가 갱신되지 않으므로 효과는 제한적)
+- 테스트 / 디버그 시 모든 cache 를 명시적으로 비우고 싶을 때
+
+`POST /dashboard/reload-config` (admin only) — 응답 shape 변경 없음. 기존 `endpointCount` 만. 5B 부터 `_reload_lock` 안에서 직렬화 되므로 동시 호출 시 두 번째 요청은 첫 번째가 끝날 때까지 대기 (이전엔 race 가능했음 — C-2 fix).
+
+### JDBC classpath 로깅 (I-2 — 5B 와 함께 정리)
+
+이전: 모든 reload 마다 `[ERROR] Reload introduced JDBC jars not on the running JVM classpath ... missing=...` 출력 → alert fatigue.
+
+5B 부터:
+
+- 부팅 시 1회: `[INFO] Loaded JDBC drivers: N jars` + 누락분이 있으면 `[INFO] JDBC jars not on classpath at boot (will be ignored on reload): [...]`
+- 운영자가 **새 connection 추가 → 새로 누락된 jar** 가 등장한 경우만 `[WARNING] JDBC jars not on classpath — newly_missing=[...]` 1회. 같은 누락 jar 는 두 번 다시 로그 안 남.
+
+### Partial reload 의 success criteria
+
+다음 시나리오들이 5B 적용 후 동작 (구현 완료):
+
+- Connection 의 jdbc_url / driver_args 변경 → 그 connection 의 pool 만 재생성, 다른 connection 영향 0
+- API SQL 수정 (connection_id/sql_id 변경) → 그 endpoint cache 만 invalidate, 다른 endpoint cache 보존
+- Monitor target 임계치 / interval 수정 → thread 재생성 없음, 다음 sleep tick 후 자연 적용
+- Monitor target 추가 → 새 thread 1개만 spawn, 다른 target thread 영향 0
+- Monitor target 삭제 → 해당 stop_event signal + thread join + 해당 host 의 SSH session 만 drain
+- 동시 2개 reload 호출 → `_reload_lock` 으로 직렬화
+
+### 관련 commit / PR
+
+- 디자인 spec: `docs/superpowers/specs/2026-05-07-partial-config-reload-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-05-07-partial-config-reload.md`
+- Smoke test scripts: `monigrid-be/scripts/test_config_diff.py` (단위), `monigrid-be/scripts/test_partial_reload.py` (통합)
