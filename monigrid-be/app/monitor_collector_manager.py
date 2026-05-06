@@ -33,7 +33,11 @@ from typing import Any, Callable
 
 from .http_health_checker import check_http_url
 from .network_tester import run_network_test
-from .server_resource_collector import collect_server_resources, clear_ssh_pool
+from .server_resource_collector import (
+    collect_server_resources,
+    clear_ssh_pool,
+    clear_ssh_pool_for_host,
+)
 
 
 TargetLoader = Callable[[], list[dict[str, Any]]]
@@ -71,16 +75,17 @@ class MonitorCollectorManager:
 
         self._snapshots: dict[str, MonitorSnapshot] = {}
         self._snapshot_lock = threading.RLock()
-        self._stop_event = threading.Event()
-        self._threads: list[threading.Thread] = []
+        # Phase 5B: per-target stop_event + thread → 변경된 target 만 재생성 가능.
+        self._stop_events: dict[str, threading.Event] = {}
+        self._threads: dict[str, threading.Thread] = {}
         self._targets_by_id: dict[str, dict[str, Any]] = {}
         self._targets_lock = threading.RLock()
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        self._stop_event.clear()
-        self._threads = []
+        self._stop_events.clear()
+        self._threads.clear()
         try:
             targets = self._target_loader() or []
         except Exception as exc:
@@ -137,33 +142,114 @@ class MonitorCollectorManager:
             )
 
         for target in enabled_targets:
-            thread = threading.Thread(
-                target=self._refresh_loop,
-                args=(target["id"],),
-                name=f"monitor-collect-{target['id']}",
-                daemon=True,
-            )
-            thread.start()
-            self._threads.append(thread)
+            self._spawn_target_thread(target["id"])
+
+    def _spawn_target_thread(self, target_id: str) -> None:
+        """Internal: create per-target stop_event + start refresh thread.
+
+        No-op if a thread for this target_id is already running.
+        """
+        if target_id in self._threads:
+            return
+        stop_event = threading.Event()
+        self._stop_events[target_id] = stop_event
+        thread = threading.Thread(
+            target=self._refresh_loop,
+            args=(target_id,),
+            name=f"monitor-collect-{target_id}",
+            daemon=True,
+        )
+        thread.start()
+        self._threads[target_id] = thread
 
     def stop(self) -> None:
-        self._stop_event.set()
-        for thread in self._threads:
+        for ev in list(self._stop_events.values()):
+            ev.set()
+        for thread in list(self._threads.values()):
             thread.join(timeout=1.5)
-        self._threads = []
+        self._stop_events.clear()
+        self._threads.clear()
 
     def clear(self) -> None:
         with self._snapshot_lock:
             self._snapshots.clear()
 
     def reload(self) -> None:
-        """Stop current threads, re-read targets, restart from scratch."""
+        """Stop current threads, re-read targets, restart from scratch.
+
+        Phase 5B: nuclear path retained as escape hatch (full state reset
+        on demand). New code paths use add_target / remove_target /
+        update_target_in_place for surgical updates.
+        """
         self.stop()
         self.clear()
         # Drain SSH session pool — rotated credentials or removed targets
         # would otherwise leave stale auth lingering across the reload.
         clear_ssh_pool()
         self.start()
+
+    def add_target(self, target: dict[str, Any]) -> None:
+        """Phase 5B: spawn collector thread for a newly-added target.
+
+        Synchronously runs initial collection so the FE sees a real value
+        on the next snapshot poll. Other targets are unaffected.
+        """
+        target_id = str(target["id"])
+        with self._targets_lock:
+            self._targets_by_id[target_id] = target
+        with self._snapshot_lock:
+            if target_id not in self._snapshots:
+                self._snapshots[target_id] = _initial_snapshot(target)
+        if not target.get("enabled", True):
+            return
+        try:
+            self._collect_target(target, "add")
+        except Exception:
+            self._logger.exception(
+                "Initial collection failed for added target — will retry on next tick targetId=%s",
+                target_id,
+            )
+        self._spawn_target_thread(target_id)
+
+    def remove_target(self, target_id: str) -> None:
+        """Phase 5B: stop collector thread for a deleted target.
+
+        Drains SSH session for that target's host. Other hosts unaffected.
+        """
+        target_id = str(target_id)
+        with self._targets_lock:
+            target = self._targets_by_id.pop(target_id, None)
+        with self._snapshot_lock:
+            self._snapshots.pop(target_id, None)
+        stop_event = self._stop_events.pop(target_id, None)
+        thread = self._threads.pop(target_id, None)
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None:
+            thread.join(timeout=1.5)
+        if target is not None:
+            host = (target.get("spec") or {}).get("host") or target.get("host")
+            if host:
+                clear_ssh_pool_for_host(str(host))
+
+    def update_target_in_place(
+        self,
+        target: dict[str, Any],
+        *,
+        ssh_credentials_changed: bool = False,
+    ) -> None:
+        """Phase 5B: mutate target dict in place. Existing collector thread
+        picks up changes on next sleep (interval/threshold/enabled toggle).
+        If SSH credentials/host changed, also drain that host's SSH session
+        so the next collect uses fresh credentials.
+        """
+        target_id = str(target["id"])
+        with self._targets_lock:
+            self._targets_by_id[target_id] = target
+        if ssh_credentials_changed:
+            host = (target.get("spec") or {}).get("host") or target.get("host")
+            if host:
+                clear_ssh_pool_for_host(str(host))
 
     def forget_target(self, target_id: str) -> None:
         """Drop a deleted target's snapshot + memoised entry.
@@ -221,6 +307,9 @@ class MonitorCollectorManager:
     # ── background loop ──────────────────────────────────────────────────
 
     def _refresh_loop(self, target_id: str) -> None:
+        stop_event = self._stop_events.get(target_id)
+        if stop_event is None:
+            return  # spawn 직후 remove 된 race
         with self._targets_lock:
             target = self._targets_by_id.get(target_id)
         if target is None or not target.get("enabled", True):
@@ -231,7 +320,7 @@ class MonitorCollectorManager:
                 "Monitor scheduler started targetId=%s intervalSec=%s",
                 target_id, interval,
             )
-        while not self._stop_event.wait(interval):
+        while not stop_event.wait(interval):
             with self._targets_lock:
                 current = self._targets_by_id.get(target_id)
             if current is None or not current.get("enabled", True):
