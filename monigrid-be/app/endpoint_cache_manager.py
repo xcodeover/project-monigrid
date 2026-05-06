@@ -144,6 +144,15 @@ class EndpointCacheManager:
         with self._cache_lock:
             self._cache.clear()
 
+    def invalidate(self, api_id: str) -> bool:
+        """Phase 5B: drop one endpoint's cache entry. Returns True if an
+        entry was removed. Used by partial reload to clear only the cache
+        for endpoints whose data-affecting fields changed (sql_id /
+        connection_id) — other endpoints' caches stay warm.
+        """
+        with self._cache_lock:
+            return self._cache.pop(api_id, None) is not None
+
     # ── Background refresh loop ───────────────────────────────────────────
 
     def _refresh_loop(self, api_id: str) -> None:

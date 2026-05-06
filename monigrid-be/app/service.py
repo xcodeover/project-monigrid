@@ -408,6 +408,123 @@ class MonitoringBackend:
         for pool in self.db_pools.values():
             pool.close_all()
 
+    # ── Phase 5B: partial reload ──────────────────────────────────────────
+
+    def _apply_config_diff(self, diff, new_config: AppConfig) -> dict:
+        """Mutate in-memory state to match diff. Called under _reload_lock.
+        Returns dict with applied/skipped/errors arrays. Best-effort —
+        per-resource try/except, no rollback.
+        """
+        applied: list[dict] = []
+        skipped: list[dict] = []
+        errors: list[dict] = []
+
+        # ── Connections ─────────────────────────────────────────────────
+        for cid in diff.connections.removed:
+            try:
+                pool = self.db_pools.pop(cid, None)
+                if pool is not None:
+                    pool.close_all()
+                applied.append({"resource": "connection", "id": cid, "action": "pool_closed"})
+            except Exception as exc:
+                errors.append({"resource": "connection", "id": cid,
+                               "action": "pool_close", "error": str(exc)})
+
+        for cid in diff.connections.added:
+            try:
+                self.db_pools[cid] = DBConnectionPool(
+                    max_size=int(get_env("DB_POOL_SIZE", "5"))
+                )
+                applied.append({"resource": "connection", "id": cid, "action": "pool_created"})
+            except Exception as exc:
+                errors.append({"resource": "connection", "id": cid,
+                               "action": "pool_create", "error": str(exc)})
+
+        for cid in diff.connections.changed:
+            try:
+                self.reset_connections(cid)
+                applied.append({"resource": "connection", "id": cid, "action": "pool_reset"})
+            except Exception as exc:
+                errors.append({"resource": "connection", "id": cid,
+                               "action": "pool_reset", "error": str(exc)})
+
+        # ── APIs ────────────────────────────────────────────────────────
+        for aid in diff.apis.removed:
+            try:
+                self._cache_manager.invalidate(aid)
+                applied.append({"resource": "api", "id": aid,
+                                "action": "removed_with_cache_clear"})
+            except Exception as exc:
+                errors.append({"resource": "api", "id": aid,
+                               "action": "remove", "error": str(exc)})
+
+        for aid in diff.apis.added:
+            applied.append({"resource": "api", "id": aid, "action": "added"})
+
+        for aid in diff.apis.changed_data:
+            try:
+                self._cache_manager.invalidate(aid)
+                applied.append({"resource": "api", "id": aid,
+                                "action": "data_changed_with_cache_invalidate"})
+            except Exception as exc:
+                errors.append({"resource": "api", "id": aid,
+                               "action": "data_change", "error": str(exc)})
+
+        for aid in diff.apis.changed_routing:
+            try:
+                self._cache_manager.invalidate(aid)
+                applied.append({"resource": "api", "id": aid,
+                                "action": "routing_changed_with_cache_invalidate"})
+            except Exception as exc:
+                errors.append({"resource": "api", "id": aid,
+                               "action": "routing_change", "error": str(exc)})
+
+        for aid in diff.apis.changed_schedule:
+            applied.append({"resource": "api", "id": aid, "action": "schedule_changed"})
+
+        for aid in diff.apis.changed_metadata:
+            applied.append({"resource": "api", "id": aid, "action": "metadata_changed"})
+
+        # ── Globals ─────────────────────────────────────────────────────
+        if diff.globals.logging_changed:
+            try:
+                configure_logging(new_config.logging)
+                self._log_reader.update_logging_config(new_config.logging)
+                applied.append({"resource": "global", "field": "logging", "action": "applied"})
+            except Exception as exc:
+                errors.append({"resource": "global", "field": "logging",
+                               "error": str(exc)})
+
+        if diff.globals.auth_changed:
+            applied.append({"resource": "global", "field": "auth",
+                            "action": "metadata_only"})
+
+        if diff.globals.rate_limits_changed:
+            applied.append({"resource": "global", "field": "rate_limits",
+                            "action": "metadata_only"})
+            self.logger.warning(
+                "rate_limits change saved to settings DB but Flask-Limiter captures "
+                "values at decorator time — change applied on next BE restart"
+            )
+
+        for field_name in diff.globals.immutable_changed:
+            skipped.append({"resource": "global", "field": field_name,
+                            "reason": "requires_restart"})
+            self.logger.warning(
+                "Field '%s' change saved to settings DB but requires BE restart to take effect",
+                field_name,
+            )
+
+        for field_name in diff.globals.runtime_metadata_changed:
+            applied.append({"resource": "global", "field": field_name,
+                            "action": "metadata_only"})
+
+        if diff.globals.sql_validation_changed:
+            applied.append({"resource": "global", "field": "sql_validation",
+                            "action": "metadata_only"})
+
+        return {"applied": applied, "skipped": skipped, "errors": errors}
+
     def reload(self) -> None:
         """Nuclear reload — recreates all executors / pools / cache / monitor
         threads. Phase 5B kept this as an explicit escape hatch (e.g. admin
