@@ -64,6 +64,8 @@ class RateLimitConfig:
     server_resources_batch: str
     monitor_refresh: str
     monitor_targets_batch: str
+    cache_refresh: str
+    reload_config: str
 
 
 _DEFAULT_RATE_LIMITS = RateLimitConfig(
@@ -78,6 +80,8 @@ _DEFAULT_RATE_LIMITS = RateLimitConfig(
     server_resources_batch="60/minute",
     monitor_refresh="10/minute",
     monitor_targets_batch="10/minute",
+    cache_refresh="30/minute",
+    reload_config="5/minute",
 )
 
 
@@ -279,6 +283,8 @@ def build_app_config(raw: dict[str, Any], base_dir: str) -> AppConfig:
         server_resources_batch=_rl("server_resources_batch"),
         monitor_refresh=_rl("monitor_refresh"),
         monitor_targets_batch=_rl("monitor_targets_batch"),
+        cache_refresh=_rl("cache_refresh"),
+        reload_config=_rl("reload_config"),
     )
 
     # Prefer version from config.json (user-editable), but fall back to the

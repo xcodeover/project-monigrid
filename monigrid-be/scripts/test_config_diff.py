@@ -39,7 +39,8 @@ _DEFAULT_LOG = LoggingConfig(directory="logs", file_prefix="be", retention_days=
 _DEFAULT_RL = RateLimitConfig(global_default="200/minute", auth_login="10/minute",
     dynamic_endpoint="120/minute", health_check="60/minute", health_check_batch="60/minute",
     network_test="60/minute", network_test_batch="60/minute", server_resources="60/minute",
-    server_resources_batch="60/minute", monitor_refresh="10/minute", monitor_targets_batch="10/minute")
+    server_resources_batch="60/minute", monitor_refresh="10/minute", monitor_targets_batch="10/minute",
+    cache_refresh="30/minute", reload_config="5/minute")
 
 
 def _cfg(connections, apis, *, host="127.0.0.1", port=5000, thread_pool=16,

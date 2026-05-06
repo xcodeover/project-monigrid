@@ -96,4 +96,6 @@ def register(app, backend, limiter) -> None:
     @require_auth
     def auth_logout():
         backend.logger.info("Logout success clientIp=%s", get_client_ip())
-        return jsonify({"message": "로그아웃 되었습니다"}), 200
+        # I-4: 다른 모든 응답이 영어이므로 일관성 위해 영어로 통일.
+        # FE 가 message 를 사용자에게 그대로 노출하지 않으므로 i18n 영향 없음.
+        return jsonify({"message": "Logged out"}), 200

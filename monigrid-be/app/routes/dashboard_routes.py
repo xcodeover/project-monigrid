@@ -9,6 +9,7 @@ from app.utils import get_client_ip
 
 
 def register(app, backend, limiter) -> None:
+    rl = backend.config.rate_limits
 
     @app.route("/dashboard/endpoints", methods=["GET"])
     @require_auth
@@ -227,6 +228,7 @@ def register(app, backend, limiter) -> None:
     @app.route("/dashboard/reload-config", methods=["POST"])
     @require_auth
     @require_admin
+    @limiter.limit(rl.reload_config)
     def reload_config():
         client_ip = get_client_ip()
         try:
@@ -239,6 +241,7 @@ def register(app, backend, limiter) -> None:
 
     @app.route("/dashboard/cache/refresh", methods=["POST"])
     @require_auth
+    @limiter.limit(rl.cache_refresh)
     def refresh_cached_endpoint():
         request_json = request.get_json(silent=True) or {}
         api_id = request_json.get("api_id")

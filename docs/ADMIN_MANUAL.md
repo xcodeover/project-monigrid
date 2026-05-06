@@ -1241,3 +1241,23 @@ python migrate_settings_db.py --from initsetting.json --to initsetting.oracle.js
 - 디자인 spec: `docs/superpowers/specs/2026-05-07-partial-config-reload-design.md`
 - Implementation plan: `docs/superpowers/plans/2026-05-07-partial-config-reload.md`
 - Smoke test scripts: `monigrid-be/scripts/test_config_diff.py` (단위), `monigrid-be/scripts/test_partial_reload.py` (통합)
+
+## 5-6. I-1 / I-4 운영 변경사항 (2026-05-07)
+
+### I-1: cache/refresh + reload-config rate limit 추가
+
+이전엔 `/dashboard/cache/refresh` 와 `/dashboard/reload-config` 가 endpoint-specific rate limit 없이 global default (`200/minute`) 만 적용되어, 잘못 만들어진 FE 또는 의도적 abuse 시 BE 의 JDBC 풀과 reload 락을 점거할 위험이 있었다.
+
+5B 와 함께 `RateLimitConfig` 에 두 키 추가 (settings DB `monigrid_settings_kv` 의 `rate_limits.*` 에서 override 가능):
+
+| 키 | 기본값 | 비고 |
+|---|---|---|
+| `cache_refresh` | `30/minute` | 동일 IP/사용자가 cache 강제 새로고침. 30 초과 시 429. JDBC 재연결 (`reset_connection: true`) 폭주 방지. |
+| `reload_config` | `5/minute` | admin 의 명시적 nuclear reload. 5 초과 시 429. 5B 의 `_reload_lock` 으로 어차피 직렬화되지만 폭주 자체를 차단. |
+
+검증: `for i in {1..35}; do curl ...cache/refresh; done` → 30 개는 200, 마지막 5 개는 429.
+
+### I-4: /auth/logout 응답 메시지 영문화
+
+이전: `{"message": "로그아웃 되었습니다"}` — 다른 모든 BE 응답이 영어인 데 반해 한국어 1줄.
+이후: `{"message": "Logged out"}` — 일관성. FE 가 사용자에게 노출하지 않는 internal message 라 i18n 영향 없음.
