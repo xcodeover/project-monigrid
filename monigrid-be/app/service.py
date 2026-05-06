@@ -220,16 +220,81 @@ class MonitoringBackend:
         updates: list[dict],
         deletes: list[str],
     ) -> dict:
-        """Apply monitor target changes in a single transaction. Triggers
-        monitor_collector reload exactly once on success.
+        """Apply monitor target changes atomically (Phase 5B: partial reload).
+
+        After settings DB transaction succeeds, mutates only the affected
+        target threads via MonitorCollectorManager.add_target /
+        remove_target / update_target_in_place — other targets' threads
+        and SSH sessions stay running.
+
+        Returns the existing settings_store shape plus 'applied' and
+        'errors' arrays for partial-reload diagnostics.
         """
-        result = self.settings_store.apply_monitor_targets_batch(
-            creates=creates, updates=updates, deletes=deletes,
-        )
-        if result.get("success"):
-            # 1회 reload (개별 endpoint 마다 reload 하던 것과 대비 — 이슈 #2 참고)
-            self._monitor_collector.reload()
-        return result
+        with self._reload_lock:
+            store_result = self.settings_store.apply_monitor_targets_batch(
+                creates=creates, updates=updates, deletes=deletes,
+            )
+            if not store_result.get("success"):
+                # settings DB transaction rolled back — nothing to apply.
+                return store_result
+
+            applied: list[dict] = []
+            errors: list[dict] = []
+            results = store_result.get("results") or {}
+
+            for target in results.get("created", []):
+                try:
+                    self._monitor_collector.add_target(target)
+                    applied.append({"resource": "monitor_target",
+                                    "id": str(target.get("id")), "action": "added"})
+                except Exception as exc:
+                    errors.append({"resource": "monitor_target",
+                                   "id": str(target.get("id")),
+                                   "action": "add", "error": str(exc)})
+
+            for target in results.get("updated", []):
+                try:
+                    # 보수적: update 시 SSH host 가 바뀌었을 수 있으니 항상 drain.
+                    # (host 변경 detection 은 settings_store 가 하지 않음)
+                    self._monitor_collector.update_target_in_place(
+                        target, ssh_credentials_changed=True,
+                    )
+                    applied.append({"resource": "monitor_target",
+                                    "id": str(target.get("id")), "action": "updated"})
+                except Exception as exc:
+                    errors.append({"resource": "monitor_target",
+                                   "id": str(target.get("id")),
+                                   "action": "update", "error": str(exc)})
+
+            for target_id in results.get("deleted", []):
+                try:
+                    self._monitor_collector.remove_target(str(target_id))
+                    applied.append({"resource": "monitor_target",
+                                    "id": str(target_id), "action": "removed"})
+                except Exception as exc:
+                    errors.append({"resource": "monitor_target",
+                                   "id": str(target_id),
+                                   "action": "remove", "error": str(exc)})
+
+            return {**store_result, "applied": applied, "errors": errors}
+
+    def apply_partial_config_reload(self, new_config_dict: dict) -> dict:
+        """Phase 5B entry point: settings DB write + diff + per-resource apply.
+
+        Returns: {applied: [...], skipped: [...], errors: [...]}.
+        Errors do not abort — best-effort apply.
+        """
+        from .config_diff import compute_config_diff
+
+        with self._reload_lock:
+            old_config = self.config
+            self.settings_store.save_config_dict(new_config_dict)
+            new_config = self._config_reloader()
+            diff = compute_config_diff(old_config, new_config)
+            result = self._apply_config_diff(diff, new_config)
+            self.config = new_config
+            self._check_classpath_for_reload(new_config)
+            return result
 
     def get_monitor_snapshot(self, target_id: str) -> MonitorSnapshot | None:
         return self._monitor_collector.get_snapshot(target_id)
