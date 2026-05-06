@@ -175,6 +175,25 @@ def clear_ssh_pool() -> None:
         s.close()
 
 
+def clear_ssh_pool_for_host(host: str) -> None:
+    """Drain SSH sessions for one host only. Other hosts preserved.
+
+    Used by partial monitor target reload — when a single target's
+    credentials or host change, only that host's sessions need to be
+    closed; targets on other hosts keep their warm connections.
+    """
+    if not host:
+        return
+    with _SSH_POOL_LOCK:
+        keys_to_remove = [k for k in _SSH_POOL.keys() if k[0] == host]
+        sessions = [_SSH_POOL.pop(k) for k in keys_to_remove]
+    for s in sessions:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
 @contextlib.contextmanager
 def _noop_ctx():
     """No-op context manager used when SSH is not needed."""
