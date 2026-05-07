@@ -25,9 +25,10 @@ def _authenticate(backend, username: str, password: str) -> tuple[str, str] | No
     """Return (username, role) on success, else None.
 
     DB-first: if an enabled user matches the given username, verify the
-    stored bcrypt hash. If no admin user exists in the DB yet the env /
-    config admin is honored as a bootstrap credential so operators can
-    reach the FE before the first real account is provisioned.
+    stored bcrypt hash. If no DB row matches the username, fall back to
+    the env/config admin (AUTH_USERNAME/AUTH_PASSWORD). The env fallback
+    is always-on — kept as a last-resort recovery path. Disable by
+    setting AUTH_PASSWORD to "" in .env.
     """
     creds = backend.get_user_credentials(username)
     if creds is not None:
@@ -36,12 +37,10 @@ def _authenticate(backend, username: str, password: str) -> tuple[str, str] | No
             return username, role
         return None
 
-    # No DB row for this username — allow env bootstrap only while no
-    # admin user has been created yet. Otherwise the env creds must not
-    # override the DB.
-    if backend.has_admin_user():
-        return None
-
+    # No DB row for this username — fall through to env/config bootstrap.
+    # Kept always-on as a last-resort recovery path (DB access is required
+    # to set a strong AUTH_PASSWORD anyway). To disable, set AUTH_PASSWORD
+    # to an empty string in .env — the empty-cred guard below will reject.
     env_username, env_password = _env_admin_credentials(backend)
     if not env_username or not env_password:
         return None
