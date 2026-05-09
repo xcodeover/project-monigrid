@@ -23,6 +23,31 @@ export default function TimemachineControlBar() {
         setLocalInput(dateToInput(tm.atMs));
     }, [tm.atMs]);
 
+    // Keyboard shortcuts — Space, ArrowLeft/Right, Esc
+    useEffect(() => {
+        if (!tm.enabled) return;
+        const onKey = (e) => {
+            // Don't fire when user is typing in an input/textarea
+            if (e.target?.tagName === "INPUT" || e.target?.tagName === "TEXTAREA" || e.target?.tagName === "SELECT") return;
+            if (e.key === " ") {
+                e.preventDefault();
+                tm.setPlaying(!tm.playing);
+            } else if (e.key === "ArrowLeft") {
+                e.preventDefault();
+                const delta = e.shiftKey ? -5 * tm.frameSizeMs : -tm.frameSizeMs;
+                tm.setAtMs((tm.atMs ?? Date.now()) + delta);
+            } else if (e.key === "ArrowRight") {
+                e.preventDefault();
+                const delta = e.shiftKey ? 5 * tm.frameSizeMs : tm.frameSizeMs;
+                tm.setAtMs((tm.atMs ?? Date.now()) + delta);
+            } else if (e.key === "Escape") {
+                tm.disable();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [tm.enabled, tm.playing, tm.atMs, tm.frameSizeMs, tm.setPlaying, tm.setAtMs, tm.disable]);
+
     if (!tm.enabled) return null;
 
     const earliest = tm.earliestMs ?? Date.now() - 24 * 3600_000;
@@ -59,6 +84,36 @@ export default function TimemachineControlBar() {
                     className="tm-cb-datetime"
                 />
             </div>
+            <div className="tm-cb-playback">
+                <button
+                    type="button"
+                    className="tm-cb-play"
+                    onClick={() => tm.setPlaying(!tm.playing)}
+                    title={tm.playing ? "일시정지 (Space)" : "재생 (Space)"}
+                    aria-label={tm.playing ? "일시정지" : "재생"}
+                >{tm.playing ? "⏸" : "▶"}</button>
+                <select
+                    className="tm-cb-select"
+                    value={tm.speed}
+                    onChange={(e) => tm.setSpeed(Number(e.target.value))}
+                    title="재생 속도"
+                >
+                    <option value={1}>1x</option>
+                    <option value={2}>2x</option>
+                    <option value={5}>5x</option>
+                    <option value={10}>10x</option>
+                </select>
+                <select
+                    className="tm-cb-select"
+                    value={tm.frameSizeMs}
+                    onChange={(e) => tm.setFrameSizeMs(Number(e.target.value))}
+                    title="프레임 간격 (한 tick 당 진행)"
+                >
+                    <option value={30_000}>30s</option>
+                    <option value={60_000}>1m</option>
+                    <option value={300_000}>5m</option>
+                </select>
+            </div>
             <div className="tm-cb-center">
                 <input
                     type="range"
@@ -81,7 +136,7 @@ export default function TimemachineControlBar() {
                     type="button"
                     className="tm-cb-live"
                     onClick={tm.disable}
-                    title="LIVE 모드로 복귀"
+                    title="LIVE 모드로 복귀 (Esc)"
                 >LIVE</button>
             </div>
         </div>
