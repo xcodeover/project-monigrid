@@ -155,7 +155,9 @@ def _ddl_statements(db_type: str) -> list[str]:
                 sql_id VARCHAR(128) NOT NULL,
                 enabled TINYINT(1) NOT NULL DEFAULT 1,
                 refresh_interval_sec INT NOT NULL DEFAULT 5,
-                query_timeout_sec INT NOT NULL DEFAULT 30
+                query_timeout_sec INT NOT NULL DEFAULT 30,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR(128) NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
             """
@@ -173,7 +175,8 @@ def _ddl_statements(db_type: str) -> list[str]:
                 spec LONGTEXT NOT NULL,
                 interval_sec INT NOT NULL DEFAULT 30,
                 enabled TINYINT(1) NOT NULL DEFAULT 1,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR(128) NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
             """
@@ -259,7 +262,9 @@ def _ddl_statements(db_type: str) -> list[str]:
                 sql_id NVARCHAR(128) NOT NULL,
                 enabled BIT NOT NULL DEFAULT 1,
                 refresh_interval_sec INT NOT NULL DEFAULT 5,
-                query_timeout_sec INT NOT NULL DEFAULT 30
+                query_timeout_sec INT NOT NULL DEFAULT 30,
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_by NVARCHAR(128) NULL
             )
             """,
             """
@@ -279,7 +284,8 @@ def _ddl_statements(db_type: str) -> list[str]:
                 spec NVARCHAR(MAX) NOT NULL,
                 interval_sec INT NOT NULL DEFAULT 30,
                 enabled BIT NOT NULL DEFAULT 1,
-                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_by NVARCHAR(128) NULL
             )
             """,
             """
@@ -371,7 +377,9 @@ def _ddl_statements(db_type: str) -> list[str]:
             sql_id VARCHAR2(128) NOT NULL,
             enabled NUMBER(1) DEFAULT 1 NOT NULL,
             refresh_interval_sec NUMBER(10) DEFAULT 5 NOT NULL,
-            query_timeout_sec NUMBER(10) DEFAULT 30 NOT NULL
+            query_timeout_sec NUMBER(10) DEFAULT 30 NOT NULL,
+            updated_at TIMESTAMP DEFAULT SYS_EXTRACT_UTC(SYSTIMESTAMP) NOT NULL,
+            updated_by VARCHAR2(128) NULL
         )
         """,
         """
@@ -389,7 +397,8 @@ def _ddl_statements(db_type: str) -> list[str]:
             spec CLOB NOT NULL,
             interval_sec NUMBER(10) DEFAULT 30 NOT NULL,
             enabled NUMBER(1) DEFAULT 1 NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_by VARCHAR2(128) NULL
         )
         """,
         """
