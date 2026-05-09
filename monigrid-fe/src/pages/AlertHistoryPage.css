@@ -77,6 +77,29 @@
     border-color: rgba(148, 163, 184, 0.3);
 }
 
+/* header actions 의 icon-only 버튼 (로그아웃).
+   대시보드의 .logout-btn.icon 과 동일한 34x34 / 10px radius / 알파 chrome. */
+.ah-icon-btn-action {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(255, 255, 255, 0.03);
+    color: #b7c3d4;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.18s, border-color 0.18s, color 0.18s;
+}
+
+.ah-icon-btn-action:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(25, 160, 255, 0.28);
+    color: var(--text-primary, #e2e8f0);
+}
+
 .ah-user {
     font-size: 12px;
     color: var(--text-secondary, #94a3b8);

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { dashboardService } from "../services/api";
 import { monitorService } from "../services/dashboardService";
-import { IconArrowLeft } from "../components/icons";
+import { IconArrowLeft, IconLogout } from "../components/icons";
 import "./AlertHistoryPage.css";
 
 /* ── Helpers ──────────────────────────────────────────────────── */
@@ -298,8 +298,14 @@ export default function AlertHistoryPage() {
                 </div>
                 <div className="ah-actions">
                     <span className="ah-user">@{user?.username || "user"}</span>
-                    <button type="button" className="ah-btn" onClick={handleLogout}>
-                        로그아웃
+                    <button
+                        type="button"
+                        className="ah-icon-btn-action"
+                        onClick={handleLogout}
+                        title="로그아웃"
+                        aria-label="로그아웃"
+                    >
+                        <IconLogout size={16} />
                     </button>
                 </div>
             </header>

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { adminUserService } from "../services/dashboardService";
 import PasswordInput from "../components/PasswordInput";
-import { IconArrowLeft, IconClose, IconPlus, IconRefresh } from "../components/icons";
+import { IconArrowLeft, IconClose, IconLogout, IconPlus, IconRefresh } from "../components/icons";
 import "./UserManagementPage.css";
 
 /**
@@ -182,14 +182,32 @@ export default function UserManagementPage() {
                 </div>
                 <div className="um-actions">
                     <span className="um-user">@{user?.username || "admin"}</span>
-                    <button type="button" className="um-btn um-btn-primary um-btn-icon-text" onClick={handleNew}>
-                        <IconPlus size={14} /> 새 사용자
+                    <button
+                        type="button"
+                        className="um-icon-btn-action um-icon-btn-primary"
+                        onClick={handleNew}
+                        title="새 사용자"
+                        aria-label="새 사용자"
+                    >
+                        <IconPlus size={16} />
                     </button>
-                    <button type="button" className="um-btn um-btn-icon-text" onClick={loadUsers}>
-                        <IconRefresh size={14} /> 새로고침
+                    <button
+                        type="button"
+                        className="um-icon-btn-action"
+                        onClick={loadUsers}
+                        title="새로고침"
+                        aria-label="새로고침"
+                    >
+                        <IconRefresh size={16} />
                     </button>
-                    <button type="button" className="um-btn" onClick={handleLogout}>
-                        로그아웃
+                    <button
+                        type="button"
+                        className="um-icon-btn-action"
+                        onClick={handleLogout}
+                        title="로그아웃"
+                        aria-label="로그아웃"
+                    >
+                        <IconLogout size={16} />
                     </button>
                 </div>
             </header>
