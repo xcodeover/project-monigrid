@@ -647,8 +647,8 @@ const ServerResourceCard = ({
                                 type='button'
                                 className='compact-icon-btn'
                                 onClick={openSettings}
-                                disabled={tmActive}
-                                title={tmActive ? '타임머신 모드에서는 편집 불가' : '설정'}
+                               
+                                title='설정'
                             >
                                 <IconSettings size={14} />
                             </button>
@@ -656,8 +656,8 @@ const ServerResourceCard = ({
                                 type='button'
                                 className='compact-icon-btn remove'
                                 onClick={onRemove}
-                                disabled={tmActive}
-                                title={tmActive ? '타임머신 모드에서는 편집 불가' : '제거'}
+                               
+                                title='제거'
                             >
                                 <IconClose size={14} />
                             </button>

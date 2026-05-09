@@ -10,7 +10,6 @@ import {
 } from "../pages/dashboardConstants";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
 import { clamp, toGridSize, toUserSize } from "./widgetUtils.js";
-import { useTimemachineEnabled } from "../contexts/TimemachineContext";
 import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 import "./ApiCard.css";
 import "./HealthCheckCard.css";
@@ -237,7 +236,6 @@ const HealthCheckCard = ({
     onRefreshIntervalChange,
     onWidgetMetaChange,
 }) => {
-    const tmActive = useTimemachineEnabled();
     const [showSettings, setShowSettings] = useState(false);
     const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
 
@@ -313,8 +311,8 @@ const HealthCheckCard = ({
                                     event.stopPropagation();
                                     setShowSettings(true);
                                 }}
-                                disabled={tmActive}
-                                title={tmActive ? '타임머신 모드에서는 편집 불가' : '설정'}
+                               
+                                title='설정'
                             >
                                 <IconSettings size={14} />
                             </button>
@@ -325,8 +323,8 @@ const HealthCheckCard = ({
                                     event.stopPropagation();
                                     onRemove();
                                 }}
-                                disabled={tmActive}
-                                title={tmActive ? '타임머신 모드에서는 편집 불가' : '제거'}
+                               
+                                title='제거'
                             >
                                 <IconClose size={14} />
                             </button>

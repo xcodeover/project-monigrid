@@ -21,10 +21,7 @@ import { useAuthStore } from "../store/authStore";
 import { useAlarmStore } from "../store/alarmStore";
 import AlarmBanner from "../components/AlarmBanner";
 import { TimemachineProvider, useTimemachine } from "../contexts/TimemachineContext";
-import TimemachineBanner from "../components/TimemachineBanner";
 import TimemachineControlBar from "../components/TimemachineControlBar";
-import TimemachineDetailModal from "../components/TimemachineDetailModal";
-import { snapshotKeyForWidget } from "../utils/snapshotKey";
 // SQL 편집기 / 백엔드 설정 모달은 모두 ConfigEditorPage 안으로 이동했다.
 // 비밀번호 게이트는 ConfigEditorPage 내부에서 sessionStorage 기반으로 처리.
 import DashboardHeader from "./DashboardHeader";
@@ -112,14 +109,6 @@ const DashboardPageInner = () => {
     // 빌드 시점 기본값 해석은 services/http.js에 일원화 (same-origin 모드 포함)
     const rememberedApiBaseUrl =
         getRememberedApiBaseUrl() || BUILDTIME_API_BASE_URL;
-
-    // Timemachine detail modal state (Phase 3)
-    const [detailWidget, setDetailWidget] = useState(null);
-    const openDetail = (widget) => {
-        if (!tm.enabled) return;
-        setDetailWidget(widget);
-    };
-    const closeDetail = () => setDetailWidget(null);
 
     const [showAddApi, setShowAddApi] = useState(false);
     const [showDashboardSettings, setShowDashboardSettings] = useState(false);
@@ -736,20 +725,14 @@ const DashboardPageInner = () => {
                 onToggleFullscreen={handleToggleFullscreen}
                 onOpenSettings={() => setShowDashboardSettings(true)}
                 onOpenConfigEditor={() => navigate("/admin/config")}
-                onOpenAddApi={tm.enabled ? null : () => setShowAddApi(true)}
-                onOpenUserManagement={tm.enabled ? null : () => navigate("/users")}
-                onRefreshAll={tm.enabled ? null : () => refetchAll()}
+                onOpenAddApi={() => setShowAddApi(true)}
+                onOpenUserManagement={() => navigate("/users")}
+                onRefreshAll={() => refetchAll()}
                 onOpenAlerts={() => navigate("/alerts")}
                 onToggleTimemachine={handleToggleTm}
                 timemachineActive={tm.enabled}
-                addWidgetDisabled={tm.enabled}
-                settingsDisabled={tm.enabled}
-                backendConfigDisabled={tm.enabled}
-                userMgmtDisabled={tm.enabled}
                 onLogout={handleLogout}
             />
-
-            <TimemachineBanner />
 
             {showAddApi && (
                 <AddApiModal
@@ -833,8 +816,8 @@ const DashboardPageInner = () => {
                             containerPadding={[0, 0]}
                             draggableHandle='.api-card-header'
                             resizeHandles={["se"]}
-                            isDraggable={!tm.enabled}
-                            isResizable={!tm.enabled}
+                            isDraggable
+                            isResizable
                             onDragStop={handleLayoutCommit}
                             onResizeStop={handleLayoutCommit}
                         >
@@ -859,8 +842,7 @@ const DashboardPageInner = () => {
                                 return (
                                     <div
                                         key={widget.id}
-                                        className={`grid-item${isWidgetAlarming ? " widget-alarming" : ""}${tm.enabled ? " grid-item-tm" : ""}`}
-                                        onDoubleClick={tm.enabled ? () => openDetail(widget) : undefined}
+                                        className={`grid-item${isWidgetAlarming ? " widget-alarming" : ""}`}
                                     >
                                         <WidgetRenderer
                                             widget={widget}
@@ -904,26 +886,6 @@ const DashboardPageInner = () => {
                     )}
                 </div>
             </div>
-
-            {detailWidget && (() => {
-                const snapKey = tm.resolveSnapshotKey
-                    ? tm.resolveSnapshotKey(detailWidget)
-                    : snapshotKeyForWidget(detailWidget);
-                const [snapSourceType, snapSourceId] = snapKey ? snapKey.split("|") : [null, null];
-                const currentPayload = snapKey
-                    ? (tm.snapshotByKey.get(snapKey)?.payload ?? null)
-                    : null;
-                return (
-                    <TimemachineDetailModal
-                        widget={detailWidget}
-                        atMs={tm.atMs}
-                        sourceType={snapSourceType}
-                        sourceId={snapSourceId}
-                        currentPayload={currentPayload}
-                        onClose={closeDetail}
-                    />
-                );
-            })()}
 
             <AlarmBanner />
 
