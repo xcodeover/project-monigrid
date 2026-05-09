@@ -620,6 +620,16 @@
     padding-bottom: 80px;
 }
 
+/* Timemachine toggle button — active (lavender/purple tone) */
+.toolbar-btn-tm.active {
+    background: rgba(168, 85, 247, 0.18);
+    border-color: rgba(168, 85, 247, 0.5);
+    color: #c4b5fd;
+}
+.toolbar-btn-tm.active:hover {
+    background: rgba(168, 85, 247, 0.28);
+}
+
 .api-grid {
     animation: fadeIn 0.3s ease-out;
     min-height: 640px;

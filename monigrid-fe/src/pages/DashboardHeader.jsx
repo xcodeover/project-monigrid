@@ -40,7 +40,12 @@ const DashboardHeader = ({
     onOpenUserManagement,
     onRefreshAll,
     onOpenAlerts,
-    onOpenTimemachine,
+    onToggleTimemachine,
+    timemachineActive,
+    addWidgetDisabled,
+    settingsDisabled,
+    backendConfigDisabled,
+    userMgmtDisabled,
     onLogout,
 }) => {
     const resolvedTitle = dashboardTitle || APP_TITLE;
@@ -97,7 +102,8 @@ const DashboardHeader = ({
                     <button
                         className='toolbar-btn toolbar-btn-primary'
                         onClick={onOpenAddApi}
-                        title='위젯 추가'
+                        disabled={addWidgetDisabled}
+                        title={addWidgetDisabled ? '타임머신 모드에서는 사용 불가' : '위젯 추가'}
                         aria-label='위젯 추가'
                     >
                         <IconPlus size={16} />
@@ -105,7 +111,8 @@ const DashboardHeader = ({
                     <button
                         className='toolbar-btn toolbar-btn-secondary'
                         onClick={onOpenSettings}
-                        title='대시보드 설정'
+                        disabled={settingsDisabled}
+                        title={settingsDisabled ? '타임머신 모드에서는 사용 불가' : '대시보드 설정'}
                         aria-label='대시보드 설정'
                     >
                         <IconLayoutGrid size={16} />
@@ -114,7 +121,8 @@ const DashboardHeader = ({
                         <button
                             className='toolbar-btn toolbar-btn-secondary toolbar-btn-backend'
                             onClick={onOpenConfigEditor}
-                            title='백엔드 설정'
+                            disabled={backendConfigDisabled}
+                            title={backendConfigDisabled ? '타임머신 모드에서는 사용 불가' : '백엔드 설정'}
                             aria-label='백엔드 설정'
                         >
                             <IconSliders size={16} />
@@ -128,7 +136,8 @@ const DashboardHeader = ({
                         <button
                             className='toolbar-btn toolbar-btn-secondary'
                             onClick={onOpenUserManagement}
-                            title='사용자 계정 관리'
+                            disabled={userMgmtDisabled}
+                            title={userMgmtDisabled ? '타임머신 모드에서는 사용 불가' : '사용자 계정 관리'}
                             aria-label='사용자 계정 관리'
                         >
                             <IconUsers size={16} />
@@ -138,6 +147,7 @@ const DashboardHeader = ({
                     <button
                         className='toolbar-btn toolbar-btn-secondary'
                         onClick={onRefreshAll}
+                        disabled={!onRefreshAll}
                         title='전체 새로고침'
                         aria-label='전체 새로고침'
                     >
@@ -154,10 +164,11 @@ const DashboardHeader = ({
                     </button>
 
                     <button
-                        className='toolbar-btn toolbar-btn-secondary'
-                        onClick={onOpenTimemachine}
-                        title='타임머신 (시점 조회)'
-                        aria-label='타임머신'
+                        className={`toolbar-btn toolbar-btn-secondary toolbar-btn-tm${timemachineActive ? " active" : ""}`}
+                        onClick={onToggleTimemachine}
+                        title={timemachineActive ? '타임머신 모드 종료' : '타임머신 모드'}
+                        aria-label={timemachineActive ? '타임머신 모드 종료' : '타임머신 모드'}
+                        aria-pressed={timemachineActive ? "true" : "false"}
                     >
                         <IconArrowLeft size={16} />
                     </button>
