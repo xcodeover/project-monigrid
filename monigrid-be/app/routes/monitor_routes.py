@@ -34,8 +34,9 @@ def register(app, backend, limiter) -> None:
     @require_admin
     def create_monitor_target():
         body = request.get_json(silent=True) or {}
+        username = current_username()
         try:
-            stored = backend.upsert_monitor_target(body)
+            stored = backend.upsert_monitor_target(body, actor=username)
         except ValueError as err:
             return jsonify({"message": str(err)}), 400
         except Exception as err:
@@ -55,8 +56,9 @@ def register(app, backend, limiter) -> None:
     def update_monitor_target(target_id: str):
         body = request.get_json(silent=True) or {}
         body["id"] = target_id
+        username = current_username()
         try:
-            stored = backend.upsert_monitor_target(body)
+            stored = backend.upsert_monitor_target(body, actor=username)
         except ValueError as err:
             return jsonify({"message": str(err)}), 400
         except Exception as err:

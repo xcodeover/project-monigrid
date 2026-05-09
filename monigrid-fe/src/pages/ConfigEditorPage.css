@@ -597,23 +597,20 @@
     min-width: 1240px;
 }
 
-/* 데이터 API grid 컬럼 폭 (총 11 컬럼):
-   No / 활성 toggle / API ID / Path / Connection / SQL ID / 주기 / flags / 수정 시각 / 편집자 / 액션
-   액션 컬럼은 SQL 편집(✏️) + 임계치 편집(⚠) + 복제 + 삭제 4개를 수용하므로
-   넉넉히 잡는다. */
+/* 데이터 API grid 컬럼 폭 (총 10 컬럼):
+   No / 활성 / API ID / REST API Path / Connection / SQL ID / 주기 / 수정 시각 / 편집자 / 액션 */
 .cfg-grid-apis .cfg-grid-row {
     grid-template-columns:
-        46px                  /* No */
-        46px                  /* enabled toggle */
-        minmax(120px, 1.2fr)  /* API ID */
-        minmax(180px, 2fr)    /* REST path — 가장 넓게 */
-        minmax(140px, 1.2fr)  /* connection */
-        minmax(120px, 1fr)    /* sql_id */
-        80px                  /* interval */
-        minmax(110px, 0.9fr)  /* flags (신규/삭제 예정/임계치 배지) */
-        140px                 /* 수정 시각 */
-        110px                 /* 편집자 */
-        140px;                /* actions (SQL + 임계치 + 복제 + 삭제) */
+        46px                 /* No */
+        46px                 /* 활성 */
+        minmax(120px, 1fr)   /* API ID */
+        minmax(180px, 1.4fr) /* REST API Path */
+        minmax(120px, 1fr)   /* Connection */
+        minmax(120px, 1fr)   /* SQL ID */
+        80px                 /* 주기 */
+        140px                /* 수정 시각 */
+        110px                /* 편집자 */
+        96px;                /* 액션 (✏ + ⚠ + 복제 + 삭제) */
 }
 
 /* Audit cells — 수정 시각 / 편집자 */

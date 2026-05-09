@@ -20,8 +20,12 @@ export const formatLocalDateTime = (isoUtc) => {
     if (!isoUtc) return "—";
     const d = new Date(isoUtc);
     if (Number.isNaN(d.getTime())) return String(isoUtc);
-    // Intl 출력 'YYYY/MM/DD, HH:mm' 또는 'YYYY. MM. DD. HH:mm' 등 → 'YYYY-MM-DD HH:mm'
-    return _DATE_FMT.format(d).replace(/[/.]/g, "-").replace(",", "").replace(/\s+/g, " ").trim();
+    const parts = Object.fromEntries(
+        _DATE_FMT.formatToParts(d).map((p) => [p.type, p.value])
+    );
+    // hour는 24h 모드에서 '24'를 돌려주는 브라우저가 있어 정규화
+    const hh = parts.hour === "24" ? "00" : (parts.hour || "00");
+    return `${parts.year}-${parts.month}-${parts.day} ${hh}:${parts.minute || "00"}`;
 };
 
 const AuditCells = ({ updatedAt, updatedBy }) => (

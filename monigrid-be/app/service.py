@@ -347,12 +347,12 @@ class MonitoringBackend:
     def get_monitor_target(self, target_id: str) -> dict[str, Any] | None:
         return self.settings_store.get_monitor_target(target_id)
 
-    def upsert_monitor_target(self, item: dict[str, Any]) -> dict[str, Any]:
+    def upsert_monitor_target(self, item: dict[str, Any], *, actor: str = "") -> dict[str, Any]:
         """Phase 5B: single-item upsert routes to partial path. Existing
         FE callers receive the same shape (stored target dict).
         """
         with self._reload_lock:
-            stored = self.settings_store.upsert_monitor_target(item)
+            stored = self.settings_store.upsert_monitor_target(item, actor=actor)
             # If id was already known → update_target_in_place; else add_target.
             if stored["id"] in self._monitor_collector._targets_by_id:
                 self._monitor_collector.update_target_in_place(
