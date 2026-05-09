@@ -21,7 +21,7 @@ import { useAuthStore } from "../store/authStore";
 import { useAlarmStore } from "../store/alarmStore";
 import AlarmBanner from "../components/AlarmBanner";
 import { TimemachineProvider, useTimemachine } from "../contexts/TimemachineContext";
-import TimemachineControlBar from "../components/TimemachineControlBar";
+import TimemachineControlBar, { TimemachineEntryButton } from "../components/TimemachineControlBar";
 // SQL 편집기 / 백엔드 설정 모달은 모두 ConfigEditorPage 안으로 이동했다.
 // 비밀번호 게이트는 ConfigEditorPage 내부에서 sessionStorage 기반으로 처리.
 import DashboardHeader from "./DashboardHeader";
@@ -380,11 +380,6 @@ const DashboardPageInner = () => {
         navigate("/login");
     };
 
-    const handleToggleTm = () => {
-        if (tm.enabled) tm.disable();
-        else tm.enable();
-    };
-
     const handleRemoveApi = (apiId) => {
         reportWidgetStatus(apiId, "live");
         removeWidget(apiId);
@@ -729,8 +724,6 @@ const DashboardPageInner = () => {
                 onOpenUserManagement={() => navigate("/users")}
                 onRefreshAll={() => refetchAll()}
                 onOpenAlerts={() => navigate("/alerts")}
-                onToggleTimemachine={handleToggleTm}
-                timemachineActive={tm.enabled}
                 onLogout={handleLogout}
             />
 
@@ -890,6 +883,7 @@ const DashboardPageInner = () => {
             <AlarmBanner />
 
             <TimemachineControlBar />
+            <TimemachineEntryButton />
 
             <footer className='dashboard-footer'>
                 <span className='footer-copyright'>

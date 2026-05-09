@@ -213,34 +213,6 @@
     white-space: nowrap;
 }
 
-/* LIVE 인디케이터 — 라이브(non-TM) 모드에서만 표시. 빨간 dot + LIVE 라벨이
-   천천히 blink. 비디오 플레이어의 LIVE 표시 mental model. */
-.live-indicator {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    background: rgba(239, 68, 68, 0.10);
-    border: 1px solid rgba(239, 68, 68, 0.35);
-    color: #fca5a5;
-    border-radius: 6px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    animation: live-blink 1.6s ease-in-out infinite;
-}
-.live-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #ef4444;
-    box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
-}
-@keyframes live-blink {
-    0%, 100% { opacity: 1; }
-    50%      { opacity: 0.45; }
-}
 
 .header-controls-row {
     display: flex;

@@ -66,6 +66,15 @@ export default function TimemachineControlBar() {
 
     return (
         <div className="tm-controlbar">
+            <button
+                type="button"
+                className="tm-cb-mode-btn tm-cb-mode-btn-live"
+                onClick={tm.disable}
+                title="LIVE 모드로 복귀 (Esc)"
+            >
+                <span className="tm-cb-mode-dot" aria-hidden />
+                LIVE
+            </button>
             <div className="tm-cb-left">
                 <label className="tm-cb-label">시점</label>
                 <input
@@ -122,13 +131,32 @@ export default function TimemachineControlBar() {
                 />
             </div>
             <div className="tm-cb-right">
-                <button
-                    type="button"
-                    className="tm-cb-live"
-                    onClick={tm.disable}
-                    title="LIVE 모드로 복귀 (Esc)"
-                >LIVE</button>
+                <span className="tm-cb-tm-indicator" title="타임머신 모드 (과거 시점 데이터)">
+                    <span className="tm-cb-tm-dot" aria-hidden />
+                    TimeMachine
+                </span>
             </div>
         </div>
+    );
+}
+
+/**
+ * Floating entry button — 라이브 모드에서 좌측 하단에 떠 있고, 클릭하면
+ * TimemachineControlBar 가 등장하면서 그 안의 LIVE 복귀 버튼이 같은 위치에
+ * 자리잡는다 (사용자 mental model: 한 자리에서 토글).
+ */
+export function TimemachineEntryButton() {
+    const tm = useTimemachine();
+    if (tm.enabled) return null;
+    return (
+        <button
+            type="button"
+            className="tm-entry-btn"
+            onClick={() => tm.enable()}
+            title="타임머신 모드 진입 — 과거 시점의 대시보드 데이터를 볼 수 있어요"
+        >
+            <span className="tm-entry-icon" aria-hidden>⏪</span>
+            TimeMachine
+        </button>
     );
 }

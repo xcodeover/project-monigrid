@@ -7,7 +7,7 @@ import {
 } from "react";
 import apiClient from "../services/http.js";
 import { monitorService } from "../services/dashboardService.js";
-import { useTimemachineEnabled } from "../contexts/TimemachineContext";
+import { useTimemachine } from "../contexts/TimemachineContext";
 import { useDocumentVisible } from "../hooks/useDocumentVisible.js";
 import {
     MAX_REFRESH_INTERVAL_SEC,
@@ -152,7 +152,8 @@ const ServerResourceCard = ({
     onAlarmChange,
 }) => {
     /* ── timemachine mode check ────────────────────────────────────── */
-    const tmActive = useTimemachineEnabled();
+    const tm = useTimemachine();
+    const tmActive = tm.enabled;
 
     /* ── mode: snapshot (BE-centralized) vs legacy (credentials in widget) */
     const targetIds = useMemo(
@@ -409,6 +410,52 @@ const ServerResourceCard = ({
         if (tmActive || !hasItems) return;
         fetchAllServers();
     }, [pollKey, hasItems, fetchAllServers, tmActive]);
+
+    // 타임머신 모드: live polling 대신 tm.snapshotByKey 에서 monitor:server_resource
+    // 의 snapshot 을 각 targetId 별로 읽어 serverStates 에 반영. snapshot.payload =
+    // {label, data, errorMessage, spec, ...} (BE _tm_archive_monitor 와 동일 shape).
+    useEffect(() => {
+        if (!tmActive || !hasItems || !useSnapshot) return;
+        const items = [];
+        for (const tid of targetIds) {
+            const snap = tm.snapshotByKey.get(`monitor:server_resource|${tid}`);
+            if (!snap) {
+                items.push({ targetId: tid, data: null, errorMessage: "이 시점에 데이터 없음" });
+                continue;
+            }
+            const p = snap.payload || {};
+            items.push({
+                targetId: tid,
+                label: p.label,
+                spec: p.spec,
+                data: p.data,
+                errorMessage: p.errorMessage,
+                updatedAt: snap.tsMs ? new Date(snap.tsMs).toISOString() : null,
+            });
+        }
+        const derivedServers = items.map((it) => ({
+            id: it.targetId,
+            label: it.label || it.spec?.host || it.targetId,
+            osType: it.spec?.os_type || it.spec?.osType || "linux-generic",
+            host: it.spec?.host || "",
+            criteria: { ...DEFAULT_CRITERIA, ...(it.spec?.criteria || {}) },
+        }));
+        setSnapshotServers(derivedServers);
+        setServerStates(() => {
+            const next = {};
+            items.forEach((it) => {
+                next[it.targetId] = {
+                    data: it.data,
+                    error: it.errorMessage || null,
+                    loading: false,
+                    lastUpdated: it.updatedAt ? new Date(it.updatedAt) : null,
+                    lastAttempted: new Date(),
+                };
+            });
+            return next;
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tmActive, tm.snapshotByKey, useSnapshot, hasItems, targetIds]);
 
     // Exponential-backoff polling via recursive setTimeout.
     // On consecutive failures: base → 2× → 4× → 8× → 16× → 32× (cap at 5 min).

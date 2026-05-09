@@ -5,7 +5,8 @@
     bottom: 0;
     z-index: 50;
     display: grid;
-    grid-template-columns: auto auto 1fr auto;
+    /* LIVE-복귀 버튼 / 시점 입력 / 재생 컨트롤 / 스크러버 / TimeMachine 인디케이터 */
+    grid-template-columns: auto auto auto 1fr auto;
     align-items: center;
     gap: 16px;
     padding: 10px 16px;
@@ -57,22 +58,94 @@
     border-color: rgba(168, 85, 247, 0.35);
     color: #ddd6fe;
 }
-.tm-cb-live {
-    margin-left: 8px;
-    padding: 4px 12px;
-    background: rgba(168, 85, 247, 0.18);
-    border: 1px solid rgba(168, 85, 247, 0.5);
+/* LIVE 복귀 버튼 (좌측 끝). 빨간 dot + LIVE 라벨, 일반 버튼 hover. */
+.tm-cb-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.tm-cb-mode-btn-live {
+    background: rgba(239, 68, 68, 0.10);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+}
+.tm-cb-mode-btn-live:hover {
+    background: rgba(239, 68, 68, 0.20);
+    border-color: rgba(239, 68, 68, 0.6);
+    color: #fecaca;
+}
+.tm-cb-mode-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+/* TimeMachine 인디케이터 (우측 끝). 라벤더 dot + 라벨 천천히 blink — 비디오
+   플레이어의 LIVE 표시 mental model 의 타임머신 버전. */
+.tm-cb-tm-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    background: rgba(168, 85, 247, 0.14);
+    border: 1px solid rgba(168, 85, 247, 0.45);
     color: #ddd6fe;
     border-radius: 6px;
     font-size: 11px;
     font-weight: 700;
+    letter-spacing: 0.06em;
+    animation: tm-mode-blink 1.6s ease-in-out infinite;
+}
+.tm-cb-tm-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #a855f7;
+    box-shadow: 0 0 8px rgba(168, 85, 247, 0.8);
+}
+@keyframes tm-mode-blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.45; }
+}
+
+/* 라이브 모드 entry 버튼 — 좌측 하단에 떠 있다. TM 모드에선 ControlBar 의
+   LIVE 복귀 버튼이 같은 위치를 차지한다. */
+.tm-entry-btn {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    z-index: 40;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    background: rgba(168, 85, 247, 0.14);
+    border: 1px solid rgba(168, 85, 247, 0.45);
+    color: #ddd6fe;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
     letter-spacing: 0.04em;
     cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.15s;
 }
-.tm-cb-live:hover {
-    background: rgba(168, 85, 247, 0.28);
+.tm-entry-btn:hover {
+    background: rgba(168, 85, 247, 0.24);
+    border-color: rgba(168, 85, 247, 0.65);
     color: #fff;
+    transform: translateY(-1px);
 }
+.tm-entry-icon { font-size: 13px; }
 
 /* Phase 2: playback controls */
 .tm-cb-playback {
