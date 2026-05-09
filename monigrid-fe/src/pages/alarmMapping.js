@@ -1,0 +1,123 @@
+/**
+ * Map BE active alerts → FE widget ids.
+ *
+ * Phase 2 / Step 2c-A: the BE owns alert evaluation and exposes the current
+ * active set at `/dashboard/alerts/active`. The FE polls that endpoint, joins
+ * the result against the user's widgets, and pushes the resulting Set into
+ * `alarmStore.syncAlarmedWidgets()`.
+ *
+ * Mapping rules:
+ *   - server-resource / network-test / status-list widgets : `widget.targetIds`
+ *     contains monitor target ids. The BE alert sourceId is the monitor target
+ *     id, so we just intersect.
+ *   - data API widgets (table / line-chart / bar-chart) : the BE alert
+ *     sourceType is `data_api:<widget_type>` and sourceId is the api id
+ *     (= the row id in `monigrid_apis`). Widgets reference an API via
+ *     `widget.endpoint` (REST path), so we resolve endpoint → api id from the
+ *     `/dashboard/endpoints` catalog.
+ *
+ * The function is pure / synchronous; the caller fetches inputs.
+ */
+
+import {
+    WIDGET_TYPE_BAR_CHART,
+    WIDGET_TYPE_LINE_CHART,
+    WIDGET_TYPE_NETWORK_TEST,
+    WIDGET_TYPE_SERVER_RESOURCE,
+    WIDGET_TYPE_STATUS_LIST,
+    WIDGET_TYPE_TABLE,
+} from "./dashboardConstants.js";
+
+const MONITOR_TYPE_TO_WIDGET = {
+    server_resource: WIDGET_TYPE_SERVER_RESOURCE,
+    network: WIDGET_TYPE_NETWORK_TEST,
+    http_status: WIDGET_TYPE_STATUS_LIST,
+};
+
+const DATA_API_WIDGET_TYPES = new Set([
+    WIDGET_TYPE_TABLE,
+    WIDGET_TYPE_LINE_CHART,
+    WIDGET_TYPE_BAR_CHART,
+]);
+
+/**
+ * @param {Array} activeAlerts - response.items from /dashboard/alerts/active
+ * @param {Array} widgets - dashboardStore.widgets
+ * @param {Array} endpointCatalog - response from /dashboard/endpoints
+ *   (each: {id, endpoint, ...}) — used to resolve widget.endpoint → api id
+ * @returns {Set<string>} widget ids that are currently in alarm state
+ */
+export function computeAlarmedWidgets({
+    activeAlerts,
+    widgets,
+    endpointCatalog,
+}) {
+    const out = new Set();
+    if (!Array.isArray(activeAlerts) || activeAlerts.length === 0) return out;
+    if (!Array.isArray(widgets) || widgets.length === 0) return out;
+
+    // Bucket alerts by source type. data_api:<widget_type> share the same
+    // sourceId space (api id), so we collapse them into one set keyed by
+    // widget_type. Monitor types use the BE source_type as-is.
+    const monitorAlertsBySourceType = {};
+    // data API 알람은 widget_type 무관 단일 source_type="data_api" 로 통일됨
+    // (BE evaluator 단순화). 이전 구현이 남긴 historical "data_api:table" 등
+    // 도 같은 set 으로 합쳐 위젯 매핑 시점에서는 구분하지 않는다.
+    const dataApiAlertSourceIds = new Set();
+
+    for (const a of activeAlerts) {
+        const sourceType = a?.sourceType;
+        const sourceId = a?.sourceId;
+        if (!sourceType || !sourceId) continue;
+        if (sourceType === "data_api" || sourceType.startsWith("data_api:")) {
+            dataApiAlertSourceIds.add(sourceId);
+        } else {
+            (monitorAlertsBySourceType[sourceType] ??= new Set()).add(sourceId);
+        }
+    }
+
+    // endpoint REST path → api id (so widget.endpoint resolves cheaply)
+    const apiIdByEndpoint = new Map();
+    if (Array.isArray(endpointCatalog)) {
+        for (const ep of endpointCatalog) {
+            const path = ep?.endpoint;
+            const id = ep?.id;
+            if (path && id) apiIdByEndpoint.set(path, id);
+        }
+    }
+
+    for (const w of widgets) {
+        if (!w || !w.id) continue;
+        const widgetId = w.id;
+
+        // ── monitor-target-based widgets ──────────────────────────────
+        const monitorSourceType = Object.keys(MONITOR_TYPE_TO_WIDGET).find(
+            (st) => MONITOR_TYPE_TO_WIDGET[st] === w.type,
+        );
+        if (monitorSourceType) {
+            const ids = Array.isArray(w.targetIds) ? w.targetIds : [];
+            const set = monitorAlertsBySourceType[monitorSourceType];
+            if (set && ids.some((tid) => set.has(tid))) {
+                out.add(widgetId);
+            }
+            continue;
+        }
+
+        // ── data API widgets (table / line-chart / bar-chart) ────────
+        if (DATA_API_WIDGET_TYPES.has(w.type)) {
+            if (dataApiAlertSourceIds.size === 0) continue;
+            // Prefer explicit apiId when the widget carries one; otherwise
+            // resolve via the endpoint catalog. New widgets created via the
+            // FE today carry `endpoint`, so the catalog lookup is the
+            // typical path.
+            const apiId = w.apiId
+                || apiIdByEndpoint.get(w.endpoint)
+                || apiIdByEndpoint.get((w.endpoint || "").split("?")[0]);
+            if (apiId && dataApiAlertSourceIds.has(apiId)) {
+                out.add(widgetId);
+            }
+        }
+    }
+
+    return out;
+}

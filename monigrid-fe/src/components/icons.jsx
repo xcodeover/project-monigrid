@@ -162,6 +162,13 @@ export const IconChevronRight = (p) => (
     </Svg>
 );
 
+export const IconArrowLeft = (p) => (
+    <Svg {...p}>
+        <line x1="19" y1="12" x2="5" y2="12" />
+        <polyline points="12 19 5 12 12 5" />
+    </Svg>
+);
+
 export const IconChevronDown = (p) => (
     <Svg {...p}>
         <polyline points="6 9 12 15 18 9" />

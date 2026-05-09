@@ -7,11 +7,6 @@ import {
     MIN_WIDGET_W,
     SIZE_STEP,
 } from "../pages/dashboardConstants";
-import {
-    OPERATORS as THRESHOLD_OPERATORS,
-    THRESHOLD_COLORS,
-} from "../utils/chartThresholds.js";
-import { IconClose } from "./icons";
 import { toGridSize, toUserSize } from "./widgetUtils.js";
 import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
 
@@ -39,15 +34,12 @@ const LineChartSettingsModal = ({ title, sizeBounds, settings }) => {
         setShowLegend,
         maxPointsDraft,
         setMaxPointsDraft,
-        thresholdsDraft,
         detectedColumns,
         xAxisKey,
         effectiveYKeys,
         handleApplySettings,
         toggleYKey,
-        addThreshold,
-        updateThreshold,
-        removeThreshold,
+        // Phase 2: 임계치 모달 입력은 BE 위젯 설정으로 이전됨.
     } = settings;
 
     return (
@@ -175,123 +167,14 @@ const LineChartSettingsModal = ({ title, sizeBounds, settings }) => {
                         </div>
                     </div>
 
-                    {/* 4. 임계치 설정 */}
+                    {/* 4. 임계치 안내 — Phase 2: BE 중앙 관리로 이전 */}
                     <div className='settings-section'>
-                        <div className='lc-section-header-row'>
-                            <h6>임계치 설정</h6>
-                            <button
-                                type='button'
-                                className='lc-threshold-add-btn'
-                                onClick={addThreshold}
-                                disabled={effectiveYKeys.length === 0}
-                            >
-                                + 추가
-                            </button>
+                        <h6>임계치 설정</h6>
+                        <div className='lc-threshold-empty'>
+                            임계치는 백엔드 설정 → <strong>위젯별 설정</strong> 탭에서
+                            (data API, 라인 차트) 단위로 중앙 관리됩니다. 알람 발생 여부는
+                            BE 가 평가하여 모든 사용자에게 동일하게 반영됩니다.
                         </div>
-                        {thresholdsDraft.length === 0 ? (
-                            <div className='lc-threshold-empty'>
-                                설정된 임계치가 없습니다. Y축 컬럼별로 임계치를
-                                추가하면 초과 시 위젯 테두리가 빨간색으로 깜빡입니다.
-                            </div>
-                        ) : (
-                            <div className='lc-threshold-list'>
-                                {thresholdsDraft.map((t, idx) => (
-                                    <div
-                                        className='lc-threshold-row'
-                                        key={idx}
-                                    >
-                                        <span
-                                            className='lc-threshold-color'
-                                            style={{
-                                                background:
-                                                    THRESHOLD_COLORS[
-                                                        idx %
-                                                            THRESHOLD_COLORS.length
-                                                    ],
-                                            }}
-                                        />
-                                        <input
-                                            type='checkbox'
-                                            className='lc-threshold-enabled'
-                                            checked={t.enabled !== false}
-                                            title='활성화'
-                                            onChange={(e) =>
-                                                updateThreshold(idx, {
-                                                    enabled: e.target.checked,
-                                                })
-                                            }
-                                        />
-                                        <select
-                                            className='lc-threshold-key'
-                                            value={t.key}
-                                            onChange={(e) =>
-                                                updateThreshold(idx, {
-                                                    key: e.target.value,
-                                                })
-                                            }
-                                        >
-                                            {effectiveYKeys.length === 0 && (
-                                                <option value=''>(없음)</option>
-                                            )}
-                                            {effectiveYKeys.map((k) => (
-                                                <option key={k} value={k}>
-                                                    {k}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <select
-                                            className='lc-threshold-op'
-                                            value={t.operator}
-                                            onChange={(e) =>
-                                                updateThreshold(idx, {
-                                                    operator: e.target.value,
-                                                })
-                                            }
-                                        >
-                                            {THRESHOLD_OPERATORS.map((op) => (
-                                                <option
-                                                    key={op.value}
-                                                    value={op.value}
-                                                >
-                                                    {op.label}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <input
-                                            type='number'
-                                            className='lc-threshold-value'
-                                            value={t.value}
-                                            placeholder='값'
-                                            onChange={(e) =>
-                                                updateThreshold(idx, {
-                                                    value: e.target.value,
-                                                })
-                                            }
-                                        />
-                                        <input
-                                            type='text'
-                                            className='lc-threshold-label'
-                                            value={t.label}
-                                            placeholder='라벨(선택)'
-                                            onChange={(e) =>
-                                                updateThreshold(idx, {
-                                                    label: e.target.value,
-                                                })
-                                            }
-                                        />
-                                        <button
-                                            type='button'
-                                            className='lc-threshold-remove'
-                                            onClick={() => removeThreshold(idx)}
-                                            title='삭제'
-                                            aria-label='삭제'
-                                        >
-                                            <IconClose size={12} />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
                     </div>
 
                     {/* 5. 위젯 동작 */}

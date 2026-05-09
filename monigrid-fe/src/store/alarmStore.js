@@ -36,33 +36,69 @@ export const useAlarmStore = create((set, get) => ({
     // Selected alarm sound type
     alarmSound: loadAlarmSound(),
 
-    /** Called by DashboardPage on every widget result update.
+    /** Per-widget immediate "dead" signal from card-level state.
      *
-     * IMPORTANT: this function is invoked on every poll — including widgets
-     * that are reporting the same "live" status they already had. We MUST
-     * return the same state object (no new Set) in the no-op case; otherwise
-     * subscribers to `alarmedWidgets` see a fresh Set reference on every call
-     * and re-render in an infinite loop (seen with NetworkTestCard calling
-     * onAlarmChange from within its own effect). */
+     * Phase 2 contract:
+     *   - status === "dead"  → add the widget id (covers the 5s gap until
+     *                           the next BE active-alerts poll fires).
+     *   - status === "live"  → NO-OP. Clearing is the sole responsibility of
+     *                           ``syncAlarmedWidgets`` (BE polling), so a
+     *                           card-level "live" report never silently
+     *                           drops a BE-raised alarm.
+     *
+     * Why no-op for "live":
+     *   ServerResourceCard / NetworkTestCard call onAlarmChange on every
+     *   data tick with their own evaluation. Before this contract change,
+     *   a card-level "live" instantly removed the widget id from the alarm
+     *   set even when the BE evaluator had just raised it — the footer
+     *   AlarmBanner would never appear. BE is the single source of truth
+     *   for alarm state since Phase 2.
+     *
+     * IMPORTANT: this function is still called on every poll. We must
+     * return the same state object (no new Set) in the no-op case;
+     * otherwise subscribers see a fresh Set reference and re-render in a
+     * loop (the original NetworkTestCard regression).
+     */
     reportWidgetStatus: (widgetId, status) => {
         set((state) => {
-            const shouldAlarm = status === "dead";
-            const wasAlarming = state.alarmedWidgets.has(widgetId);
-            if (shouldAlarm === wasAlarming) {
-                // Membership unchanged → return the exact same state object
-                // so zustand skips the rerender.
+            if (status !== "dead") {
+                // "live" / unknown / etc. — clear path is owned by syncAlarmedWidgets.
                 return state;
             }
-
-            const next = new Set(state.alarmedWidgets);
-            if (shouldAlarm) {
-                next.add(widgetId);
-            } else {
-                next.delete(widgetId);
+            if (state.alarmedWidgets.has(widgetId)) {
+                return state;
             }
-            // If a previously-dead widget recovers and the alarm set goes empty,
-            // reset acknowledgement so the next alarm triggers sound again.
-            const shouldResetAck = wasAlarming && !shouldAlarm && next.size === 0;
+            const next = new Set(state.alarmedWidgets);
+            next.add(widgetId);
+            return { ...state, alarmedWidgets: next };
+        });
+    },
+
+    /** Phase 2: BE alert evaluator emits raise/clear transitions and exposes the
+     * current active set via `/dashboard/alerts/active`. DashboardPage polls
+     * that endpoint, maps source ids to widget ids, and pushes the resulting
+     * Set here. Avoids the FE re-evaluating thresholds locally.
+     *
+     * Same no-op rule as reportWidgetStatus: if the membership is unchanged we
+     * MUST return the same state object so subscribers don't see a fresh Set
+     * reference and re-render in a loop.
+     */
+    syncAlarmedWidgets: (incoming) => {
+        set((state) => {
+            const next = incoming instanceof Set
+                ? incoming
+                : new Set(Array.isArray(incoming) ? incoming : []);
+            const prev = state.alarmedWidgets;
+            if (prev.size === next.size) {
+                let same = true;
+                for (const id of prev) {
+                    if (!next.has(id)) { same = false; break; }
+                }
+                if (same) return state;
+            }
+            const wasAlarming = prev.size > 0;
+            const isAlarmingNow = next.size > 0;
+            const shouldResetAck = wasAlarming && !isAlarmingNow;
             return {
                 alarmedWidgets: next,
                 acknowledged: shouldResetAck ? false : state.acknowledged,

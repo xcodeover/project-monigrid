@@ -1,0 +1,796 @@
+/* ══════════════════════════════════════════════════════════════════
+   ConfigEditorPage  –  /admin/config (full page)
+
+   레이아웃 정책 (요구 사항 1·3 반영):
+   - 페이지는 높이 100vh 의 flex column 컨테이너.
+   - 페이지 헤더 / 탭 바 / 페이지 푸터는 항상 sticky.
+   - 각 "리스트" 탭 내부:
+       pane-header (라벨 + 추가/새로고침)        ← sticky top of pane
+       pane-body   (항목 카드 스크롤 영역)        ← overflow-y: auto
+       pane-footer (변경 사항 / 저장 & 적용)      ← sticky bottom of pane
+   - 모니터 대상 탭(MonitorTargetsTab)은 자체 sticky 헤더/푸터를 가짐.
+   ══════════════════════════════════════════════════════════════════ */
+
+.cfgpage-root {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-base, #0b1220);
+    color: var(--text-primary, #e2e8f0);
+    z-index: 50;
+}
+
+/* ── Page header ─────────────────────────────────────────────── */
+
+.cfgpage-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    flex-shrink: 0;
+}
+
+.cfgpage-header-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.cfgpage-header-text h1 {
+    margin: 0 0 2px;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary, #e2e8f0);
+}
+
+.cfgpage-header-text p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-secondary, #94a3b8);
+    line-height: 1.4;
+}
+
+.cfgpage-back-btn,
+.cfgpage-close-btn {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: var(--text-secondary, #94a3b8);
+    border-radius: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.cfgpage-back-btn:hover,
+.cfgpage-close-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary, #e2e8f0);
+    border-color: rgba(148, 163, 184, 0.3);
+}
+
+/* ── Tab bar (re-uses .cfg-tab-bar but with page chrome) ────── */
+
+.cfgpage-tab-bar {
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.015);
+}
+
+/* 위젯별 설정 sub-tab bar (요구 ②). 메인 탭 바 아래에 가벼운 강조 */
+.cfgpage-subtab-bar {
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.025);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    padding-left: 36px;
+    font-size: 11px;
+}
+
+.cfgpage-subtab-bar .cfg-tab {
+    padding: 6px 12px;
+    font-size: 11px;
+}
+
+/* 페이지 footer 내 dirty 카운트 안내 */
+.cfgpage-footer-dirty {
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
+    align-self: center;
+    margin-right: 4px;
+}
+
+/* ── Main scroll region (탭 본문) ────────────────────────────── */
+
+.cfgpage-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* 각 탭의 pane: 헤더 / 본문 / 푸터 3-row 그리드 */
+.cfgpage-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.cfgpage-pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    flex-shrink: 0;
+}
+
+.cfgpage-pane-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary, #94a3b8);
+}
+
+.cfgpage-pane-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.cfgpage-pane-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.cfgpage-pane-body-padded {
+    padding: 16px 24px;
+}
+
+.cfgpage-pane-footer {
+    flex-shrink: 0;
+    padding: 8px 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border-top: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+/* MonitorTargetsTab 은 자체 sticky 처리 (cfg-section 안의 cfg-section-header / DirtyListSummary).
+   페이지 단위 sticky 효과를 부여하기 위해 cfg-section 을 grid 처럼 사용한다. */
+.cfgpage-pane-monitor {
+    padding: 0;
+}
+
+.cfgpage-pane-monitor .cfg-section {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    height: 100%;
+    min-height: 0;
+    gap: 0;
+    overflow: hidden;
+}
+
+.cfgpage-pane-monitor .cfg-section-header {
+    padding: 12px 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    margin: 0;
+}
+
+/* 모니터 탭의 카드 리스트가 grid row 1 영역에서 스크롤되도록 wrapper 가 필요하지만,
+   MonitorTargetsTab 은 카드들을 cfg-section 직속으로 렌더한다. 따라서 카드 + 메시지
+   영역 자체를 overflow-y:auto + padding 으로 처리하기 위해 :not(...) 셀렉터 활용. */
+.cfgpage-pane-monitor .cfg-section > *:not(.cfg-section-header):not(.dirty-list-summary):not(.cfg-msg) {
+    /* 첫 번째 그리드 자식 (cfg-loading / cfg-empty / 카드들) — 모두 같은 row.
+       하지만 여러 형제가 있는 경우 컴포지트 row 가 깨진다 → 여기서는 단일 row 로
+       유지되도록 MonitorTargetsTab 의 출력 구조에 맞춰 overflow 만 부여. */
+}
+
+.cfgpage-pane-monitor .cfg-section {
+    /* re-define: middle area (cards) needs to scroll. cfg-section header is row 1,
+       middle is row 2, DirtyListSummary is row 3. cfg-msg(error) sits between header
+       and middle area — keep it pinned by giving header + msg combined treatment. */
+    grid-template-rows: auto 1fr auto;
+}
+
+/* 모니터 탭 본문 카드 영역 — header 와 footer 사이를 자동 채우고 스크롤 */
+.cfgpage-pane-monitor .cfg-section > .cfg-card,
+.cfgpage-pane-monitor .cfg-section > .cfg-empty,
+.cfgpage-pane-monitor .cfg-section > .cfg-loading,
+.cfgpage-pane-monitor .cfg-section > .cfg-msg {
+    grid-column: 1;
+}
+
+/* 모니터 탭에 카드 스크롤 컨테이너를 만들기 위한 가상 wrapper:
+   MonitorTargetsTab 자체 컴포넌트 변경 없이 처리하려면 footer 바로 위까지 공간
+   확장 + 카드 영역 묶기가 필요하다. 단순화를 위해 cfg-section 에 padding 만 부여하고
+   본문 자체가 page-main 의 자연 스크롤을 그대로 쓰도록 한다. */
+.cfgpage-pane-monitor .cfg-section {
+    overflow-y: auto;
+    grid-template-rows: none;
+    display: flex;
+    flex-direction: column;
+}
+
+.cfgpage-pane-monitor .cfg-section > .cfg-section-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+.cfgpage-pane-monitor .cfg-section > .dirty-list-summary {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    background: rgba(11, 18, 32, 0.96);
+    backdrop-filter: blur(2px);
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    padding-left: 24px;
+    padding-right: 24px;
+    margin: 0;
+}
+
+.cfgpage-pane-monitor .cfg-section > :not(.cfg-section-header):not(.dirty-list-summary) {
+    margin-left: 24px;
+    margin-right: 24px;
+}
+
+.cfgpage-pane-monitor .cfg-section > .cfg-card:first-of-type {
+    margin-top: 12px;
+}
+
+.cfgpage-pane-monitor .cfg-section > .cfg-card:last-of-type {
+    margin-bottom: 12px;
+}
+
+/* ── 기본 탭 그룹 카드 ──────────────────────────────────────── */
+
+.cfgpage-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px 16px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(148, 163, 184, 0.08);
+    border-radius: 12px;
+    margin-bottom: 14px;
+}
+
+.cfgpage-group-header h2 {
+    margin: 0 0 2px;
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(25, 160, 255, 0.9);
+    letter-spacing: 0.02em;
+}
+
+.cfgpage-group-header p {
+    margin: 0 0 6px;
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
+    line-height: 1.4;
+}
+
+.cfgpage-group-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.cfgpage-group-body label {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.cfgpage-group-body label > span {
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
+}
+
+.cfgpage-group-body input,
+.cfgpage-group-body select {
+    width: 100%;
+    padding: 7px 10px;
+    background-color: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary, #e2e8f0);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 8px;
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+.cfgpage-group-body input.input-disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    border-style: dashed;
+}
+
+.cfgpage-group-body input:focus,
+.cfgpage-group-body select:focus {
+    outline: none;
+    border-color: rgba(25, 160, 255, 0.34);
+    box-shadow: 0 0 0 3px rgba(25, 160, 255, 0.1);
+}
+
+/* ── Page footer ─────────────────────────────────────────────── */
+
+.cfgpage-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    flex-shrink: 0;
+}
+
+.cfgpage-footer-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.cfgpage-footer-hint {
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
+    font-style: italic;
+}
+
+/* ── DB 연결 / 데이터 API grid 편집 (요구 1) ───────────────── */
+
+/* pane-body 가 grid 모드일 때는 가로 스크롤 활성화. 좁은 입력은 짧게,
+   긴 입력(JDBC URL)은 넓게 명시한 grid-template-columns 가 가독성을 유지한다. */
+.cfgpage-pane-body-grid {
+    overflow-x: auto;
+}
+
+.cfg-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    /* min-width 로 좁은 화면에서도 컬럼이 짜부라지지 않게 — 가로 스크롤 발생 */
+    min-width: 0;
+}
+
+.cfg-grid-row {
+    display: grid;
+    gap: 6px;
+    align-items: center;
+    padding: 4px 6px;
+    border-radius: 6px;
+}
+
+.cfg-grid-row > input,
+.cfg-grid-row > select,
+.cfg-grid-row > .pw-input-wrap .pw-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    background-color: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary, #e2e8f0);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+/* PasswordInput 은 eye 토글 자리(36px) 가 필요해 우측 패딩만 더 준다.
+   위 룰의 padding 을 그대로 두면 글자가 토글 아이콘 위로 흘러간다. */
+.cfg-grid-row > .pw-input-wrap .pw-input {
+    padding-right: 36px;
+}
+
+/* select 의 펼친 option 리스트는 OS native 라 dark 배경에서 흰 글자가
+   기본값일 때 안 보일 수 있다 (Windows Chrome). select 자식 option 에
+   명시적으로 elevated 배경 + primary 텍스트 색을 지정. */
+.cfg-grid-row > select option {
+    color: var(--text-primary, #e2e8f0);
+    background-color: var(--bg-elevated, #1a2332);
+}
+
+.cfg-grid-row > input:focus,
+.cfg-grid-row > select:focus,
+.cfg-grid-row > .pw-input-wrap .pw-input:focus {
+    outline: none;
+    border-color: rgba(25, 160, 255, 0.34);
+    box-shadow: 0 0 0 3px rgba(25, 160, 255, 0.1);
+}
+
+.cfg-grid-row > input:disabled,
+.cfg-grid-row > select:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.cfg-grid-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: rgba(11, 18, 32, 0.96);
+    backdrop-filter: blur(2px);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 6px 6px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.cfg-grid-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+}
+
+/* row 단위 보조 액션 (SQL 편집 / 임계치 편집) — duplicate/remove 와 같은
+   톤이지만 hover 색만 살짝 구분. */
+.cfg-row-action-btn {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    color: var(--text-secondary, #94a3b8);
+    border-radius: 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.cfg-row-action-btn:hover:not(:disabled) {
+    background: rgba(25, 160, 255, 0.12);
+    border-color: rgba(25, 160, 255, 0.35);
+    color: rgba(25, 160, 255, 0.95);
+}
+.cfg-row-action-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* 임계치 카운트 배지 — 일반 cfg-card-badge 톤 위에 강조 색 */
+.cfg-thresholds-badge {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fbbf24;
+}
+
+.cfg-grid-flags {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.cfg-grid-error-row {
+    margin-left: 6px;
+    margin-right: 6px;
+    margin-top: -2px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: rgba(239, 68, 68, 0.08);
+    color: #fca5a5;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.cfg-grid-row-deleted {
+    opacity: 0.55;
+}
+
+/* row state visual cues — grid version */
+.cfg-grid-row.row-state-new {
+    background: rgba(34, 197, 94, 0.06);
+    box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.25);
+}
+.cfg-grid-row.row-state-modified {
+    background: rgba(25, 160, 255, 0.05);
+    box-shadow: inset 0 0 0 1px rgba(25, 160, 255, 0.18);
+}
+.cfg-grid-row.row-state-deleted {
+    background: rgba(239, 68, 68, 0.05);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.2);
+}
+.cfg-grid-row.row-state-invalid {
+    background: rgba(239, 68, 68, 0.08);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.4);
+}
+
+/* No 셀 (1, 2, 3, ...) — read-only span. 가운데 정렬 + 작은 글씨. */
+.cfg-grid-no {
+    text-align: center;
+    color: var(--text-tertiary, #64748b);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+}
+
+/* DB 연결 grid 컬럼 폭 (총 8 컬럼):
+   No / ID / DB type / Driver Class / JDBC URL / 사용자 / 비밀번호 / 액션 */
+.cfg-grid-connections .cfg-grid-row {
+    grid-template-columns:
+        46px                 /* No */
+        minmax(140px, 1fr)   /* ID */
+        minmax(120px, 130px) /* DB type */
+        minmax(180px, 1.3fr) /* Driver Class */
+        minmax(260px, 2fr)   /* JDBC URL */
+        minmax(120px, 1fr)   /* user */
+        minmax(140px, 1fr)   /* password */
+        76px;                /* actions (복제 + 삭제) */
+}
+
+/* ── 모니터 대상 grid (요구 ③) ─────────────────────────────────
+   서버 리소스 / 네트워크 / API 상태 — 카드 → grid 전환. 모니터 탭은
+   cfgpage-pane-monitor .cfg-section 이 sticky header / footer 를 이미
+   처리하므로 여기에 padding 만 보강하고 가로 스크롤을 켠다. */
+.cfgpage-pane-monitor .cfg-section > .cfg-grid {
+    overflow-x: auto;
+    min-width: 0;
+    padding: 0 4px;
+}
+
+/* server_resource: No / 활성 / ID / 이름 / 주기 / 호스트 / OS / Username
+   / Password / CPU% / Mem% / Disk% / 상태 / 액션 — 14 컬럼 */
+.cfg-grid-monitor-server_resource .cfg-grid-row {
+    grid-template-columns:
+        46px                   /* No */
+        46px                   /* 활성 */
+        minmax(120px, 1fr)     /* ID */
+        minmax(140px, 1.2fr)   /* 이름 */
+        80px                   /* 주기 */
+        minmax(140px, 1fr)     /* 호스트 */
+        minmax(160px, 180px)   /* OS */
+        minmax(120px, 1fr)     /* Username */
+        minmax(150px, 1fr)     /* Password */
+        70px                   /* CPU% */
+        70px                   /* Mem% */
+        70px                   /* Disk% */
+        minmax(80px, 100px)    /* 상태 */
+        76px;                  /* 액션 */
+    min-width: 1480px;
+}
+
+/* network: No / 활성 / ID / 이름 / 주기 / 유형 / 호스트 / Port / Timeout
+   / 상태 / 액션 — 11 컬럼 */
+.cfg-grid-monitor-network .cfg-grid-row {
+    grid-template-columns:
+        46px                   /* No */
+        46px                   /* 활성 */
+        minmax(120px, 1fr)     /* ID */
+        minmax(140px, 1.2fr)   /* 이름 */
+        80px                   /* 주기 */
+        minmax(120px, 140px)   /* 유형 */
+        minmax(140px, 1.2fr)   /* 호스트 */
+        90px                   /* Port */
+        90px                   /* Timeout */
+        minmax(80px, 100px)    /* 상태 */
+        76px;                  /* 액션 */
+    min-width: 1180px;
+}
+
+/* http_status: No / 활성 / ID / 이름 / 주기 / URL / Timeout / 상태 / 액션
+   — 9 컬럼. URL 이 가장 넓다. */
+.cfg-grid-monitor-http_status .cfg-grid-row {
+    grid-template-columns:
+        46px                   /* No */
+        46px                   /* 활성 */
+        minmax(120px, 1fr)     /* ID */
+        minmax(140px, 1.2fr)   /* 이름 */
+        80px                   /* 주기 */
+        minmax(220px, 2fr)     /* URL */
+        90px                   /* Timeout */
+        minmax(80px, 100px)    /* 상태 */
+        76px;                  /* 액션 */
+    min-width: 1100px;
+}
+
+/* 데이터 API grid 컬럼 폭 (총 9 컬럼):
+   No / 활성 toggle / API ID / Path / Connection / SQL ID / 주기 / 상태 / 액션
+   액션 컬럼은 SQL 편집(✏️) + 임계치 편집(⚠) + 복제 + 삭제 4개를 수용하므로
+   넉넉히 잡는다. */
+.cfg-grid-apis .cfg-grid-row {
+    grid-template-columns:
+        46px                  /* No */
+        46px                  /* enabled toggle */
+        minmax(120px, 1.2fr)  /* API ID */
+        minmax(180px, 2fr)    /* REST path — 가장 넓게 */
+        minmax(140px, 1.2fr)  /* connection */
+        minmax(120px, 1fr)    /* sql_id */
+        80px                  /* interval */
+        minmax(110px, 0.9fr)  /* flags (신규/삭제 예정/임계치 배지) */
+        140px;                /* actions (SQL + 임계치 + 복제 + 삭제) */
+}
+
+/* ── WidgetConfigsTab (위젯별 설정 탭) ─────────────────────── */
+
+.wcfg-pane {
+    /* MonitorTargetsTab 과 동일하게 grid 가 아닌 flex column 으로 운용한다.
+       cfgpage-pane-monitor 부모의 sticky 정책을 그대로 재사용한다. */
+}
+
+.wcfg-header {
+    gap: 12px;
+}
+
+.wcfg-header-selectors {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+}
+
+.wcfg-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 220px;
+}
+
+.wcfg-selector > span {
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
+}
+
+.wcfg-selector select {
+    padding: 7px 10px;
+    background-color: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary, #e2e8f0);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 8px;
+    font-size: 12px;
+}
+
+.wcfg-body {
+    /* parent (.cfg-section) 가 overflow-y:auto 를 부여하므로 자식은 padding 만 */
+    padding: 16px 0;
+}
+
+.wcfg-hint {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(25, 160, 255, 0.06);
+    border: 1px dashed rgba(25, 160, 255, 0.25);
+    color: var(--text-secondary, #94a3b8);
+    font-size: 12px;
+}
+
+.wcfg-group {
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.wcfg-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.wcfg-group-header h3 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(25, 160, 255, 0.9);
+    letter-spacing: 0.02em;
+}
+
+.wcfg-table {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.wcfg-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 140px 32px;
+    gap: 8px;
+    align-items: center;
+}
+
+.wcfg-table-thresholds .wcfg-row {
+    grid-template-columns: 1fr 140px 1fr 110px 1.4fr 32px;
+}
+
+.wcfg-row-head {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0 4px;
+}
+
+.wcfg-row input,
+.wcfg-row select {
+    padding: 7px 9px;
+    background-color: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary, #e2e8f0);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 6px;
+    font-size: 12px;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.wcfg-row input:focus,
+.wcfg-row select:focus {
+    outline: none;
+    border-color: rgba(25, 160, 255, 0.34);
+    box-shadow: 0 0 0 3px rgba(25, 160, 255, 0.1);
+}
+
+/* select 펼친 option 다크 테마 강제 */
+.wcfg-row select option,
+.wcfg-selector select option {
+    color: var(--text-primary, #e2e8f0);
+    background-color: var(--bg-elevated, #1a2332);
+}
+
+.wcfg-footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.wcfg-success {
+    font-size: 11px;
+    font-weight: 600;
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+
+@media (max-width: 960px) {
+    .wcfg-row {
+        grid-template-columns: 1fr;
+    }
+    .wcfg-table-thresholds .wcfg-row {
+        grid-template-columns: 1fr;
+    }
+    .wcfg-row-head { display: none; }
+}
+
+/* ── 좁은 화면 대응 ─────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+    .cfgpage-header,
+    .cfgpage-pane-header,
+    .cfgpage-pane-body-padded,
+    .cfgpage-pane-monitor .cfg-section > .cfg-section-header,
+    .cfgpage-footer {
+        padding-left: 14px;
+        padding-right: 14px;
+    }
+
+    .cfgpage-pane-monitor .cfg-section > .dirty-list-summary {
+        padding-left: 14px;
+        padding-right: 14px;
+    }
+
+    .cfgpage-pane-monitor .cfg-section > :not(.cfg-section-header):not(.dirty-list-summary) {
+        margin-left: 14px;
+        margin-right: 14px;
+    }
+
+    .cfgpage-header-text p {
+        display: none;
+    }
+}

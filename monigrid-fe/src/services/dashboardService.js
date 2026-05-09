@@ -265,28 +265,47 @@ export const sqlEditorService = {
     },
 };
 
-// ── Logs & alerts ─────────────────────────────────────────────────────────────
+// ── Alerts (BE-side transition log) ──────────────────────────────────────────
+//
+// "logService" was the original aggregate name when this module also exposed
+// the now-removed /logs file viewer. Phase 1 dropped that endpoint; the
+// remaining surface is the alert history query. The export name is preserved
+// to keep `import { logService } from ...` callers working without churn.
 
 export const logService = {
-    getAlerts: async () => {
-        const response = await apiClient.get("/dashboard/alerts");
-        return response.data;
-    },
-
-    getLogs: async ({
-        startDate = null,
-        endDate = null,
-        maxLines = 1000,
-        cursor = null,
-        followLatest = false,
-    } = {}) => {
-        const params = new URLSearchParams();
-        if (startDate) params.append("start_date", startDate);
-        if (endDate) params.append("end_date", endDate);
-        params.append("max_lines", maxLines);
-        if (cursor) params.append("cursor", cursor);
-        params.append("follow_latest", String(Boolean(followLatest)));
-        const response = await apiClient.get(`/logs?${params.toString()}`);
+    /**
+     * Fetch BE-side alert transition events.
+     *
+     * Phase 1 backend response shape:
+     *   { items: [...], totalCount, limit, offset }
+     * where each item has:
+     *   { id, sourceType, sourceId, metric, severity, level, label,
+     *     message, payload, createdAt }
+     *
+     * @param {Object} [params]
+     * @param {string} [params.from]        ISO-8601 lower bound (createdAt)
+     * @param {string} [params.to]          ISO-8601 upper bound (createdAt)
+     * @param {string} [params.sourceType]  "server_resource" | "network" | "http_status"
+     * @param {string} [params.sourceId]    monitor target id (exact match)
+     * @param {string} [params.severity]    "raise" | "clear"
+     * @param {string} [params.keyword]     substring match against label OR message
+     * @param {number} [params.limit]       1..1000 (default 200)
+     * @param {number} [params.offset]      non-negative int (default 0)
+     */
+    getAlerts: async (params = {}) => {
+        const usp = new URLSearchParams();
+        if (params.from) usp.set("from", params.from);
+        if (params.to) usp.set("to", params.to);
+        if (params.sourceType) usp.set("sourceType", params.sourceType);
+        if (params.sourceId) usp.set("sourceId", params.sourceId);
+        if (params.severity) usp.set("severity", params.severity);
+        if (params.keyword) usp.set("keyword", params.keyword);
+        if (params.limit != null) usp.set("limit", String(params.limit));
+        if (params.offset != null) usp.set("offset", String(params.offset));
+        const qs = usp.toString();
+        const response = await apiClient.get(
+            `/dashboard/alerts${qs ? `?${qs}` : ""}`,
+        );
         return response.data;
     },
 };
@@ -317,6 +336,98 @@ export const titleService = {
      */
     setDashboardTitle: async (title) => {
         const response = await apiClient.put("/dashboard/settings/title", { title });
+        return response.data;
+    },
+};
+
+// ── Widget configs (BE-central display columns + thresholds) ─────────────────
+//
+// Phase 2: per (apiId, widgetType) shared definition. Personal layout state
+// (size, column order, column width) stays in user_preferences.
+
+export const widgetConfigService = {
+    /** Return every (apiId, widgetType, config, updatedAt) row. */
+    list: async () => {
+        const response = await apiClient.get("/dashboard/widget-configs");
+        return response.data;
+    },
+    /** Return a single widget config or null if 404. */
+    get: async (apiId, widgetType) => {
+        try {
+            const response = await apiClient.get(
+                `/dashboard/widget-configs/${encodeURIComponent(apiId)}/${encodeURIComponent(widgetType)}`,
+            );
+            return response.data;
+        } catch (err) {
+            if (err?.response?.status === 404) return null;
+            throw err;
+        }
+    },
+    /** Admin: upsert. body: {displayColumns, thresholds, ...}. */
+    save: async (apiId, widgetType, config) => {
+        const response = await apiClient.put(
+            `/dashboard/widget-configs/${encodeURIComponent(apiId)}/${encodeURIComponent(widgetType)}`,
+            { config },
+        );
+        return response.data;
+    },
+    /** Admin: delete. */
+    remove: async (apiId, widgetType) => {
+        await apiClient.delete(
+            `/dashboard/widget-configs/${encodeURIComponent(apiId)}/${encodeURIComponent(widgetType)}`,
+        );
+    },
+};
+
+// ── Active alerts polling (Phase 2) ──────────────────────────────────────────
+
+export const alertService = {
+    /** Snapshot of currently-raised (un-cleared) alarms across all sources. */
+    listActive: async ({ signal } = {}) => {
+        const response = await apiClient.get("/dashboard/alerts/active", { signal });
+        return response.data;
+    },
+};
+
+// ── Timemachine (Phase 3) ────────────────────────────────────────────────────
+//
+// 시점 조회 API + retention KV. 모든 메서드는 인증된 사용자가 호출 가능하지만
+// retention 변경은 admin 전용.
+
+export const timemachineService = {
+    /**
+     * Fetch the closest-in-time samples for one or every source.
+     * @param {Object} params
+     * @param {string|number} params.at - ISO-8601 string OR epoch ms
+     * @param {string} [params.sourceType] - "monitor:server_resource" / "data_api" 등
+     * @param {string} [params.sourceId]
+     */
+    queryAt: async ({ at, sourceType, sourceId, signal } = {}) => {
+        const usp = new URLSearchParams();
+        if (at != null) usp.set("at", String(at));
+        if (sourceType) usp.set("sourceType", sourceType);
+        if (sourceId) usp.set("sourceId", sourceId);
+        const response = await apiClient.get(
+            `/dashboard/timemachine?${usp.toString()}`,
+            { signal },
+        );
+        return response.data;
+    },
+    /** Store stats (row count, time span, enabled flag). */
+    stats: async () => {
+        const response = await apiClient.get("/dashboard/timemachine/stats");
+        return response.data;
+    },
+    /** Read current retention hours (>= 0). */
+    getRetention: async () => {
+        const response = await apiClient.get("/dashboard/timemachine/retention");
+        return response.data;
+    },
+    /** Admin: write retention hours (0 disables eviction). */
+    setRetention: async (retentionHours) => {
+        const response = await apiClient.put("/dashboard/timemachine/retention", {
+            retentionHours,
+        });
         return response.data;
     },
 };

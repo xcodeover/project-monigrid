@@ -1,0 +1,321 @@
+/* ══════════════════════════════════════════════════════════════════
+   AlertHistoryPage  –  /alerts (BE alert transition log)
+
+   Phase 1 layout:
+     header  (sticky)  →  filter form (sticky)  →  scrolling table
+     →  paginator (sticky bottom).
+   ══════════════════════════════════════════════════════════════════ */
+
+.alert-history-page {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-base, #0b1220);
+    color: var(--text-primary, #e2e8f0);
+    z-index: 10;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+
+.ah-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    flex-shrink: 0;
+}
+
+.ah-title-wrap h1 {
+    margin: 0 0 2px;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.ah-title-wrap p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-secondary, #94a3b8);
+}
+
+.ah-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ah-user {
+    font-size: 12px;
+    color: var(--text-secondary, #94a3b8);
+}
+
+/* ── Buttons ────────────────────────────────────────────────── */
+
+.ah-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: var(--text-secondary, #94a3b8);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ah-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary, #e2e8f0);
+    border-color: rgba(148, 163, 184, 0.3);
+}
+
+.ah-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.ah-btn-primary {
+    background: rgba(25, 160, 255, 0.15);
+    border-color: rgba(25, 160, 255, 0.3);
+    color: rgba(25, 160, 255, 0.95);
+}
+
+.ah-btn-primary:hover:not(:disabled) {
+    background: rgba(25, 160, 255, 0.25);
+}
+
+/* ── Filter form (sticky) ───────────────────────────────────── */
+
+.ah-filters {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px 12px;
+    padding: 12px 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    flex-shrink: 0;
+    align-items: end;
+}
+
+.ah-filters label {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
+}
+
+.ah-filters label > span {
+    font-size: 11px;
+}
+
+.ah-filters input,
+.ah-filters select {
+    padding: 7px 10px;
+    background-color: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary, #e2e8f0);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 8px;
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+.ah-filters input:focus,
+.ah-filters select:focus {
+    outline: none;
+    border-color: rgba(25, 160, 255, 0.34);
+    box-shadow: 0 0 0 3px rgba(25, 160, 255, 0.1);
+}
+
+.ah-keyword {
+    grid-column: span 2;
+}
+
+.ah-filter-actions {
+    grid-column: span 6;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+/* ── Main scrollable region ─────────────────────────────────── */
+
+.ah-main {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px 24px;
+}
+
+.ah-msg {
+    padding: 24px;
+    text-align: center;
+    font-size: 13px;
+    border-radius: 10px;
+    border: 1px dashed rgba(148, 163, 184, 0.14);
+}
+
+.ah-msg-error {
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.05);
+}
+
+.ah-msg-loading,
+.ah-msg-empty {
+    color: var(--text-tertiary, #64748b);
+}
+
+/* ── Table ──────────────────────────────────────────────────── */
+
+.ah-table-wrap {
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.ah-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.ah-table thead th {
+    text-align: left;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-secondary, #94a3b8);
+    font-weight: 600;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    white-space: nowrap;
+}
+
+.ah-table tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+    vertical-align: top;
+}
+
+.ah-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.ah-cell-ts {
+    white-space: nowrap;
+    color: var(--text-secondary, #94a3b8);
+    font-variant-numeric: tabular-nums;
+}
+
+.ah-cell-msg {
+    color: var(--text-primary, #e2e8f0);
+}
+
+.ah-target-name {
+    color: var(--text-primary, #e2e8f0);
+    font-weight: 600;
+}
+
+.ah-target-id {
+    color: var(--text-tertiary, #64748b);
+    font-size: 10px;
+    margin-top: 2px;
+    font-family: "Consolas", "Monaco", monospace;
+}
+
+/* severity / level badges */
+.ah-sev {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    border-radius: 6px;
+    text-transform: uppercase;
+}
+
+.ah-sev-raise {
+    background: rgba(239, 68, 68, 0.14);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.ah-sev-clear {
+    background: rgba(34, 197, 94, 0.12);
+    color: #86efac;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.ah-level {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary, #94a3b8);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.ah-level-critical {
+    color: #fca5a5;
+    border-color: rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.ah-level-warn {
+    color: #fbbf24;
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.08);
+}
+
+/* ── Paginator (sticky bottom) ──────────────────────────────── */
+
+.ah-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    flex-shrink: 0;
+}
+
+.ah-pager-info {
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
+}
+
+.ah-pager-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ah-pager-page {
+    font-size: 11px;
+    color: var(--text-secondary, #94a3b8);
+    min-width: 60px;
+    text-align: center;
+}
+
+/* ── Narrow-screen fallback ─────────────────────────────────── */
+
+@media (max-width: 960px) {
+    .ah-filters {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .ah-keyword {
+        grid-column: span 2;
+    }
+    .ah-filter-actions {
+        grid-column: span 2;
+    }
+}

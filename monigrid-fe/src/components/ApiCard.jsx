@@ -171,62 +171,14 @@ const ApiCard = ({
 
     const dataRows = useMemo(() => normalizeData(data), [data]);
     const detectedColumns = useMemo(() => getAllColumns(data), [data]);
-    const savedVisibleColumns = tableSettings?.visibleColumns ?? [];
-    const availableColumns = useMemo(() => {
-        const mergedColumns = new Set([
-            ...savedVisibleColumns,
-            ...detectedColumns,
-        ]);
-        return Array.from(mergedColumns);
-    }, [detectedColumns, savedVisibleColumns]);
 
-    const orderedColumns = useMemo(() => {
-        const visibleSet = new Set(savedVisibleColumns);
-        const visibleOrdered = savedVisibleColumns.filter((column) =>
-            availableColumns.includes(column),
-        );
-        const hiddenColumns = availableColumns.filter(
-            (column) => !visibleSet.has(column),
-        );
-
-        return [...visibleOrdered, ...hiddenColumns];
-    }, [availableColumns, savedVisibleColumns]);
-
-    useEffect(() => {
-        if (detectedColumns.length === 0) return;
-
-        const saved = tableSettings?.visibleColumns ?? [];
-
-        // 초기 상태: 저장된 컬럼 없음 → detectedColumns 그대로 저장
-        if (saved.length === 0) {
-            onTableSettingsChange({ visibleColumns: detectedColumns });
-            return;
-        }
-
-        // 백엔드 데이터셋에서 사라진 컬럼이 있으면 자동 갱신
-        const hasDisappearedColumns = saved.some(
-            (col) => !detectedColumns.includes(col),
-        );
-        if (hasDisappearedColumns) {
-            // 살아남은 컬럼은 기존 순서 유지, 신규 컬럼은 뒤에 추가
-            const surviving = saved.filter((col) =>
-                detectedColumns.includes(col),
-            );
-            const newCols = detectedColumns.filter(
-                (col) => !saved.includes(col),
-            );
-            onTableSettingsChange({
-                visibleColumns: [...surviving, ...newCols],
-            });
-        }
-    }, [detectedColumns, onTableSettingsChange, tableSettings?.visibleColumns]);
-
-    const visibleColumns =
-        tableSettings?.visibleColumns && tableSettings.visibleColumns.length > 0
-            ? tableSettings.visibleColumns.filter((column) =>
-                  availableColumns.includes(column),
-              )
-            : availableColumns;
+    // 컬럼 순서/표시 여부는 BE 쿼리(SQL SELECT) 결과 순서를 그대로 따른다.
+    // 사용자가 조절하는 것은 컬럼 너비뿐. user_preferences 의 visibleColumns
+    // 가 남아 있어도 무시한다 (phase 2 revised). 자동 저장 effect 도 제거 —
+    // detectedColumns 가 단일 출처라 user pref 에 굳이 동기화할 필요 없음.
+    const availableColumns = detectedColumns;
+    const orderedColumns = detectedColumns;
+    const visibleColumns = detectedColumns;
 
     useEffect(() => {
         if (data != null) {

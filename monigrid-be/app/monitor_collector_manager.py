@@ -68,10 +68,21 @@ class MonitorCollectorManager:
         target_loader: TargetLoader,
         executor_provider: Callable[[], ThreadPoolExecutor],
         logger: logging.Logger,
+        alert_sink: Callable[[MonitorSnapshot], None] | None = None,
+        archival_sink: Callable[[MonitorSnapshot], None] | None = None,
     ) -> None:
         self._target_loader = target_loader
         self._executor_provider = executor_provider
         self._logger = logger
+        # Phase 1: optional hook called on the same thread right after a
+        # snapshot is produced. Wired to AlertEvaluator from service.py.
+        # Kept as a plain callable (not a typed dependency) so the
+        # collector remains testable without pulling alert state in.
+        self._alert_sink = alert_sink
+        # Phase 3: optional archival hook — TimemachineStore.write_sample.
+        # Called after the snapshot is stored in memory so the timemachine
+        # never sees a state that was never visible in /monitor-snapshot.
+        self._archival_sink = archival_sink
 
         self._snapshots: dict[str, MonitorSnapshot] = {}
         self._snapshot_lock = threading.RLock()
@@ -80,6 +91,15 @@ class MonitorCollectorManager:
         self._threads: dict[str, threading.Thread] = {}
         self._targets_by_id: dict[str, dict[str, Any]] = {}
         self._targets_lock = threading.RLock()
+
+    def set_alert_sink(self, sink: Callable[[MonitorSnapshot], None] | None) -> None:
+        """Late-bind the alert evaluator. Allowed to be reset to None for
+        teardown / tests."""
+        self._alert_sink = sink
+
+    def set_archival_sink(self, sink: Callable[[MonitorSnapshot], None] | None) -> None:
+        """Late-bind the timemachine archival hook."""
+        self._archival_sink = sink
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
@@ -397,6 +417,29 @@ class MonitorCollectorManager:
         )
         with self._snapshot_lock:
             self._snapshots[target_id] = snapshot
+
+        # Phase 1: BE-side alert evaluation runs on the same thread that
+        # just produced the snapshot — keeps the path simple (no second
+        # scheduler) and avoids race windows where a collector thread sees
+        # a pre-evaluation snapshot. AlertEvaluator.evaluate() catches and
+        # logs its own failures, so even an unexpected exception here
+        # cannot derail the collector.
+        if self._alert_sink is not None:
+            try:
+                self._alert_sink(snapshot)
+            except Exception:
+                self._logger.exception(
+                    "alert_sink raised targetId=%s — ignored, snapshot already stored",
+                    target_id,
+                )
+        # Phase 3: best-effort archive into the local timemachine SQLite.
+        if self._archival_sink is not None:
+            try:
+                self._archival_sink(snapshot)
+            except Exception:
+                self._logger.exception(
+                    "archival_sink raised targetId=%s — ignored", target_id,
+                )
 
         if self._logger.isEnabledFor(logging.DEBUG):
             self._logger.debug(

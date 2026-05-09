@@ -232,13 +232,15 @@ const highlightSql = (code) =>
 
 const SQL_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-const SqlEditorModal = ({ open, onClose }) => {
+const SqlEditorModal = ({ open, onClose, initialApiId = null }) => {
     // mode: "edit"   — 기존 활성 API에 연결된 SQL 쿼리를 편집 (설정 DB에 저장)
     //       "create" — 새 sqlId 로 설정 DB에 SQL 쿼리를 등록
     const [mode, setMode] = useState("edit");
 
     const [endpoints, setEndpoints] = useState([]);
-    const [selectedApiId, setSelectedApiId] = useState("");
+    // initialApiId 가 주어지면 ConfigEditorPage 의 데이터 API row 에서 진입한
+    // 케이스 — 그 API 가 endpoints 에 포함되어 있으면 자동 선택, 아니면 첫 번째.
+    const [selectedApiId, setSelectedApiId] = useState(initialApiId || "");
     const [sqlText, setSqlText] = useState("");
     const [originalSql, setOriginalSql] = useState("");
     const [loadingEndpoints, setLoadingEndpoints] = useState(false);
@@ -288,9 +290,16 @@ const SqlEditorModal = ({ open, onClose }) => {
                 const response =
                     (await dashboardService.getSqlEditableEndpoints()) || [];
                 setEndpoints(response || []);
-                setSelectedApiId(
-                    (current) => current || response?.[0]?.id || "",
-                );
+                setSelectedApiId((current) => {
+                    if (current) return current;
+                    // ConfigEditorPage 의 row 에서 initialApiId 를 받았다면 그 항목이
+                    // endpoints 안에 있을 때 자동 선택해 사용자가 다시 dropdown
+                    // 에서 찾을 필요 없도록 한다.
+                    if (initialApiId && response?.some((ep) => ep.id === initialApiId)) {
+                        return initialApiId;
+                    }
+                    return response?.[0]?.id || "";
+                });
 
                 try {
                     const rulesResponse =

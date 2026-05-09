@@ -1,11 +1,10 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { monitorService, invalidateMonitorTargetsCache } from "../services/dashboardService";
 import { DEFAULT_CRITERIA, OS_OPTIONS } from "./serverResourceHelpers";
 import PasswordInput from "./PasswordInput";
 import { useDirtyList } from "../hooks/useDirtyList";
-import DirtyListSummary from "./DirtyListSummary";
+import { useConfigFooterRegister, useConfigFooterUnregister } from "../pages/configFooterContext";
 import {
-    IconChevronRight,
     IconCopy,
     IconPlus,
     IconRefresh,
@@ -67,32 +66,60 @@ const needsServerCreds = (target) => {
     return false;
 };
 
-const TargetCard = ({
-    target,
-    collapsed,
-    onToggle,
-    onChange,
-    onRemove,
-    onRestore,
-    onDuplicate,
-    rowStateClass,
-    validationError,
+/* ── Grid row (Phase: 사용자 요구 ③ — 카드 → grid 전환) ────────────
+ * server_resource / network / http_status 가 컬럼 구성이 다르므로 각자
+ * grid-template-columns 가 다른 별도 row 컴포넌트로 분기한다. 사용자 입력
+ * 가능한 모든 필드를 한 행에 inline 으로 노출 — 가로 스크롤 허용.
+ *  ───────────────────────────────────────────────────────────────── */
+
+const RowActions = ({ isDeleted, isNew, onDuplicate, onRemove, onRestore }) => (
+    <div className="cfg-grid-actions">
+        {!isDeleted && (
+            <button
+                type="button"
+                className="cfg-duplicate-btn"
+                onClick={onDuplicate}
+                title="복제"
+            >
+                <IconCopy size={14} />
+            </button>
+        )}
+        {isDeleted ? (
+            <button
+                type="button"
+                className="row-restore-btn"
+                onClick={onRestore}
+                title="복원"
+            >
+                ↺
+            </button>
+        ) : (
+            <button
+                type="button"
+                className="cfg-remove-btn"
+                onClick={onRemove}
+                title="삭제"
+            >
+                <IconTrash size={14} />
+            </button>
+        )}
+    </div>
+);
+
+const RowFlags = ({ isNew, isDeleted }) => (
+    <span className="cfg-grid-flags">
+        {isNew && <span className="cfg-card-badge">신규</span>}
+        {isDeleted && <span className="cfg-card-badge" style={{ color: "#ff6b6b" }}>삭제 예정</span>}
+    </span>
+);
+
+const ServerResourceRow = ({
+    target, index, onChange, onRemove, onRestore, onDuplicate,
+    rowStateClass, validationError,
 }) => {
     const update = (field, value) => onChange({ ...target, [field]: value });
     const updateSpec = (field, value) =>
         onChange({ ...target, spec: { ...(target.spec || {}), [field]: value } });
-
-    const isServer = target.type === "server_resource";
-    const isNetwork = target.type === "network";
-    const isHttp = target.type === "http_status";
-    const networkKind = target.spec?.type || "ping";
-    const osType = target.spec?.os_type || "linux-generic";
-    const showCreds = needsServerCreds(target);
-    const isDeleted = target._isDeleted;
-
-    // server_resource 의 알람 임계치(%) — 운영자가 등록 시 함께 입력해
-    // BE 에 중앙 저장한다. 빈 입력은 fallback 으로 DEFAULT_CRITERIA 사용.
-    const criteria = target.spec?.criteria || {};
     const updateCriteria = (field, value) =>
         onChange({
             ...target,
@@ -104,364 +131,364 @@ const TargetCard = ({
                 },
             },
         });
-
-    const cardClasses = [
-        "cfg-card",
-        collapsed ? "cfg-card-collapsed" : "",
+    const osType = target.spec?.os_type || "linux-generic";
+    const criteria = target.spec?.criteria || {};
+    const showCreds = needsServerCreds(target);
+    const isDeleted = target._isDeleted;
+    const rowClasses = [
+        "cfg-grid-row",
         rowStateClass || "",
         validationError ? "row-state-invalid" : "",
-    ]
-        .filter(Boolean)
-        .join(" ");
+        isDeleted ? "cfg-grid-row-deleted" : "",
+    ].filter(Boolean).join(" ");
 
     return (
-        <div
-            className={cardClasses}
-            data-row-id={target.id}
-        >
-            <div
-                className="cfg-card-header"
-                onClick={onToggle}
-                style={{ cursor: "pointer" }}
-            >
-                <span className={`cfg-card-chevron ${collapsed ? "" : "open"}`}>
-                    <IconChevronRight size={12} />
-                </span>
-                {!isDeleted && (
-                    <label
-                        className="cfg-toggle"
-                        onClick={(e) => e.stopPropagation()}
-                        title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}
-                    >
-                        <input
-                            type="checkbox"
-                            checked={!!target.enabled}
-                            onChange={(e) => update("enabled", e.target.checked)}
-                        />
-                        <span className="cfg-toggle-slider" />
-                    </label>
-                )}
-                <span className="cfg-card-title">
-                    {target.label || target.id || "(이름 없음)"}
-                </span>
-                <span className="cfg-card-badge">
-                    {target.type === "http_status"
-                        ? target.spec?.url || "-"
-                        : target.spec?.host || "-"}
-                </span>
-                {target._isNew && <span className="cfg-card-badge">신규</span>}
-                {isDeleted && <span className="cfg-card-badge" style={{ color: "#ff6b6b" }}>삭제 예정</span>}
-                {!isDeleted && (
-                    <button
-                        type="button"
-                        className="cfg-duplicate-btn"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onDuplicate();
-                        }}
-                        title="복제"
-                        aria-label="복제"
-                    >
-                        <IconCopy size={14} />
-                    </button>
-                )}
-                {isDeleted ? (
-                    <button
-                        type="button"
-                        className="row-restore-btn"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onRestore();
-                        }}
-                        title="복원"
-                        aria-label="복원"
-                    >
-                        ↺ 복원
-                    </button>
-                ) : (
-                    <button
-                        type="button"
-                        className="cfg-remove-btn"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onRemove();
-                        }}
-                        title="삭제"
-                        aria-label="삭제"
-                    >
-                        <IconTrash size={14} />
-                    </button>
-                )}
+        <>
+            <div className={rowClasses} data-row-id={target.id}>
+                <span className="cfg-grid-no">{index + 1}</span>
+                <label className="cfg-toggle" title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}>
+                    <input
+                        type="checkbox"
+                        checked={!!target.enabled}
+                        onChange={(e) => update("enabled", e.target.checked)}
+                        disabled={isDeleted}
+                    />
+                    <span className="cfg-toggle-slider" />
+                </label>
+                <input
+                    type="text"
+                    value={target.id || ""}
+                    onChange={(e) => update("id", e.target.value)}
+                    placeholder="db-01"
+                    disabled={!target._isNew || isDeleted}
+                />
+                <input
+                    type="text"
+                    value={target.label || ""}
+                    onChange={(e) => update("label", e.target.value)}
+                    placeholder="prod DB"
+                    disabled={isDeleted}
+                />
+                <input
+                    type="number"
+                    min="1"
+                    value={target.interval_sec ?? 30}
+                    onChange={(e) => update("interval_sec", Number(e.target.value) || 0)}
+                    disabled={isDeleted}
+                />
+                <input
+                    type="text"
+                    value={target.spec?.host || ""}
+                    onChange={(e) => updateSpec("host", e.target.value)}
+                    placeholder="192.168.0.10"
+                    disabled={isDeleted}
+                />
+                <select
+                    value={osType}
+                    onChange={(e) => updateSpec("os_type", e.target.value)}
+                    disabled={isDeleted}
+                >
+                    {OS_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                </select>
+                <input
+                    type="text"
+                    value={target.spec?.username || ""}
+                    onChange={(e) => updateSpec("username", e.target.value)}
+                    placeholder={showCreds ? "user" : "(불필요)"}
+                    disabled={isDeleted || !showCreds}
+                />
+                <PasswordInput
+                    value={target.spec?.password || ""}
+                    onChange={(e) => updateSpec("password", e.target.value)}
+                    placeholder={showCreds ? "" : "(불필요)"}
+                    disabled={isDeleted || !showCreds}
+                />
+                <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={criteria.cpu ?? ""}
+                    onChange={(e) => updateCriteria("cpu", e.target.value)}
+                    placeholder={String(DEFAULT_CRITERIA.cpu)}
+                    title="CPU 알람 임계치 (%)"
+                    disabled={isDeleted}
+                />
+                <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={criteria.memory ?? ""}
+                    onChange={(e) => updateCriteria("memory", e.target.value)}
+                    placeholder={String(DEFAULT_CRITERIA.memory)}
+                    title="Memory 알람 임계치 (%)"
+                    disabled={isDeleted}
+                />
+                <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={criteria.disk ?? ""}
+                    onChange={(e) => updateCriteria("disk", e.target.value)}
+                    placeholder={String(DEFAULT_CRITERIA.disk)}
+                    title="Disk 알람 임계치 (%)"
+                    disabled={isDeleted}
+                />
+                <RowFlags isNew={target._isNew} isDeleted={isDeleted} />
+                <RowActions
+                    isDeleted={isDeleted}
+                    isNew={target._isNew}
+                    onDuplicate={onDuplicate}
+                    onRemove={onRemove}
+                    onRestore={onRestore}
+                />
             </div>
-            {!collapsed && !isDeleted && (
-                <div className="cfg-card-body">
-                    <div className="cfg-row-2">
-                        <label>
-                            <span>ID</span>
-                            <input
-                                type="text"
-                                value={target.id || ""}
-                                onChange={(e) => update("id", e.target.value)}
-                                placeholder="예: db-01"
-                                disabled={!target._isNew}
-                            />
-                        </label>
-                        <label>
-                            <span>이름</span>
-                            <input
-                                type="text"
-                                value={target.label || ""}
-                                onChange={(e) => update("label", e.target.value)}
-                                placeholder="예: prod DB"
-                            />
-                        </label>
-                    </div>
+            {validationError && <div className="cfg-grid-error-row">{validationError}</div>}
+        </>
+    );
+};
 
-                    <div className="cfg-row-2">
-                        <label>
-                            <span>주기(초)</span>
-                            <input
-                                type="number"
-                                min="1"
-                                value={target.interval_sec ?? 30}
-                                onChange={(e) =>
-                                    update("interval_sec", Number(e.target.value) || 0)
-                                }
-                            />
-                        </label>
-                        {!isHttp && (
-                            <label>
-                                <span>호스트</span>
-                                <input
-                                    type="text"
-                                    value={target.spec?.host || ""}
-                                    onChange={(e) => updateSpec("host", e.target.value)}
-                                    placeholder={
-                                        isServer
-                                            ? "192.168.0.10 or localhost"
-                                            : "192.168.0.10"
-                                    }
-                                />
-                            </label>
-                        )}
-                    </div>
+const NetworkRow = ({
+    target, index, onChange, onRemove, onRestore, onDuplicate,
+    rowStateClass, validationError,
+}) => {
+    const update = (field, value) => onChange({ ...target, [field]: value });
+    const updateSpec = (field, value) =>
+        onChange({ ...target, spec: { ...(target.spec || {}), [field]: value } });
+    const networkKind = target.spec?.type || "ping";
+    const isDeleted = target._isDeleted;
+    const rowClasses = [
+        "cfg-grid-row",
+        rowStateClass || "",
+        validationError ? "row-state-invalid" : "",
+        isDeleted ? "cfg-grid-row-deleted" : "",
+    ].filter(Boolean).join(" ");
 
-                    {isServer && (
-                        <fieldset className="cfg-fieldset">
-                            <legend>Server Resource</legend>
-                            <label>
-                                <span>OS 유형</span>
-                                <select
-                                    value={osType}
-                                    onChange={(e) => updateSpec("os_type", e.target.value)}
-                                >
-                                    {OS_OPTIONS.map((o) => (
-                                        <option key={o.value} value={o.value}>
-                                            {o.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                            {showCreds && (
-                                <>
-                                    <div className="cfg-row-2">
-                                        <label>
-                                            <span>Username</span>
-                                            <input
-                                                type="text"
-                                                value={target.spec?.username || ""}
-                                                onChange={(e) =>
-                                                    updateSpec("username", e.target.value)
-                                                }
-                                            />
-                                        </label>
-                                        <label>
-                                            <span>Password</span>
-                                            <PasswordInput
-                                                value={target.spec?.password || ""}
-                                                onChange={(e) =>
-                                                    updateSpec("password", e.target.value)
-                                                }
-                                            />
-                                        </label>
-                                    </div>
-                                    <div className="cfg-row-2">
-                                        <label>
-                                            <span>Domain (선택)</span>
-                                            <input
-                                                type="text"
-                                                value={target.spec?.domain || ""}
-                                                onChange={(e) =>
-                                                    updateSpec("domain", e.target.value)
-                                                }
-                                            />
-                                        </label>
-                                        <label>
-                                            <span>Port (선택)</span>
-                                            <input
-                                                type="number"
-                                                value={target.spec?.port || ""}
-                                                onChange={(e) =>
-                                                    updateSpec("port", e.target.value)
-                                                }
-                                            />
-                                        </label>
-                                    </div>
-                                    {osType === "windows-winrm" && (
-                                        <label>
-                                            <span>Transport</span>
-                                            <select
-                                                value={target.spec?.transport || ""}
-                                                onChange={(e) =>
-                                                    updateSpec("transport", e.target.value)
-                                                }
-                                            >
-                                                <option value="">(기본)</option>
-                                                <option value="ntlm">ntlm</option>
-                                                <option value="basic">basic</option>
-                                                <option value="kerberos">kerberos</option>
-                                            </select>
-                                        </label>
-                                    )}
-                                </>
-                            )}
-                            <div
-                                className="cfg-row-3"
-                                style={{
-                                    display: "grid",
-                                    gridTemplateColumns: "1fr 1fr 1fr",
-                                    gap: 8,
-                                }}
-                            >
-                                <label>
-                                    <span>CPU 알람 임계치 (%)</span>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        max="100"
-                                        value={criteria.cpu ?? ""}
-                                        onChange={(e) =>
-                                            updateCriteria("cpu", e.target.value)
-                                        }
-                                        placeholder={String(DEFAULT_CRITERIA.cpu)}
-                                    />
-                                </label>
-                                <label>
-                                    <span>Memory 알람 임계치 (%)</span>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        max="100"
-                                        value={criteria.memory ?? ""}
-                                        onChange={(e) =>
-                                            updateCriteria("memory", e.target.value)
-                                        }
-                                        placeholder={String(DEFAULT_CRITERIA.memory)}
-                                    />
-                                </label>
-                                <label>
-                                    <span>Disk 알람 임계치 (%)</span>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        max="100"
-                                        value={criteria.disk ?? ""}
-                                        onChange={(e) =>
-                                            updateCriteria("disk", e.target.value)
-                                        }
-                                        placeholder={String(DEFAULT_CRITERIA.disk)}
-                                    />
-                                </label>
-                            </div>
-                        </fieldset>
-                    )}
+    return (
+        <>
+            <div className={rowClasses} data-row-id={target.id}>
+                <span className="cfg-grid-no">{index + 1}</span>
+                <label className="cfg-toggle" title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}>
+                    <input
+                        type="checkbox"
+                        checked={!!target.enabled}
+                        onChange={(e) => update("enabled", e.target.checked)}
+                        disabled={isDeleted}
+                    />
+                    <span className="cfg-toggle-slider" />
+                </label>
+                <input
+                    type="text"
+                    value={target.id || ""}
+                    onChange={(e) => update("id", e.target.value)}
+                    placeholder="net-01"
+                    disabled={!target._isNew || isDeleted}
+                />
+                <input
+                    type="text"
+                    value={target.label || ""}
+                    onChange={(e) => update("label", e.target.value)}
+                    placeholder="DC-A 게이트웨이"
+                    disabled={isDeleted}
+                />
+                <input
+                    type="number"
+                    min="1"
+                    value={target.interval_sec ?? 30}
+                    onChange={(e) => update("interval_sec", Number(e.target.value) || 0)}
+                    disabled={isDeleted}
+                />
+                <select
+                    value={networkKind}
+                    onChange={(e) => updateSpec("type", e.target.value)}
+                    disabled={isDeleted}
+                >
+                    {NETWORK_TYPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                </select>
+                <input
+                    type="text"
+                    value={target.spec?.host || ""}
+                    onChange={(e) => updateSpec("host", e.target.value)}
+                    placeholder="192.168.0.10"
+                    disabled={isDeleted}
+                />
+                <input
+                    type="number"
+                    min="1"
+                    max="65535"
+                    value={target.spec?.port || ""}
+                    onChange={(e) => updateSpec("port", e.target.value)}
+                    placeholder={networkKind === "telnet" ? "443" : "(불필요)"}
+                    disabled={isDeleted || networkKind !== "telnet"}
+                />
+                <input
+                    type="number"
+                    min="1"
+                    max="30"
+                    value={target.spec?.timeout || 5}
+                    onChange={(e) => updateSpec("timeout", e.target.value)}
+                    title="Timeout (초)"
+                    disabled={isDeleted}
+                />
+                <RowFlags isNew={target._isNew} isDeleted={isDeleted} />
+                <RowActions
+                    isDeleted={isDeleted}
+                    isNew={target._isNew}
+                    onDuplicate={onDuplicate}
+                    onRemove={onRemove}
+                    onRestore={onRestore}
+                />
+            </div>
+            {validationError && <div className="cfg-grid-error-row">{validationError}</div>}
+        </>
+    );
+};
 
-                    {isNetwork && (
-                        <fieldset className="cfg-fieldset">
-                            <legend>Network</legend>
-                            <div className="cfg-row-2">
-                                <label>
-                                    <span>테스트 유형</span>
-                                    <select
-                                        value={networkKind}
-                                        onChange={(e) => updateSpec("type", e.target.value)}
-                                    >
-                                        {NETWORK_TYPE_OPTIONS.map((o) => (
-                                            <option key={o.value} value={o.value}>
-                                                {o.label}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </label>
-                                {networkKind === "telnet" && (
-                                    <label>
-                                        <span>Port</span>
-                                        <input
-                                            type="number"
-                                            min="1"
-                                            max="65535"
-                                            value={target.spec?.port || ""}
-                                            onChange={(e) => updateSpec("port", e.target.value)}
-                                        />
-                                    </label>
-                                )}
-                            </div>
-                            <label>
-                                <span>Timeout (초)</span>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    max="30"
-                                    value={target.spec?.timeout || 5}
-                                    onChange={(e) => updateSpec("timeout", e.target.value)}
-                                />
-                            </label>
-                        </fieldset>
-                    )}
+const HttpStatusRow = ({
+    target, index, onChange, onRemove, onRestore, onDuplicate,
+    rowStateClass, validationError,
+}) => {
+    const update = (field, value) => onChange({ ...target, [field]: value });
+    const updateSpec = (field, value) =>
+        onChange({ ...target, spec: { ...(target.spec || {}), [field]: value } });
+    const isDeleted = target._isDeleted;
+    const rowClasses = [
+        "cfg-grid-row",
+        rowStateClass || "",
+        validationError ? "row-state-invalid" : "",
+        isDeleted ? "cfg-grid-row-deleted" : "",
+    ].filter(Boolean).join(" ");
 
-                    {isHttp && (
-                        <fieldset className="cfg-fieldset">
-                            <legend>API 상태 체크</legend>
-                            <label>
-                                <span>URL</span>
-                                <input
-                                    type="text"
-                                    value={target.spec?.url || ""}
-                                    onChange={(e) => updateSpec("url", e.target.value)}
-                                    placeholder="https://api.example.com/health"
-                                    spellCheck={false}
-                                    autoComplete="off"
-                                />
-                            </label>
-                            <label>
-                                <span>Timeout (초)</span>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    max="30"
-                                    value={
-                                        target.spec?.timeout_sec ??
-                                        HTTP_STATUS_DEFAULT_TIMEOUT_SEC
-                                    }
-                                    onChange={(e) =>
-                                        updateSpec(
-                                            "timeout_sec",
-                                            Number(e.target.value) || HTTP_STATUS_DEFAULT_TIMEOUT_SEC,
-                                        )
-                                    }
-                                />
-                            </label>
-                        </fieldset>
-                    )}
+    return (
+        <>
+            <div className={rowClasses} data-row-id={target.id}>
+                <span className="cfg-grid-no">{index + 1}</span>
+                <label className="cfg-toggle" title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}>
+                    <input
+                        type="checkbox"
+                        checked={!!target.enabled}
+                        onChange={(e) => update("enabled", e.target.checked)}
+                        disabled={isDeleted}
+                    />
+                    <span className="cfg-toggle-slider" />
+                </label>
+                <input
+                    type="text"
+                    value={target.id || ""}
+                    onChange={(e) => update("id", e.target.value)}
+                    placeholder="api-status-01"
+                    disabled={!target._isNew || isDeleted}
+                />
+                <input
+                    type="text"
+                    value={target.label || ""}
+                    onChange={(e) => update("label", e.target.value)}
+                    placeholder="결제 API"
+                    disabled={isDeleted}
+                />
+                <input
+                    type="number"
+                    min="1"
+                    value={target.interval_sec ?? 30}
+                    onChange={(e) => update("interval_sec", Number(e.target.value) || 0)}
+                    disabled={isDeleted}
+                />
+                <input
+                    type="text"
+                    value={target.spec?.url || ""}
+                    onChange={(e) => updateSpec("url", e.target.value)}
+                    placeholder="https://api.example.com/health"
+                    spellCheck={false}
+                    autoComplete="off"
+                    disabled={isDeleted}
+                />
+                <input
+                    type="number"
+                    min="1"
+                    max="30"
+                    value={target.spec?.timeout_sec ?? HTTP_STATUS_DEFAULT_TIMEOUT_SEC}
+                    onChange={(e) => updateSpec("timeout_sec", Number(e.target.value) || HTTP_STATUS_DEFAULT_TIMEOUT_SEC)}
+                    title="Timeout (초)"
+                    disabled={isDeleted}
+                />
+                <RowFlags isNew={target._isNew} isDeleted={isDeleted} />
+                <RowActions
+                    isDeleted={isDeleted}
+                    isNew={target._isNew}
+                    onDuplicate={onDuplicate}
+                    onRemove={onRemove}
+                    onRestore={onRestore}
+                />
+            </div>
+            {validationError && <div className="cfg-grid-error-row">{validationError}</div>}
+        </>
+    );
+};
 
-                    {validationError && (
-                        <div className="row-state-invalid-msg">{validationError}</div>
-                    )}
-                </div>
-            )}
+const TargetGridHeader = ({ targetType }) => {
+    if (targetType === "server_resource") {
+        return (
+            <div className="cfg-grid-row cfg-grid-head" role="row">
+                <span>No</span>
+                <span>활성</span>
+                <span>ID</span>
+                <span>이름</span>
+                <span>주기(초)</span>
+                <span>호스트</span>
+                <span>OS 유형</span>
+                <span>Username</span>
+                <span>Password</span>
+                <span>CPU%</span>
+                <span>Mem%</span>
+                <span>Disk%</span>
+                <span>상태</span>
+                <span></span>
+            </div>
+        );
+    }
+    if (targetType === "network") {
+        return (
+            <div className="cfg-grid-row cfg-grid-head" role="row">
+                <span>No</span>
+                <span>활성</span>
+                <span>ID</span>
+                <span>이름</span>
+                <span>주기(초)</span>
+                <span>유형</span>
+                <span>호스트</span>
+                <span>Port</span>
+                <span>Timeout</span>
+                <span>상태</span>
+                <span></span>
+            </div>
+        );
+    }
+    // http_status
+    return (
+        <div className="cfg-grid-row cfg-grid-head" role="row">
+            <span>No</span>
+            <span>활성</span>
+            <span>ID</span>
+            <span>이름</span>
+            <span>주기(초)</span>
+            <span>URL</span>
+            <span>Timeout</span>
+            <span>상태</span>
+            <span></span>
         </div>
     );
 };
+
+const TargetGridRow = (props) => {
+    const t = props.target?.type;
+    if (t === "server_resource") return <ServerResourceRow {...props} />;
+    if (t === "network") return <NetworkRow {...props} />;
+    return <HttpStatusRow {...props} />;
+};
+
 
 /**
  * @param {string}   targetType    - "server_resource" | "network" | "http_status"
@@ -532,6 +559,12 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [list.isDirty, list.dirtyCount.total]);
+
+    // ── 페이지 footer 의 단일 저장 버튼에 binding 등록 (요구 ①) ────────────
+    // handleBatchSave 는 매 렌더 새 closure 라 ref 를 통해 latest 를 호출.
+    const registerFooter = useConfigFooterRegister();
+    const unregisterFooter = useConfigFooterUnregister();
+    const handleBatchSaveRef = useRef();
 
     // ── server load ────────────────────────────────────────────────────────────
     const reload = useCallback(async () => {
@@ -632,6 +665,27 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
         }
     };
 
+    // ── footer binding (페이지 footer 단일 저장 버튼) ─────────────────────
+    useEffect(() => { handleBatchSaveRef.current = handleBatchSave; });
+    useEffect(() => {
+        // _key 는 ConfigEditorPage 가 activeBindingKey 로 매칭하는 키와 동일.
+        const key = targetType === "server_resource"
+            ? "serverTargets"
+            : targetType === "network"
+              ? "networkTargets"
+              : "httpStatusTargets";
+        registerFooter({
+            _key: key,
+            isDirty: list.isDirty,
+            dirtyCount: list.dirtyCount.total,
+            isSaving,
+            save: () => handleBatchSaveRef.current?.(),
+            saveLabel: "저장 & 적용",
+        });
+        return () => unregisterFooter(key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [targetType, list.isDirty, list.dirtyCount.total, isSaving]);
+
     // ── render ─────────────────────────────────────────────────────────────────
     const headerLabel =
         targetType === "server_resource"
@@ -680,40 +734,35 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
             ) : targets.length === 0 ? (
                 <div className="cfg-empty">등록된 대상이 없습니다.</div>
             ) : (
-                targets.map((t) => {
-                    const state = list.rowState(t.id);
-                    const rowStateClass =
-                        state === "new"
-                            ? "row-state-new"
-                            : state === "modified"
-                              ? "row-state-modified"
-                              : state === "deleted"
-                                ? "row-state-deleted"
-                                : "";
-                    const valError = list.validationError(t.id);
-                    return (
-                        <TargetCard
-                            key={t.id}
-                            target={t}
-                            collapsed={!!collapsed[t.id]}
-                            onToggle={() => toggleCollapsed(t.id)}
-                            onChange={(next) => handleChange(t.id, next)}
-                            onRemove={() => handleRemove(t.id)}
-                            onRestore={() => handleRestore(t.id)}
-                            onDuplicate={() => handleDuplicate(t.id)}
-                            rowStateClass={rowStateClass}
-                            validationError={valError}
-                        />
-                    );
-                })
+                <div className={`cfg-grid cfg-grid-monitor cfg-grid-monitor-${targetType}`} role="grid">
+                    <TargetGridHeader targetType={targetType} />
+                    {targets.map((t, idx) => {
+                        const state = list.rowState(t.id);
+                        const rowStateClass =
+                            state === "new"
+                                ? "row-state-new"
+                                : state === "modified"
+                                  ? "row-state-modified"
+                                  : state === "deleted"
+                                    ? "row-state-deleted"
+                                    : "";
+                        const valError = list.validationError(t.id);
+                        return (
+                            <TargetGridRow
+                                key={t.id}
+                                target={t}
+                                index={idx}
+                                onChange={(next) => handleChange(t.id, next)}
+                                onRemove={() => handleRemove(t.id)}
+                                onRestore={() => handleRestore(t.id)}
+                                onDuplicate={() => handleDuplicate(t.id)}
+                                rowStateClass={rowStateClass}
+                                validationError={valError}
+                            />
+                        );
+                    })}
+                </div>
             )}
-            <DirtyListSummary
-                count={list.dirtyCount}
-                isValid={list.isValid}
-                invalidCount={list.invalidIds.length}
-                isSaving={isSaving}
-                onSave={handleBatchSave}
-            />
         </div>
     );
 };

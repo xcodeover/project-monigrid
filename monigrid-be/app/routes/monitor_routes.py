@@ -97,11 +97,41 @@ def register(app, backend, limiter) -> None:
         ids_param = (request.args.get("ids") or "").strip()
         snapshots = backend.snapshot_monitor_entries()
 
+        # disabled/삭제된 타겟은 모든 사용자 위젯의 항목 노출에서 자동 제외한다.
+        # (deleted: snapshots 에서 이미 빠져있음.
+        #  disabled: snapshot.enabled 는 _마지막_ collect 시점 값이라 지금
+        #            막 disable 한 경우 갱신이 늦다 → 운영자 카탈로그를
+        #            함께 조회해 정확한 현재 enabled 상태로 필터링한다.)
+        # 위젯 store 의 targetIds 는 보존하므로 운영자가 다시 enable 하면 자동 복귀한다.
+        try:
+            catalog = backend.list_monitor_targets() or []
+            disabled_ids = {
+                str(t.get("id"))
+                for t in catalog
+                if isinstance(t, dict) and not t.get("enabled", True)
+            }
+        except Exception:
+            backend.logger.exception(
+                "monitor catalog read failed during snapshot — falling back to snapshot.enabled",
+            )
+            disabled_ids = set()
+
+        def _is_active(snapshot, target_id: str) -> bool:
+            if target_id in disabled_ids:
+                return False
+            return bool(snapshot.enabled)
+
         if ids_param:
             wanted = {s for s in (p.strip() for p in ids_param.split(",")) if s}
-            items = [snapshots[t] for t in wanted if t in snapshots]
+            items = [
+                snapshots[t]
+                for t in wanted
+                if t in snapshots and _is_active(snapshots[t], t)
+            ]
         else:
-            items = list(snapshots.values())
+            items = [
+                s for tid, s in snapshots.items() if _is_active(s, tid)
+            ]
 
         return jsonify({
             "items": [snapshot_to_dict(s) for s in items],

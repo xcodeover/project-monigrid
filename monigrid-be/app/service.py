@@ -20,6 +20,10 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+import os
+import time
+
+from .alert_evaluator import AlertEvaluator
 from .cache import EndpointCacheEntry
 from .config import ApiEndpointConfig, AppConfig
 from .db import DBConnectionPool, ensure_jvm_started, jvm_classpath_missing
@@ -31,7 +35,14 @@ from .logging_setup import _startup_log, configure_logging
 from .monitor_collector_manager import MonitorCollectorManager, MonitorSnapshot
 from .settings_store import SettingsStore, SqlRepository
 from .sql_editor_service import SqlEditorService
+from .timemachine_store import TimemachineStore
 from .utils import get_env
+
+
+# Phase 3 default — KV scalar overrides at runtime. 0 disables eviction loop.
+_DEFAULT_TIMEMACHINE_RETENTION_HOURS = 72.0
+# Retention sweep cadence — every 30 min is plenty for hour-scale windows.
+_TIMEMACHINE_RETENTION_TICK_SEC = 30 * 60
 
 
 # NOTE: _normalize_db_type and _DIAGNOSTIC_SQL were moved to db_health_service.py
@@ -117,11 +128,58 @@ class MonitoringBackend:
             logger=self.logger,
         )
         self._log_reader = LogReader(self.config.logging, self.logger)
+        # Phase 1/2: BE alert evaluation. The collector / cache manager emit
+        # data → evaluator classifies it → settings DB receives raise/clear
+        # transitions. We construct the evaluator before the producers so
+        # both sinks are wired up before the very first refresh tick.
+        self._alert_evaluator = AlertEvaluator(
+            settings_store=self.settings_store,
+            logger=self.logger,
+        )
         self._monitor_collector = MonitorCollectorManager(
             target_loader=self.settings_store.list_monitor_targets,
             executor_provider=lambda: self.monitor_executor,
             logger=self.logger,
+            alert_sink=self._alert_evaluator.evaluate,
         )
+        # Phase 2: data API thresholds are evaluated against the freshly
+        # refreshed cache entry. The sink is bound here (post-construction)
+        # rather than via the EndpointCacheManager constructor argument
+        # because the cache manager was already built above.
+        self._cache_manager.set_alert_sink(self._alert_evaluator.evaluate_data_api)
+
+        # Phase 3: timemachine archival store. Local SQLite next to the log
+        # directory; per-node lossy semantics (active-active acceptable).
+        # Constructed unconditionally — retention loop reads KV on every
+        # tick to gate eviction without restart.
+        tm_db_path = (
+            os.environ.get("TIMEMACHINE_DB_PATH")
+            or os.path.join(self.config.logging.directory or "logs", "timemachine.db")
+        )
+        self._timemachine = TimemachineStore(
+            db_path=tm_db_path, logger=self.logger,
+        )
+        try:
+            self._timemachine.connect()
+            self._monitor_collector.set_archival_sink(self._tm_archive_monitor)
+            self._cache_manager.set_archival_sink(self._tm_archive_data_api)
+        except Exception:
+            self.logger.exception(
+                "Timemachine init failed path=%s — archival disabled this boot",
+                tm_db_path,
+            )
+            self._timemachine = None  # type: ignore[assignment]
+
+        # retention loop
+        self._tm_stop = threading.Event()
+        self._tm_retention_thread: threading.Thread | None = None
+        if self._timemachine is not None:
+            self._tm_retention_thread = threading.Thread(
+                target=self._timemachine_retention_loop,
+                name="timemachine-retention",
+                daemon=True,
+            )
+            self._tm_retention_thread.start()
 
         # Pre-start JVM once before any JDBC work begins, with all JDBC jars on classpath
         if self.config.connections:
@@ -158,6 +216,95 @@ class MonitoringBackend:
         # Kept for monigrid_be.py shutdown hook (still calls this name).
         self._cache_manager.stop()
         self._monitor_collector.stop()
+        # Phase 3: stop retention thread + close SQLite connection so the
+        # OS releases the WAL/SHM files cleanly on shutdown.
+        try:
+            self._tm_stop.set()
+            if self._tm_retention_thread is not None:
+                self._tm_retention_thread.join(timeout=2)
+        except Exception:
+            pass
+        if getattr(self, "_timemachine", None) is not None:
+            try:
+                self._timemachine.close()
+            except Exception:
+                pass
+
+    # ── Timemachine archival hooks (Phase 3) ─────────────────────────────
+
+    def _tm_archive_monitor(self, snapshot: MonitorSnapshot) -> None:
+        """Archive one monitor target snapshot. Best-effort — exceptions
+        are swallowed inside TimemachineStore.write_sample so this method
+        cannot derail the collector."""
+        if self._timemachine is None:
+            return
+        self._timemachine.write_sample(
+            source_type=f"monitor:{snapshot.type}",
+            source_id=snapshot.target_id,
+            ts_ms=int(time.time() * 1000),
+            payload={
+                "label": snapshot.label,
+                "data": snapshot.data,
+                "errorMessage": snapshot.error_message,
+                "spec": snapshot.spec_echo,
+                "enabled": snapshot.enabled,
+                "intervalSec": snapshot.interval_sec,
+            },
+        )
+
+    def _tm_archive_data_api(self, endpoint: ApiEndpointConfig, data: Any) -> None:
+        """Archive one data API refresh result."""
+        if self._timemachine is None:
+            return
+        self._timemachine.write_sample(
+            source_type="data_api",
+            source_id=endpoint.api_id,
+            ts_ms=int(time.time() * 1000),
+            payload={
+                "title": endpoint.title,
+                "endpoint": endpoint.rest_api_path,
+                "data": data,
+            },
+        )
+
+    def _timemachine_retention_loop(self) -> None:
+        """Periodic prune of samples older than the configured retention.
+        Reads ``timemachine_retention_hours`` from settings KV every tick
+        so admin edits take effect on the next sweep without a restart."""
+        # 즉시 한 번 실행 (재시작 직후 stale rows 정리)
+        self._timemachine_retention_tick()
+        while not self._tm_stop.wait(_TIMEMACHINE_RETENTION_TICK_SEC):
+            self._timemachine_retention_tick()
+
+    def _timemachine_retention_tick(self) -> None:
+        if self._timemachine is None:
+            return
+        try:
+            kv = self.settings_store.load_scalar_sections() or {}
+            raw = kv.get("timemachine_retention_hours")
+            hours = float(raw) if raw not in (None, "") else _DEFAULT_TIMEMACHINE_RETENTION_HOURS
+        except Exception:
+            self.logger.exception(
+                "Timemachine retention KV read failed — applying default %.1fh",
+                _DEFAULT_TIMEMACHINE_RETENTION_HOURS,
+            )
+            hours = _DEFAULT_TIMEMACHINE_RETENTION_HOURS
+        if hours <= 0:
+            # 0 ⇒ retention disabled. We still keep new writes going so the
+            # admin can flip the value back on without losing the last few
+            # ticks; the next non-zero retention tick will then trim.
+            return
+        cutoff_ms = int(time.time() * 1000) - int(hours * 3600 * 1000)
+        removed = self._timemachine.prune_older_than(ts_ms=cutoff_ms)
+        if removed:
+            self.logger.info(
+                "Timemachine pruned %d samples (retentionHours=%.2f cutoffMs=%d)",
+                removed, hours, cutoff_ms,
+            )
+
+    def get_timemachine_store(self) -> "TimemachineStore | None":
+        """Public accessor for routes that want to read samples (Phase 3b)."""
+        return self._timemachine
 
     # ── JVM classpath logging (I-2) ───────────────────────────────────────
 
@@ -213,6 +360,13 @@ class MonitoringBackend:
                 )
             else:
                 self._monitor_collector.add_target(stored)
+            # Phase 1: disabled 전환 시 활성 알람을 clear 로 마감해 history
+            # 가 paired transition 으로 떨어지게 한다. enable 으로 복귀하면
+            # 다음 collect tick 에서 위반이 다시 감지되며 정상적으로 raise.
+            if not bool(stored.get("enabled", True)):
+                self._alert_evaluator.clear_all_active(
+                    str(stored["id"]), reason="disabled",
+                )
         return stored
 
     def delete_monitor_target(self, target_id: str) -> None:
@@ -220,6 +374,17 @@ class MonitoringBackend:
         with self._reload_lock:
             self.settings_store.delete_monitor_target(target_id)
             self._monitor_collector.remove_target(target_id)
+            # Phase 1: 운영자 의도된 삭제는 recovery 신호가 아니므로
+            # forget() 만 호출 — 기존 raise 이벤트는 그대로 history 에 남는다.
+            self._alert_evaluator.forget(str(target_id))
+
+    # ── alerts (BE-evaluated transitions, Phase 1/2) ────────────────────
+
+    def list_active_alerts(self) -> list[dict[str, Any]]:
+        """Public accessor for the alert evaluator's in-memory active set.
+        Used by ``GET /dashboard/alerts/active`` so route handlers don't
+        reach into a private attribute."""
+        return self._alert_evaluator.list_active()
 
     def apply_monitor_targets_batch(
         self,
@@ -267,6 +432,11 @@ class MonitoringBackend:
                     self._monitor_collector.update_target_in_place(
                         target, ssh_credentials_changed=True,
                     )
+                    # Phase 1: disabled 전환된 항목은 활성 알람을 clear 로 마감.
+                    if not bool(target.get("enabled", True)):
+                        self._alert_evaluator.clear_all_active(
+                            str(target.get("id")), reason="disabled",
+                        )
                     applied.append({"resource": "monitor_target",
                                     "id": str(target.get("id")), "action": "updated"})
                 except Exception as exc:
@@ -277,6 +447,8 @@ class MonitoringBackend:
             for target_id in results.get("deleted", []):
                 try:
                     self._monitor_collector.remove_target(str(target_id))
+                    # Phase 1: 운영자 삭제는 recovery 가 아님 — forget 만.
+                    self._alert_evaluator.forget(str(target_id))
                     applied.append({"resource": "monitor_target",
                                     "id": str(target_id), "action": "removed"})
                 except Exception as exc:

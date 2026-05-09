@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { WidthProvider, Responsive } from "react-grid-layout/legacy";
 import { useNavigate } from "react-router-dom";
 import { useWidgetApiData } from "../hooks/useApi";
@@ -9,22 +9,19 @@ import {
     rememberApiBaseUrl,
     resolveEndpointWithBase,
 } from "../services/api";
-import { monitorService, titleService } from "../services/dashboardService";
-import { API_BASE_URL as BUILDTIME_API_BASE_URL } from "../services/http";
 import {
-    countRowsMatchingCriteria,
-    getEnabledCriteriaColumns,
-    normalizeToArray,
-} from "../utils/helpers";
-import { hasThresholdViolation } from "../utils/chartThresholds.js";
+    alertService,
+    monitorService,
+    titleService,
+    widgetConfigService,
+} from "../services/dashboardService";
+import { API_BASE_URL as BUILDTIME_API_BASE_URL } from "../services/http";
 import { useDashboardStore } from "../store/dashboardStore";
 import { useAuthStore } from "../store/authStore";
 import { useAlarmStore } from "../store/alarmStore";
 import AlarmBanner from "../components/AlarmBanner";
-// prismjs + react-simple-code-editor are heavy — defer until modal is opened
-const SqlEditorModal = lazy(() => import("../components/SqlEditorModal"));
-const ConfigEditorModal = lazy(() => import("../components/ConfigEditorModal"));
-import BackendConfigPasswordPrompt from "../components/BackendConfigPasswordPrompt";
+// SQL 편집기 / 백엔드 설정 모달은 모두 ConfigEditorPage 안으로 이동했다.
+// 비밀번호 게이트는 ConfigEditorPage 내부에서 sessionStorage 기반으로 처리.
 import DashboardHeader from "./DashboardHeader";
 import AddApiModal from "./AddApiModal";
 import DashboardSettingsModal from "./DashboardSettingsModal";
@@ -50,6 +47,8 @@ import {
     layoutArrayToMap,
     normalizeWidgetLayout,
 } from "./dashboardHelpers";
+import { computeAlarmedWidgets } from "./alarmMapping";
+import { mergeWidgetsWithBeConfigs } from "./widgetConfigMerge";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import "./DashboardPage.css";
@@ -109,9 +108,6 @@ const DashboardPage = () => {
 
     const [showAddApi, setShowAddApi] = useState(false);
     const [showDashboardSettings, setShowDashboardSettings] = useState(false);
-    const [showSqlEditor, setShowSqlEditor] = useState(false);
-    const [showConfigEditor, setShowConfigEditor] = useState(false);
-    const [showConfigPasswordPrompt, setShowConfigPasswordPrompt] = useState(false);
     const [newApiForm, setNewApiForm] = useState({
         title: "",
         endpoint: "",
@@ -245,7 +241,7 @@ const DashboardPage = () => {
         syncPreferencesFromServer(buildDefaults);
     }, [user?.username, syncPreferencesFromServer]);
 
-    const dashboardWidgets = widgets ?? DEFAULT_APIS;
+    const baseDashboardWidgets = widgets ?? DEFAULT_APIS;
     const isAdmin =
         user?.role === "admin" ||
         String(user?.username || "")
@@ -255,7 +251,26 @@ const DashboardPage = () => {
     const reportWidgetStatus = useAlarmStore(
         (state) => state.reportWidgetStatus,
     );
+    const syncAlarmedWidgets = useAlarmStore(
+        (state) => state.syncAlarmedWidgets,
+    );
     const alarmedWidgets = useAlarmStore((state) => state.alarmedWidgets);
+    const [endpointCatalog, setEndpointCatalog] = useState([]);
+    // Phase 2: BE-central widget_configs (displayColumns, thresholds) catalog.
+    // 60s 폴링 — 위젯별 설정은 운영자만 자주 바꾸지 않는다. 폴링 자체가 폴링
+    // 자체가 매번 settings DB 1번 SELECT 라 부담 작음.
+    const [widgetConfigs, setWidgetConfigs] = useState([]);
+
+    // augmented widgets: BE displayColumns 가 컬럼 정의 / labels 의 단일
+    // 출처가 되도록 머지. user pref 의 columnWidths / 순서 / 위젯 크기는 그대로.
+    const dashboardWidgets = useMemo(
+        () => mergeWidgetsWithBeConfigs({
+            widgets: baseDashboardWidgets,
+            widgetConfigs,
+            endpointCatalog,
+        }),
+        [baseDashboardWidgets, widgetConfigs, endpointCatalog],
+    );
     const alarmSound = useAlarmStore((state) => state.alarmSound);
     const setAlarmSound = useAlarmStore((state) => state.setAlarmSound);
     const soundEnabled = useAlarmStore((state) => state.soundEnabled);
@@ -264,71 +279,70 @@ const DashboardPage = () => {
     const { results, loadingMap, refreshingMap, refetchAll, refetchOne } =
         useWidgetApiData(dashboardWidgets);
 
-    // Report alarm status via useEffect (must NOT be called during render)
-    // Includes criteria-based alerts: if a table widget has alertCount > 0, treat as alarm
+    // Phase 2 / Step 2c-A: BE 가 알람 평가의 단일 출처다. FE 가 같은 데이터를
+    // 다시 평가하지 않고, /dashboard/alerts/active 폴링 결과를 widget id 로
+    // 매핑해 alarmStore 에 동기화한다. ServerResourceCard / NetworkTestCard 가
+    // 자체 onAlarmChange 콜백으로 보내는 즉각 신호는 그대로 두지만 (probe
+    // 수준 fail 표시), 임계치/criteria 기반 평가는 모두 BE 로 이전됐다.
+
+    // endpoint 카탈로그: widget.endpoint → api id 매핑에 필요
     useEffect(() => {
-        dashboardWidgets.forEach((widget) => {
-            // Skip widgets that manage their own alarm via onAlarmChange
-            if (
-                widget.type === WIDGET_TYPE_SERVER_RESOURCE ||
-                widget.type === WIDGET_TYPE_NETWORK_TEST
-            )
-                return;
-
-            const status = results[widget.id]?.status ?? "loading";
-            // dead: 완전 실패 / slow-live: status-list에서 일부 NG → 둘 다 alarm 발생
-            let alarmStatus =
-                status === "dead" || status === "slow-live" ? "dead" : status;
-
-            // Check criteria-based alerts for table widgets
-            if (
-                alarmStatus !== "dead" &&
-                widget.type === "table" &&
-                widget.tableSettings?.criteria
-            ) {
-                const criteriaMap = widget.tableSettings.criteria;
-                const enabledCols = getEnabledCriteriaColumns(criteriaMap);
-                if (enabledCols.length > 0) {
-                    const data = results[widget.id]?.data;
-                    if (data) {
-                        const rows = normalizeToArray(data);
-                        const alertCount = countRowsMatchingCriteria(
-                            rows,
-                            criteriaMap,
-                        );
-                        if (alertCount > 0) {
-                            alarmStatus = "dead";
-                        }
-                    }
-                }
+        let cancelled = false;
+        (async () => {
+            try {
+                const list = await dashboardService.getApiEndpoints();
+                if (cancelled) return;
+                setEndpointCatalog(Array.isArray(list) ? list : []);
+            } catch {
+                if (!cancelled) setEndpointCatalog([]);
             }
+        })();
+        return () => { cancelled = true; };
+    }, []);
 
-            // Threshold-based alarms for chart widgets (line-chart / bar-chart).
-            // A violation on ANY row of ANY enabled threshold raises the alarm.
-            if (
-                alarmStatus !== "dead" &&
-                (widget.type === "line-chart" ||
-                    widget.type === "bar-chart") &&
-                Array.isArray(widget.chartSettings?.thresholds) &&
-                widget.chartSettings.thresholds.length > 0
-            ) {
-                const data = results[widget.id]?.data;
-                if (data) {
-                    const rows = normalizeToArray(data);
-                    if (
-                        hasThresholdViolation(
-                            rows,
-                            widget.chartSettings.thresholds,
-                        )
-                    ) {
-                        alarmStatus = "dead";
-                    }
-                }
+    // widget_configs 카탈로그 — 운영자가 ConfigEditorPage 에서 저장하면 다음
+    // 폴링에서 반영된다. 60s 주기로 부담 작게 유지.
+    useEffect(() => {
+        let cancelled = false;
+        const tick = async () => {
+            try {
+                const data = await widgetConfigService.list();
+                if (cancelled) return;
+                setWidgetConfigs(Array.isArray(data?.configs) ? data.configs : []);
+            } catch {
+                /* swallow — keep last known config */
             }
+        };
+        tick();
+        const id = setInterval(tick, 60_000);
+        return () => { cancelled = true; clearInterval(id); };
+    }, []);
 
-            reportWidgetStatus(widget.id, alarmStatus);
-        });
-    }, [results, dashboardWidgets, reportWidgetStatus]);
+    // active alerts 폴링 (5초)
+    useEffect(() => {
+        let cancelled = false;
+        const tick = async () => {
+            try {
+                const data = await alertService.listActive();
+                if (cancelled) return;
+                const items = Array.isArray(data?.items) ? data.items : [];
+                const ids = computeAlarmedWidgets({
+                    activeAlerts: items,
+                    widgets: dashboardWidgets,
+                    endpointCatalog,
+                });
+                syncAlarmedWidgets(ids);
+            } catch {
+                /* swallow — keep last known state */
+            }
+        };
+        tick();
+        const handle = setInterval(tick, 5000);
+        return () => {
+            cancelled = true;
+            clearInterval(handle);
+        };
+    }, [dashboardWidgets, endpointCatalog, syncAlarmedWidgets]);
 
     // Memoised so the responsiveLayouts object below stays stable across
     // re-renders that don't touch the widget set or saved layout map (the
@@ -701,12 +715,12 @@ const DashboardPage = () => {
                 dashboardTitle={dashboardTitle}
                 onToggleFullscreen={handleToggleFullscreen}
                 onOpenSettings={() => setShowDashboardSettings(true)}
-                onOpenConfigEditor={() => setShowConfigPasswordPrompt(true)}
+                onOpenConfigEditor={() => navigate("/admin/config")}
                 onOpenAddApi={() => setShowAddApi(true)}
-                onOpenSqlEditor={() => setShowSqlEditor(true)}
                 onOpenUserManagement={() => navigate("/users")}
                 onRefreshAll={() => refetchAll()}
-                onOpenLogs={() => navigate("/logs")}
+                onOpenAlerts={() => navigate("/alerts")}
+                onOpenTimemachine={() => navigate("/timemachine")}
                 onLogout={handleLogout}
             />
 
@@ -748,34 +762,9 @@ const DashboardPage = () => {
                 />
             )}
 
-            {showSqlEditor && isAdmin && (
-                <Suspense fallback={null}>
-                    <SqlEditorModal
-                        open={showSqlEditor}
-                        onClose={() => setShowSqlEditor(false)}
-                    />
-                </Suspense>
-            )}
-
-            {isAdmin && (
-                <BackendConfigPasswordPrompt
-                    open={showConfigPasswordPrompt}
-                    onClose={() => setShowConfigPasswordPrompt(false)}
-                    onSuccess={() => {
-                        setShowConfigPasswordPrompt(false);
-                        setShowConfigEditor(true);
-                    }}
-                />
-            )}
-
-            {showConfigEditor && isAdmin && (
-                <Suspense fallback={null}>
-                    <ConfigEditorModal
-                        open={showConfigEditor}
-                        onClose={() => setShowConfigEditor(false)}
-                    />
-                </Suspense>
-            )}
+            {/* SQL 편집기는 백엔드 설정 → 위젯별 설정 → 데이터 API row 의
+                ✏️ 버튼으로 진입한다 (요구 ②). DashboardPage 가 직접 마운트하지
+                않는다 — Suspense + lazy 도 ConfigEditorPage 안으로 이전. */}
 
             <div className='dashboard-content-wrapper'>
                 <div className='dashboard-content'>

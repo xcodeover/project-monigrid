@@ -248,72 +248,15 @@ const ApiCardSettingsModal = ({
                         </div>
                     </div>
 
+                    {/* Phase 2: criteria(임계치)는 BE 위젯 설정으로 이전됨.
+                        모달은 컬럼 표시 / 너비 / 순서 등 개인 레이아웃 항목만
+                        편집 가능하다. */}
                     <div className='settings-section'>
-                        <h6>이상 감지 Criteria (컬럼별)</h6>
-                        <div className='criteria-settings-list'>
-                            {availableColumns.map((column) => {
-                                const criteria = criteriaMap[column] ?? {
-                                    enabled: false,
-                                    operator: ">=",
-                                    value: "",
-                                };
-
-                                return (
-                                    <div
-                                        key={`${column}-criteria`}
-                                        className='criteria-setting-row'
-                                    >
-                                        <label className='criteria-column-label'>
-                                            <input
-                                                type='checkbox'
-                                                checked={!!criteria.enabled}
-                                                onChange={(event) =>
-                                                    onCriteriaChange(column, {
-                                                        enabled:
-                                                            event.target
-                                                                .checked,
-                                                    })
-                                                }
-                                            />
-                                            <span>{column}</span>
-                                        </label>
-
-                                        <select
-                                            value={criteria.operator ?? ">="}
-                                            onChange={(event) =>
-                                                onCriteriaChange(column, {
-                                                    operator:
-                                                        event.target.value,
-                                                })
-                                            }
-                                        >
-                                            <option value='>'>&gt;</option>
-                                            <option value='>='>&gt;=</option>
-                                            <option value='<'>&lt;</option>
-                                            <option value='<='>&lt;=</option>
-                                            <option value='=='>==</option>
-                                            <option value='!='>!=</option>
-                                            <option value='contains'>
-                                                contains
-                                            </option>
-                                            <option value='not_contains'>
-                                                not_contains
-                                            </option>
-                                        </select>
-
-                                        <input
-                                            type='text'
-                                            value={criteria.value ?? ""}
-                                            onChange={(event) =>
-                                                onCriteriaChange(column, {
-                                                    value: event.target.value,
-                                                })
-                                            }
-                                            placeholder='임계값'
-                                        />
-                                    </div>
-                                );
-                            })}
+                        <h6>이상 감지 Criteria</h6>
+                        <div className='criteria-settings-empty'>
+                            임계치는 백엔드 설정 → <strong>위젯별 설정</strong> 탭에서
+                            (data API, 표) 단위로 중앙 관리됩니다. 알람 발생 여부는 BE 가
+                            평가하여 모든 사용자에게 동일하게 반영됩니다.
                         </div>
                     </div>
         </WidgetSettingsModal>

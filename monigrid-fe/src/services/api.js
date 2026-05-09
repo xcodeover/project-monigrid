@@ -28,4 +28,7 @@ export {
     logService,
     cacheService,
     configService,
+    widgetConfigService,
+    alertService,
+    timemachineService,
 } from "./dashboardService.js";

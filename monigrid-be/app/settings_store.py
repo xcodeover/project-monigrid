@@ -18,6 +18,16 @@ Schema (all tables prefixed `monigrid_`):
                                — per-user UI state (layouts, thresholds, column order)
   monigrid_users               (username PK, password_hash, role, display_name, enabled, ...)
                                — admin-managed account directory (bcrypt hashes)
+  monigrid_alert_events        (id PK, source_type, source_id, metric, severity, level,
+                                label, message, payload, created_at)
+                               — raise/clear transitions emitted by the BE alert evaluator
+                                 (Phase 1: monitor target collector). Time-ordered append-log;
+                                 retention is ops-managed for now.
+  monigrid_widget_configs      ((api_id, widget_type) PK, config JSON, updated_at)
+                               — central display columns + alarm thresholds for data-API
+                                 widgets (table / line-chart / bar-chart). FE per-user state
+                                 (size, column order, column width) stays in user_preferences;
+                                 only the *shared* definition lives here.
 
 Cross-DB support: DDL is dialect-specific; DML is kept ANSI where
 practical. Only Oracle / MariaDB / MS-SQL are supported.
@@ -42,7 +52,7 @@ except ImportError:
     jaydebeapi = None
 
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "3"
 
 _SUPPORTED_DB_TYPES = ("oracle", "mariadb", "mssql")
 
@@ -184,6 +194,31 @@ def _ddl_statements(db_type: str) -> list[str]:
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_alert_events (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                source_type VARCHAR(32) NOT NULL,
+                source_id VARCHAR(128) NOT NULL,
+                metric VARCHAR(64),
+                severity VARCHAR(16) NOT NULL,
+                level VARCHAR(16),
+                label VARCHAR(255),
+                message VARCHAR(1024),
+                payload LONGTEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_alert_events_created (created_at),
+                INDEX idx_alert_events_source (source_type, source_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_widget_configs (
+                api_id VARCHAR(128) NOT NULL,
+                widget_type VARCHAR(32) NOT NULL,
+                config LONGTEXT NOT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (api_id, widget_type)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
         ]
     if db_type == "mssql":
         return [
@@ -267,6 +302,39 @@ def _ddl_statements(db_type: str) -> list[str]:
                 updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
             )
             """,
+            """
+            IF OBJECT_ID('monigrid_alert_events', 'U') IS NULL
+            CREATE TABLE monigrid_alert_events (
+                id BIGINT IDENTITY(1,1) PRIMARY KEY,
+                source_type NVARCHAR(32) NOT NULL,
+                source_id NVARCHAR(128) NOT NULL,
+                metric NVARCHAR(64),
+                severity NVARCHAR(16) NOT NULL,
+                level NVARCHAR(16),
+                label NVARCHAR(255),
+                message NVARCHAR(1024),
+                payload NVARCHAR(MAX),
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_alert_events_created')
+            CREATE INDEX idx_alert_events_created ON monigrid_alert_events (created_at)
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_alert_events_source')
+            CREATE INDEX idx_alert_events_source ON monigrid_alert_events (source_type, source_id)
+            """,
+            """
+            IF OBJECT_ID('monigrid_widget_configs', 'U') IS NULL
+            CREATE TABLE monigrid_widget_configs (
+                api_id NVARCHAR(128) NOT NULL,
+                widget_type NVARCHAR(32) NOT NULL,
+                config NVARCHAR(MAX) NOT NULL,
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT pk_widget_configs PRIMARY KEY (api_id, widget_type)
+            )
+            """,
         ]
     # oracle
     return [
@@ -340,6 +408,29 @@ def _ddl_statements(db_type: str) -> list[str]:
             enabled NUMBER(1) DEFAULT 1 NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE monigrid_alert_events (
+            id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+            source_type VARCHAR2(32) NOT NULL,
+            source_id VARCHAR2(128) NOT NULL,
+            metric VARCHAR2(64),
+            severity VARCHAR2(16) NOT NULL,
+            level VARCHAR2(16),
+            label VARCHAR2(255),
+            message VARCHAR2(1024),
+            payload CLOB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE monigrid_widget_configs (
+            api_id VARCHAR2(128) NOT NULL,
+            widget_type VARCHAR2(32) NOT NULL,
+            config CLOB NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            CONSTRAINT pk_widget_configs PRIMARY KEY (api_id, widget_type)
         )
         """,
     ]
@@ -582,6 +673,8 @@ class SettingsStore:
         "version",
         "global_jdbc_jars",
         "dashboard_title",
+        # Phase 3: timemachine retention window (hours). 0 disables write/eviction.
+        "timemachine_retention_hours",
     )
 
     @_sync
@@ -1597,6 +1690,378 @@ class SettingsStore:
         self.save_scalar_sections(config_dict)
         self.replace_connections(config_dict.get("connections") or [])
         self.replace_apis(config_dict.get("apis") or [])
+        self._conn.commit()
+
+    # ── alert events (BE-side raise/clear transition log) ────────────────
+    #
+    # Phase 1: monitor target collector emits a row on every state transition
+    # (OK→ALARM = "raise", ALARM→OK = "clear"). Same-state ticks do not
+    # generate rows — that dedupe lives in AlertEvaluator (in-memory active
+    # set), not here. This table is append-only; no UPDATE / DELETE paths.
+
+    @_sync
+    def record_alert_event(
+        self,
+        *,
+        source_type: str,
+        source_id: str,
+        severity: str,
+        metric: str | None = None,
+        level: str | None = None,
+        label: str | None = None,
+        message: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Append a single alert event row. Caller responsible for filtering
+        out same-state ticks (we don't dedupe here)."""
+        payload_json = (
+            json.dumps(payload, ensure_ascii=False) if payload is not None else None
+        )
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "INSERT INTO monigrid_alert_events "
+                "(source_type, source_id, metric, severity, level, label, message, payload) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    str(source_type),
+                    str(source_id),
+                    metric,
+                    str(severity),
+                    level,
+                    label,
+                    message,
+                    payload_json,
+                ],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    @_sync
+    def list_alert_events(
+        self,
+        *,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        source_type: str | None = None,
+        source_id: str | None = None,
+        severity: str | None = None,
+        keyword: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Filtered list. Returns (rows, total_count_before_paging).
+
+        - from_ts / to_ts: ISO-8601 strings; bound by created_at inclusive.
+        - keyword: substring match against label OR message (case-sensitive
+          fallback OK — BE-side normalisation can come later).
+        - limit / offset: paging. limit clamped to [1, 1000].
+        """
+        limit = max(1, min(int(limit), 1000))
+        offset = max(0, int(offset))
+
+        wheres: list[str] = []
+        params: list[Any] = []
+        if from_ts:
+            wheres.append("created_at >= ?")
+            params.append(from_ts)
+        if to_ts:
+            wheres.append("created_at <= ?")
+            params.append(to_ts)
+        if source_type:
+            wheres.append("source_type = ?")
+            params.append(str(source_type))
+        if source_id:
+            wheres.append("source_id = ?")
+            params.append(str(source_id))
+        if severity:
+            wheres.append("severity = ?")
+            params.append(str(severity))
+        if keyword:
+            wheres.append("(label LIKE ? OR message LIKE ?)")
+            kw = f"%{keyword}%"
+            params.extend([kw, kw])
+        where_sql = (" WHERE " + " AND ".join(wheres)) if wheres else ""
+
+        # ── total count (before paging) ─────────────────────────────────
+        count_sql = f"SELECT COUNT(*) FROM monigrid_alert_events{where_sql}"
+        cur = self._cursor()
+        try:
+            cur.execute(count_sql, params)
+            row = cur.fetchone()
+            total = int(row[0]) if row else 0
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+        # ── paged rows ─────────────────────────────────────────────────
+        # MariaDB: LIMIT n OFFSET m
+        # MSSQL 2012+ / Oracle 12c+: OFFSET m ROWS FETCH NEXT n ROWS ONLY
+        select_cols = (
+            "id, source_type, source_id, metric, severity, level, label, "
+            "message, payload, created_at"
+        )
+        if self._cfg.db_type == "mariadb":
+            page_sql = (
+                f"SELECT {select_cols} FROM monigrid_alert_events"
+                f"{where_sql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+            )
+            page_params = list(params) + [limit, offset]
+        else:
+            page_sql = (
+                f"SELECT {select_cols} FROM monigrid_alert_events"
+                f"{where_sql} ORDER BY created_at DESC, id DESC "
+                f"OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
+            )
+            page_params = list(params) + [offset, limit]
+
+        cur = self._cursor()
+        try:
+            cur.execute(page_sql, page_params)
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            payload_text = _read_clob(r[8])
+            try:
+                payload_obj = json.loads(payload_text) if payload_text else None
+            except json.JSONDecodeError:
+                payload_obj = {"raw": payload_text}
+            created_raw = r[9]
+            created_iso = (
+                created_raw.isoformat() if hasattr(created_raw, "isoformat")
+                else (str(created_raw) if created_raw is not None else None)
+            )
+            out.append({
+                "id": int(r[0]) if r[0] is not None else None,
+                "sourceType": str(r[1]) if r[1] is not None else None,
+                "sourceId": str(r[2]) if r[2] is not None else None,
+                "metric": str(r[3]) if r[3] is not None else None,
+                "severity": str(r[4]) if r[4] is not None else None,
+                "level": str(r[5]) if r[5] is not None else None,
+                "label": str(r[6]) if r[6] is not None else None,
+                "message": str(r[7]) if r[7] is not None else None,
+                "payload": payload_obj,
+                "createdAt": created_iso,
+            })
+        return out, total
+
+    # ── widget configs (BE-central display columns + thresholds) ─────────
+    #
+    # Phase 2 (Step 1): per (api_id, widget_type) JSON config row. Holds the
+    # *shared* definition — display column list, alarm thresholds. Per-user
+    # state (size, column order, column width) stays in user_preferences.
+    #
+    # Composite PK so the same data API can be visualised as both a table
+    # and a chart with independent column / threshold definitions.
+    _ALLOWED_WIDGET_TYPES = ("table", "line-chart", "bar-chart")
+
+    @_sync
+    def list_widget_configs(self) -> list[dict[str, Any]]:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT api_id, widget_type, config, updated_at "
+                "FROM monigrid_widget_configs"
+            )
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            text = _read_clob(r[2])
+            try:
+                cfg = json.loads(text) if text else {}
+            except json.JSONDecodeError:
+                cfg = {"raw": text}
+            updated = r[3]
+            updated_iso = (
+                updated.isoformat() if hasattr(updated, "isoformat")
+                else (str(updated) if updated is not None else None)
+            )
+            out.append({
+                "apiId": str(r[0]),
+                "widgetType": str(r[1]),
+                "config": cfg,
+                "updatedAt": updated_iso,
+            })
+        return out
+
+    @_sync
+    def list_widget_configs_by_api_id(
+        self, api_id: str,
+    ) -> list[dict[str, Any]]:
+        """Hot-path lookup for the alert evaluator: every widget_type row
+        registered for one data API. Skips the json-parse round trip on
+        the dial overhead path (settings DB itself is local-network)."""
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT widget_type, config FROM monigrid_widget_configs "
+                "WHERE api_id = ?",
+                [str(api_id)],
+            )
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            text = _read_clob(r[1])
+            try:
+                cfg = json.loads(text) if text else {}
+            except json.JSONDecodeError:
+                cfg = {"raw": text}
+            out.append({
+                "widgetType": str(r[0]),
+                "config": cfg,
+            })
+        return out
+
+    @_sync
+    def get_widget_config(
+        self, api_id: str, widget_type: str,
+    ) -> dict[str, Any] | None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT config, updated_at FROM monigrid_widget_configs "
+                "WHERE api_id = ? AND widget_type = ?",
+                [str(api_id), str(widget_type)],
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if not row:
+            return None
+        text = _read_clob(row[0])
+        try:
+            cfg = json.loads(text) if text else {}
+        except json.JSONDecodeError:
+            cfg = {"raw": text}
+        updated = row[1]
+        updated_iso = (
+            updated.isoformat() if hasattr(updated, "isoformat")
+            else (str(updated) if updated is not None else None)
+        )
+        return {
+            "apiId": str(api_id),
+            "widgetType": str(widget_type),
+            "config": cfg,
+            "updatedAt": updated_iso,
+        }
+
+    @_sync
+    def save_widget_config(
+        self, api_id: str, widget_type: str, config: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(api_id, str) or not api_id.strip():
+            raise ValueError("api_id is required")
+        if widget_type not in self._ALLOWED_WIDGET_TYPES:
+            raise ValueError(
+                f"widget_type must be one of {self._ALLOWED_WIDGET_TYPES}"
+            )
+        if not isinstance(config, dict):
+            raise ValueError("config must be a JSON object")
+
+        # Soft schema validation — accept any extra keys but require the
+        # two we actually consume so a typo doesn't silently disappear.
+        display_columns = config.get("displayColumns")
+        if display_columns is not None and not isinstance(display_columns, list):
+            raise ValueError("config.displayColumns must be an array")
+        thresholds = config.get("thresholds")
+        if thresholds is not None and not isinstance(thresholds, list):
+            raise ValueError("config.thresholds must be an array")
+
+        config_json = json.dumps(config, ensure_ascii=False)
+        db_type = self._cfg.db_type
+        cur = self._cursor()
+        try:
+            if db_type == "mariadb":
+                cur.execute(
+                    "INSERT INTO monigrid_widget_configs "
+                    "(api_id, widget_type, config, updated_at) "
+                    "VALUES (?, ?, ?, CURRENT_TIMESTAMP) "
+                    "ON DUPLICATE KEY UPDATE config = VALUES(config), "
+                    "updated_at = CURRENT_TIMESTAMP",
+                    [str(api_id), str(widget_type), config_json],
+                )
+            elif db_type == "mssql":
+                cur.execute(
+                    "MERGE INTO monigrid_widget_configs WITH (HOLDLOCK) AS target "
+                    "USING (SELECT ? AS api_id, ? AS widget_type, ? AS src_config) AS source "
+                    "ON target.api_id = source.api_id "
+                    "AND target.widget_type = source.widget_type "
+                    "WHEN MATCHED THEN UPDATE SET "
+                    "target.config = source.src_config, "
+                    "target.updated_at = SYSUTCDATETIME() "
+                    "WHEN NOT MATCHED THEN INSERT "
+                    "(api_id, widget_type, config, updated_at) "
+                    "VALUES (source.api_id, source.widget_type, "
+                    "source.src_config, SYSUTCDATETIME());",
+                    [str(api_id), str(widget_type), config_json],
+                )
+            else:  # oracle
+                cur.execute(
+                    "MERGE INTO monigrid_widget_configs target "
+                    "USING (SELECT ? AS api_id, ? AS widget_type, "
+                    "? AS src_config FROM dual) source "
+                    "ON (target.api_id = source.api_id "
+                    "AND target.widget_type = source.widget_type) "
+                    "WHEN MATCHED THEN UPDATE SET "
+                    "target.config = source.src_config, "
+                    "target.updated_at = CURRENT_TIMESTAMP "
+                    "WHEN NOT MATCHED THEN INSERT "
+                    "(api_id, widget_type, config, updated_at) "
+                    "VALUES (source.api_id, source.widget_type, "
+                    "source.src_config, CURRENT_TIMESTAMP)",
+                    [str(api_id), str(widget_type), config_json],
+                )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        return {
+            "apiId": str(api_id),
+            "widgetType": str(widget_type),
+            "config": config,
+        }
+
+    @_sync
+    def delete_widget_config(self, api_id: str, widget_type: str) -> None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "DELETE FROM monigrid_widget_configs "
+                "WHERE api_id = ? AND widget_type = ?",
+                [str(api_id), str(widget_type)],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
         self._conn.commit()
 
     # ── internals: generic upsert ─────────────────────────────────────────

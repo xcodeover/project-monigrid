@@ -48,18 +48,10 @@ export const evaluateThreshold = (value, operator, threshold) => {
     }
 };
 
-/** Returns true if ANY row violates ANY enabled threshold. */
-export const hasThresholdViolation = (rows, thresholds) => {
-    if (!Array.isArray(thresholds) || thresholds.length === 0) return false;
-    if (!Array.isArray(rows) || rows.length === 0) return false;
-    const active = thresholds.filter((t) => t?.enabled !== false && t?.key);
-    if (active.length === 0) return false;
-    return rows.some((row) =>
-        active.some((t) =>
-            evaluateThreshold(row?.[t.key], t.operator, t.value),
-        ),
-    );
-};
+// Phase 4 정리: ``hasThresholdViolation`` 은 BE 알람 평가 도입 후 사용처가
+// 모두 사라져 제거됐다. 차트 위젯의 임계치 시각화(라인/색)는 여전히 BE
+// 정의를 read-only 로 받아 그릴 수 있어 ``OPERATORS``/``THRESHOLD_COLORS``/
+// ``normalizeThresholds``/``evaluateThreshold`` 는 그대로 유지한다.
 
 export const normalizeThresholds = (raw) => {
     if (!Array.isArray(raw)) return [];

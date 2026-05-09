@@ -1,6 +1,6 @@
 import AppLogo from "../components/AppLogo.jsx";
 import {
-    IconCode,
+    IconArrowLeft,
     IconCollapse,
     IconExpand,
     IconFileText,
@@ -37,10 +37,10 @@ const DashboardHeader = ({
     onOpenSettings,
     onOpenConfigEditor,
     onOpenAddApi,
-    onOpenSqlEditor,
     onOpenUserManagement,
     onRefreshAll,
-    onOpenLogs,
+    onOpenAlerts,
+    onOpenTimemachine,
     onLogout,
 }) => {
     const resolvedTitle = dashboardTitle || APP_TITLE;
@@ -121,16 +121,8 @@ const DashboardHeader = ({
                         <IconPlus size={16} />
                     </button>
 
-                    {isAdmin && (
-                        <button
-                            className='toolbar-btn toolbar-btn-secondary'
-                            onClick={onOpenSqlEditor}
-                            title='데이터 API SQL 편집'
-                            aria-label='데이터 API SQL 편집'
-                        >
-                            <IconCode size={16} />
-                        </button>
-                    )}
+                    {/* SQL 편집기 진입은 데이터 API row 의 ✏️ 버튼으로 이동
+                        (백엔드 설정 → 위젯별 설정 → 데이터 API). */}
 
                     {isAdmin && (
                         <button
@@ -154,11 +146,20 @@ const DashboardHeader = ({
 
                     <button
                         className='toolbar-btn toolbar-btn-secondary'
-                        onClick={onOpenLogs}
-                        title='서버 로그 조회'
-                        aria-label='서버 로그 조회'
+                        onClick={onOpenAlerts}
+                        title='알림 이력'
+                        aria-label='알림 이력'
                     >
                         <IconFileText size={16} />
+                    </button>
+
+                    <button
+                        className='toolbar-btn toolbar-btn-secondary'
+                        onClick={onOpenTimemachine}
+                        title='타임머신 (시점 조회)'
+                        aria-label='타임머신'
+                    >
+                        <IconArrowLeft size={16} />
                     </button>
                 </div>
             </div>

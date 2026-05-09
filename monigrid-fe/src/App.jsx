@@ -12,9 +12,11 @@ import { registerUnauthorizedHandler } from "./services/http";
 
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
-const LogViewerPage = lazy(() => import("./pages/LogViewerPage"));
 const AlertHistoryPage = lazy(() => import("./pages/AlertHistoryPage"));
 const UserManagementPage = lazy(() => import("./pages/UserManagementPage"));
+// prismjs + react-simple-code-editor 등을 포함하는 무거운 페이지 — 진입 시점에만 로드
+const ConfigEditorPage = lazy(() => import("./pages/ConfigEditorPage"));
+const TimemachinePage = lazy(() => import("./pages/TimemachinePage"));
 
 /** Full-screen blank fallback — matches the dark background so there is no
  *  flash of white during the very first route chunk load. */
@@ -98,14 +100,6 @@ function AppRoutes() {
                     }
                 />
                 <Route
-                    path="/logs"
-                    element={
-                        <ProtectedRoute>
-                            <LogViewerPage />
-                        </ProtectedRoute>
-                    }
-                />
-                <Route
                     path="/alerts"
                     element={
                         <ProtectedRoute>
@@ -118,6 +112,22 @@ function AppRoutes() {
                     element={
                         <ProtectedRoute>
                             <UserManagementPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/admin/config"
+                    element={
+                        <ProtectedRoute>
+                            <ConfigEditorPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/timemachine"
+                    element={
+                        <ProtectedRoute>
+                            <TimemachinePage />
                         </ProtectedRoute>
                     }
                 />

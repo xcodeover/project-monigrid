@@ -1,16 +1,18 @@
-"""System endpoints: liveness probe and log access."""
+"""System endpoints: liveness probe and dashboard title persistence.
+
+Phase 1 removed the ``/logs`` and ``/logs/available-dates`` endpoints
+(plus the FE log viewer that was their only consumer) — operators read
+log files directly on the host now. The remaining surface is health
+checks and the dashboard-title KV mutator.
+"""
 from __future__ import annotations
 
 import dataclasses
-import json
-import re
 from datetime import datetime, timezone
-from pathlib import Path
 
 from flask import jsonify, request
 
 from app.auth import require_admin, require_auth
-from app.utils import parse_enabled
 
 
 def register(app, backend, limiter) -> None:
@@ -66,51 +68,3 @@ def register(app, backend, limiter) -> None:
         backend.config = dataclasses.replace(backend.config, dashboard_title=title)
 
         return jsonify({"title": title}), 200
-
-    @app.route("/logs", methods=["GET"])
-    @require_auth
-    def get_logs():
-        start_date_param = request.args.get("start_date")
-        end_date_param = request.args.get("end_date")
-        # Clamp max_lines to a sane window. Without this a malicious or
-        # buggy client can ask for billions of lines and the backend
-        # happily allocates the response in memory.
-        try:
-            requested = int(request.args.get("max_lines", 1000))
-        except (TypeError, ValueError):
-            return jsonify({"message": "max_lines must be an integer"}), 400
-        max_lines = max(1, min(10000, requested))
-        cursor = request.args.get("cursor")
-        follow_latest = parse_enabled(request.args.get("follow_latest", False))
-
-        try:
-            logs, next_cursor, resolved_start_date, resolved_end_date = backend.get_logs(
-                start_date_param, end_date_param, max_lines, cursor=cursor, follow_latest=follow_latest,
-            )
-        except ValueError as error:
-            return jsonify({"message": str(error)}), 400
-
-        return jsonify({
-            "logs": logs,
-            "count": len(logs),
-            "startDate": resolved_start_date,
-            "endDate": resolved_end_date,
-            "nextCursor": next_cursor,
-        }), 200
-
-    @app.route("/logs/available-dates", methods=["GET"])
-    @require_auth
-    def get_available_log_dates():
-        log_dir = Path(backend.config.logging.directory)
-        if not log_dir.exists():
-            return jsonify({"dates": []}), 200
-
-        pattern = re.compile(
-            rf"^{re.escape(backend.config.logging.file_prefix)}-(\d{{4}}-\d{{2}}-\d{{2}})\.log$"
-        )
-        dates = []
-        for file_path in sorted(log_dir.glob(f"{backend.config.logging.file_prefix}-*.log"), reverse=True):
-            match = pattern.match(file_path.name)
-            if match:
-                dates.append(match.group(1))
-        return jsonify({"dates": dates}), 200

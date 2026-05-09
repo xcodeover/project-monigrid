@@ -48,12 +48,21 @@ class EndpointCacheManager:
         query_runner: QueryRunner,
         connection_resetter: ConnectionResetter,
         logger: logging.Logger,
+        alert_sink: Callable[[ApiEndpointConfig, Any], None] | None = None,
+        archival_sink: Callable[[ApiEndpointConfig, Any], None] | None = None,
     ) -> None:
         self._config_provider = config_provider
         self._executor_provider = executor_provider
         self._query_runner = query_runner
         self._connection_resetter = connection_resetter
         self._logger = logger
+        # Phase 2: optional hook called on the same thread right after a
+        # data-API refresh succeeds. Wired to AlertEvaluator.evaluate_data_api
+        # from service.py. Errors are logged at the call site so the
+        # evaluator never derails the cache hot path.
+        self._alert_sink = alert_sink
+        # Phase 3: timemachine archival hook (best-effort).
+        self._archival_sink = archival_sink
 
         self._cache: dict[str, EndpointCacheEntry] = {}
         self._cache_lock = threading.RLock()
@@ -152,6 +161,18 @@ class EndpointCacheManager:
         """
         with self._cache_lock:
             return self._cache.pop(api_id, None) is not None
+
+    def set_alert_sink(
+        self, sink: Callable[[ApiEndpointConfig, Any], None] | None,
+    ) -> None:
+        """Late-bind the alert evaluator. May be reset to None for tests."""
+        self._alert_sink = sink
+
+    def set_archival_sink(
+        self, sink: Callable[[ApiEndpointConfig, Any], None] | None,
+    ) -> None:
+        """Late-bind the timemachine archival hook."""
+        self._archival_sink = sink
 
     # ── Background refresh loop ───────────────────────────────────────────
 
@@ -280,6 +301,27 @@ class EndpointCacheManager:
             entry = self._store_success(
                 endpoint, data, source=source, started_at=started_at, duration_sec=duration_sec,
             )
+            # Phase 2: BE-side threshold evaluation lives on the same thread
+            # that produced the cache entry, mirroring the monitor-collector
+            # contract. AlertEvaluator catches its own failures, but we wrap
+            # the call defensively so an unforeseen escape can't derail the
+            # refresh log line below.
+            if self._alert_sink is not None:
+                try:
+                    self._alert_sink(endpoint, data)
+                except Exception:
+                    self._logger.exception(
+                        "alert_sink raised apiId=%s — ignored, cache entry already stored",
+                        endpoint.api_id,
+                    )
+            # Phase 3: best-effort archive into the local timemachine SQLite.
+            if self._archival_sink is not None:
+                try:
+                    self._archival_sink(endpoint, data)
+                except Exception:
+                    self._logger.exception(
+                        "archival_sink raised apiId=%s — ignored", endpoint.api_id,
+                    )
             if isinstance(data, list):
                 result_summary = f"rows={len(data)}"
             elif isinstance(data, dict) and "updated" in data:
