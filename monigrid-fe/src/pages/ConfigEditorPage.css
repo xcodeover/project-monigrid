@@ -490,20 +490,20 @@
 
 /* row state visual cues — grid version */
 .cfg-grid-row.row-state-new {
-    background: rgba(34, 197, 94, 0.06);
-    box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.25);
+    background: rgba(34, 197, 94, 0.10);
+    box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.30);
 }
 .cfg-grid-row.row-state-modified {
-    background: rgba(25, 160, 255, 0.05);
-    box-shadow: inset 0 0 0 1px rgba(25, 160, 255, 0.18);
+    background: rgba(250, 204, 21, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.35);
 }
 .cfg-grid-row.row-state-deleted {
     background: rgba(239, 68, 68, 0.05);
-    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.20);
 }
 .cfg-grid-row.row-state-invalid {
     background: rgba(239, 68, 68, 0.08);
-    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.4);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.40);
 }
 
 /* No 셀 (1, 2, 3, ...) — read-only span. 가운데 정렬 + 작은 글씨. */
@@ -540,7 +540,7 @@
 }
 
 /* server_resource: No / 활성 / ID / 이름 / 주기 / 호스트 / OS / Username
-   / Password / CPU% / Mem% / Disk% / 상태 / 액션 — 14 컬럼 */
+   / Password / CPU% / Mem% / Disk% / 수정 시각 / 편집자 / 액션 — 15 컬럼 */
 .cfg-grid-monitor-server_resource .cfg-grid-row {
     grid-template-columns:
         46px                   /* No */
@@ -555,13 +555,14 @@
         70px                   /* CPU% */
         70px                   /* Mem% */
         70px                   /* Disk% */
-        minmax(80px, 100px)    /* 상태 */
+        140px                  /* 수정 시각 */
+        110px                  /* 편집자 */
         76px;                  /* 액션 */
-    min-width: 1480px;
+    min-width: 1620px;
 }
 
 /* network: No / 활성 / ID / 이름 / 주기 / 유형 / 호스트 / Port / Timeout
-   / 상태 / 액션 — 11 컬럼 */
+   / 수정 시각 / 편집자 / 액션 — 12 컬럼 */
 .cfg-grid-monitor-network .cfg-grid-row {
     grid-template-columns:
         46px                   /* No */
@@ -573,13 +574,14 @@
         minmax(140px, 1.2fr)   /* 호스트 */
         90px                   /* Port */
         90px                   /* Timeout */
-        minmax(80px, 100px)    /* 상태 */
+        140px                  /* 수정 시각 */
+        110px                  /* 편집자 */
         76px;                  /* 액션 */
-    min-width: 1180px;
+    min-width: 1320px;
 }
 
-/* http_status: No / 활성 / ID / 이름 / 주기 / URL / Timeout / 상태 / 액션
-   — 9 컬럼. URL 이 가장 넓다. */
+/* http_status: No / 활성 / ID / 이름 / 주기 / URL / Timeout / 수정 시각
+   / 편집자 / 액션 — 10 컬럼. URL 이 가장 넓다. */
 .cfg-grid-monitor-http_status .cfg-grid-row {
     grid-template-columns:
         46px                   /* No */
@@ -589,13 +591,14 @@
         80px                   /* 주기 */
         minmax(220px, 2fr)     /* URL */
         90px                   /* Timeout */
-        minmax(80px, 100px)    /* 상태 */
+        140px                  /* 수정 시각 */
+        110px                  /* 편집자 */
         76px;                  /* 액션 */
-    min-width: 1100px;
+    min-width: 1240px;
 }
 
-/* 데이터 API grid 컬럼 폭 (총 9 컬럼):
-   No / 활성 toggle / API ID / Path / Connection / SQL ID / 주기 / 상태 / 액션
+/* 데이터 API grid 컬럼 폭 (총 11 컬럼):
+   No / 활성 toggle / API ID / Path / Connection / SQL ID / 주기 / flags / 수정 시각 / 편집자 / 액션
    액션 컬럼은 SQL 편집(✏️) + 임계치 편집(⚠) + 복제 + 삭제 4개를 수용하므로
    넉넉히 잡는다. */
 .cfg-grid-apis .cfg-grid-row {
@@ -608,7 +611,43 @@
         minmax(120px, 1fr)    /* sql_id */
         80px                  /* interval */
         minmax(110px, 0.9fr)  /* flags (신규/삭제 예정/임계치 배지) */
+        140px                 /* 수정 시각 */
+        110px                 /* 편집자 */
         140px;                /* actions (SQL + 임계치 + 복제 + 삭제) */
+}
+
+/* Audit cells — 수정 시각 / 편집자 */
+.cfg-grid-audit-time,
+.cfg-grid-audit-user {
+    color: var(--text-secondary, #475569);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    align-self: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 임계치 N 배지 — ⚠ 버튼 우상단 absolute */
+.cfg-thresholds-btn {
+    position: relative;
+}
+.cfg-thresholds-count-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 7px;
+    background: #f59e0b;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85);
+    pointer-events: none;
 }
 
 /* ── WidgetConfigsTab (위젯별 설정 탭) ─────────────────────── */
