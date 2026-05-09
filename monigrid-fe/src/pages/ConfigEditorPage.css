@@ -349,17 +349,28 @@
 /* ── DB 연결 / 데이터 API grid 편집 (요구 1) ───────────────── */
 
 /* pane-body 가 grid 모드일 때는 가로 스크롤 활성화. 좁은 입력은 짧게,
-   긴 입력(JDBC URL)은 넓게 명시한 grid-template-columns 가 가독성을 유지한다. */
+   긴 입력(JDBC URL)은 넓게 명시한 grid-template-columns 가 가독성을 유지한다.
+   padding-top 을 제거해 sticky 헤더가 pane-header 바로 아래에 flush 로 붙고
+   horizontal padding 도 grid 자체가 흡수하도록 0 으로 둔다 (헤더 full-bleed). */
 .cfgpage-pane-body-grid {
     overflow-x: auto;
+    padding: 0;
 }
 
 .cfg-grid {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    /* sticky 헤더 직후 첫 row 와 시각적으로 붙여 floating 느낌을 없앤다.
+       데이터 row 사이 간격은 .cfg-grid-row + .cfg-grid-row 룰로 보강. */
+    gap: 0;
+    /* pane-body 의 horizontal padding 을 grid 가 직접 흡수해 헤더가 full-bleed 가 되도록 한다. */
+    padding: 0 24px;
     /* min-width 로 좁은 화면에서도 컬럼이 짜부라지지 않게 — 가로 스크롤 발생 */
     min-width: 0;
+}
+
+.cfg-grid > .cfg-grid-row + .cfg-grid-row {
+    margin-top: 4px;
 }
 
 .cfg-grid-row {
@@ -415,15 +426,25 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    background: rgba(11, 18, 32, 0.96);
-    backdrop-filter: blur(2px);
+    /* full-opaque + flat — backdrop-filter 와 border-radius 를 빼서 floating 느낌 제거 */
+    background: var(--bg-elevated, #1a2332);
+    border-radius: 0;
+    padding: 8px 6px;
     font-size: 11px;
     font-weight: 600;
     color: var(--text-tertiary, #64748b);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    padding: 6px 6px;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.20);
+}
+
+/* DB 연결 / 데이터 API 탭(=cfgpage-pane-body-grid) 만 헤더가 pane-body
+   horizontal padding 까지 확장해 edge-to-edge full-bleed. 모니터 탭은
+   자체 padding 구조를 가지므로 이 룰이 적용되지 않는다. */
+.cfgpage-pane-body-grid .cfg-grid > .cfg-grid-head {
+    margin: 0 -24px;
+    padding-left: 24px;
+    padding-right: 24px;
 }
 
 .cfg-grid-actions {
