@@ -633,6 +633,121 @@ class SettingsStore:
         for stmt in _ddl_statements(self._cfg.db_type):
             self._execute_ddl(stmt)
         self._conn.commit()
+        # Forward schema migrations for already-bootstrapped DBs whose tables
+        # predate newly-added audit columns (updated_at / updated_by).
+        # _lock is RLock, so calling another @_sync method from here is safe.
+        self.ensure_audit_columns()
+
+    @_sync
+    def ensure_audit_columns(self) -> None:
+        """Add updated_at / updated_by columns to tables that predate them.
+
+        Idempotent — checks INFORMATION_SCHEMA / catalog views before each
+        ALTER, so re-running on an already-migrated DB is a no-op.
+        """
+        db = self._cfg.db_type
+        cur = self._cursor()
+        try:
+            if db == "mariadb":
+                cur.execute("SELECT DATABASE()")
+                row = cur.fetchone()
+                schema = row[0] if row else None
+
+                triples = [
+                    (
+                        "monigrid_apis",
+                        "updated_at",
+                        "ALTER TABLE monigrid_apis ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
+                    ),
+                    (
+                        "monigrid_apis",
+                        "updated_by",
+                        "ALTER TABLE monigrid_apis ADD COLUMN updated_by VARCHAR(128) NULL",
+                    ),
+                    (
+                        "monigrid_monitor_targets",
+                        "updated_by",
+                        "ALTER TABLE monigrid_monitor_targets ADD COLUMN updated_by VARCHAR(128) NULL",
+                    ),
+                ]
+                for table, column, alter_sql in triples:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
+                        " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+                        [schema, table, column],
+                    )
+                    exists = int(cur.fetchone()[0]) > 0
+                    if not exists:
+                        cur.execute(alter_sql)
+                        self._logger.info("audit-migration: added %s.%s", table, column)
+
+            elif db == "mssql":
+                triples = [
+                    (
+                        "monigrid_apis",
+                        "updated_at",
+                        "ALTER TABLE monigrid_apis ADD updated_at DATETIME2 NOT NULL"
+                        " CONSTRAINT df_apis_updated_at DEFAULT SYSUTCDATETIME()",
+                    ),
+                    (
+                        "monigrid_apis",
+                        "updated_by",
+                        "ALTER TABLE monigrid_apis ADD updated_by NVARCHAR(128) NULL",
+                    ),
+                    (
+                        "monigrid_monitor_targets",
+                        "updated_by",
+                        "ALTER TABLE monigrid_monitor_targets ADD updated_by NVARCHAR(128) NULL",
+                    ),
+                ]
+                for table, column, alter_sql in triples:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM sys.columns WHERE Name = ? AND Object_ID = OBJECT_ID(?)",
+                        [column, table],
+                    )
+                    exists = int(cur.fetchone()[0]) > 0
+                    if not exists:
+                        cur.execute(alter_sql)
+                        self._logger.info("audit-migration: added %s.%s", table, column)
+
+            elif db == "oracle":
+                triples = [
+                    (
+                        "MONIGRID_APIS",
+                        "UPDATED_AT",
+                        "ALTER TABLE monigrid_apis ADD (updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)",
+                    ),
+                    (
+                        "MONIGRID_APIS",
+                        "UPDATED_BY",
+                        "ALTER TABLE monigrid_apis ADD (updated_by VARCHAR2(128) NULL)",
+                    ),
+                    (
+                        "MONIGRID_MONITOR_TARGETS",
+                        "UPDATED_BY",
+                        "ALTER TABLE monigrid_monitor_targets ADD (updated_by VARCHAR2(128) NULL)",
+                    ),
+                ]
+                for table, column, alter_sql in triples:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND COLUMN_NAME = ?",
+                        [table, column],
+                    )
+                    exists = int(cur.fetchone()[0]) > 0
+                    if not exists:
+                        cur.execute(alter_sql)
+                        self._logger.info(
+                            "audit-migration: added %s.%s",
+                            table.lower(),
+                            column.lower(),
+                        )
+
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
 
     def _execute_ddl(self, stmt: str) -> None:
         normalized = stmt.strip()
