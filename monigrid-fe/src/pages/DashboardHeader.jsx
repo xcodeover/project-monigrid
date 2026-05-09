@@ -95,6 +95,14 @@ const DashboardHeader = ({
 
                 <div className='header-controls-row'>
                     <button
+                        className='toolbar-btn toolbar-btn-primary'
+                        onClick={onOpenAddApi}
+                        title='위젯 추가'
+                        aria-label='위젯 추가'
+                    >
+                        <IconPlus size={16} />
+                    </button>
+                    <button
                         className='toolbar-btn toolbar-btn-secondary'
                         onClick={onOpenSettings}
                         title='대시보드 설정'
@@ -112,14 +120,6 @@ const DashboardHeader = ({
                             <IconSliders size={16} />
                         </button>
                     )}
-                    <button
-                        className='toolbar-btn toolbar-btn-primary'
-                        onClick={onOpenAddApi}
-                        title='위젯 추가'
-                        aria-label='위젯 추가'
-                    >
-                        <IconPlus size={16} />
-                    </button>
 
                     {/* SQL 편집기 진입은 데이터 API row 의 ✏️ 버튼으로 이동
                         (백엔드 설정 → 위젯별 설정 → 데이터 API). */}
