@@ -177,29 +177,61 @@
 .ah-table-wrap {
     border: 1px solid rgba(148, 163, 184, 0.12);
     border-radius: 10px;
-    overflow: hidden;
+    overflow-x: auto;     /* 고정 컬럼 합계가 좁은 화면을 넘으면 가로 스크롤 */
+    overflow-y: hidden;
 }
 
+/* table-layout: fixed → 컬럼 폭은 thead 의 width 만으로 결정.
+   조회 결과의 셀 텍스트 길이와 무관하게 일정한 레이아웃을 유지한다. */
 .ah-table {
     width: 100%;
+    min-width: 1080px;
+    table-layout: fixed;
     border-collapse: collapse;
     font-size: 12px;
+    /* 사용자가 cell drag 로 여러 칸 선택 → Ctrl+C → 외부(엑셀 등)에 TSV 로
+       붙여넣기 가능하도록 명시적으로 text 선택 허용 */
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .ah-table thead th {
     text-align: left;
-    padding: 10px 12px;
-    background: rgba(255, 255, 255, 0.03);
-    color: var(--text-secondary, #94a3b8);
+    padding: 8px 12px;
+    background: var(--bg-elevated, #1a2332);
+    color: var(--text-tertiary, #64748b);
     font-weight: 600;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.20);
     white-space: nowrap;
 }
 
+/* 고정 컬럼 폭 — 백엔드 설정 그리드와 동일하게 명시적 픽셀/minmax 사용 */
+.ah-col-time        { width: 160px; }
+.ah-col-sev         { width: 70px; }
+.ah-col-level       { width: 80px; }
+.ah-col-source-type { width: 110px; }
+.ah-col-target      { width: 200px; }
+.ah-col-target-id   { width: 160px; }
+.ah-col-metric      { width: 110px; }
+.ah-col-msg         { width: auto; }   /* 남은 공간 차지 */
+
 .ah-table tbody td {
-    padding: 9px 12px;
+    padding: 7px 12px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.06);
-    vertical-align: top;
+    vertical-align: middle;
+    font-variant-numeric: tabular-nums;
+}
+
+/* 한 줄 표시 + 길면 ellipsis. row 별 height 가 일정해 가독성 향상.
+   원본 텍스트는 각 td 의 title 속성으로 마우스 오버 시 노출. */
+.ah-cell-truncate {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0;            /* fixed-layout 에서 ellipsis 동작에 필요 */
 }
 
 .ah-table tbody tr:hover {
@@ -209,23 +241,16 @@
 .ah-cell-ts {
     white-space: nowrap;
     color: var(--text-secondary, #94a3b8);
-    font-variant-numeric: tabular-nums;
 }
 
 .ah-cell-msg {
     color: var(--text-primary, #e2e8f0);
 }
 
-.ah-target-name {
-    color: var(--text-primary, #e2e8f0);
-    font-weight: 600;
-}
-
-.ah-target-id {
+.ah-target-id-inline {
     color: var(--text-tertiary, #64748b);
-    font-size: 10px;
-    margin-top: 2px;
     font-family: "Consolas", "Monaco", monospace;
+    font-size: 11px;
 }
 
 /* severity / level badges */
