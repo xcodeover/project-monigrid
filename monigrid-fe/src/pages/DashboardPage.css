@@ -615,6 +615,11 @@
     padding-bottom: 20px;
 }
 
+/* Timemachine mode: extra bottom padding so last widget isn't hidden by control bar */
+.dashboard-content-tm {
+    padding-bottom: 80px;
+}
+
 .api-grid {
     animation: fadeIn 0.3s ease-out;
     min-height: 640px;

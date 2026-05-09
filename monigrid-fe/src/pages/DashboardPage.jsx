@@ -20,6 +20,9 @@ import { useDashboardStore } from "../store/dashboardStore";
 import { useAuthStore } from "../store/authStore";
 import { useAlarmStore } from "../store/alarmStore";
 import AlarmBanner from "../components/AlarmBanner";
+import { TimemachineProvider, useTimemachine } from "../contexts/TimemachineContext";
+import TimemachineBanner from "../components/TimemachineBanner";
+import TimemachineControlBar from "../components/TimemachineControlBar";
 // SQL 편집기 / 백엔드 설정 모달은 모두 ConfigEditorPage 안으로 이동했다.
 // 비밀번호 게이트는 ConfigEditorPage 내부에서 sessionStorage 기반으로 처리.
 import DashboardHeader from "./DashboardHeader";
@@ -68,7 +71,9 @@ const API_BASE_URL = getRememberedApiBaseUrl() || BUILDTIME_API_BASE_URL;
 
 const DEFAULT_APIS = createDefaultApis(API_BASE_URL);
 
-const DashboardPage = () => {
+const DashboardPageInner = () => {
+    // Timemachine context (provided by outer DashboardPage wrapper)
+    const tm = useTimemachine();
     const navigate = useNavigate();
     const logout = useAuthStore((state) => state.logout);
     const user = useAuthStore((state) => state.user);
@@ -374,6 +379,11 @@ const DashboardPage = () => {
         disableServerSync();
         logout();
         navigate("/login");
+    };
+
+    const handleToggleTm = () => {
+        if (tm.enabled) tm.disable();
+        else tm.enable();
     };
 
     const handleRemoveApi = (apiId) => {
@@ -716,13 +726,20 @@ const DashboardPage = () => {
                 onToggleFullscreen={handleToggleFullscreen}
                 onOpenSettings={() => setShowDashboardSettings(true)}
                 onOpenConfigEditor={() => navigate("/admin/config")}
-                onOpenAddApi={() => setShowAddApi(true)}
-                onOpenUserManagement={() => navigate("/users")}
-                onRefreshAll={() => refetchAll()}
+                onOpenAddApi={tm.enabled ? null : () => setShowAddApi(true)}
+                onOpenUserManagement={tm.enabled ? null : () => navigate("/users")}
+                onRefreshAll={tm.enabled ? null : () => refetchAll()}
                 onOpenAlerts={() => navigate("/alerts")}
-                onOpenTimemachine={() => navigate("/timemachine")}
+                onToggleTimemachine={handleToggleTm}
+                timemachineActive={tm.enabled}
+                addWidgetDisabled={tm.enabled}
+                settingsDisabled={tm.enabled}
+                backendConfigDisabled={tm.enabled}
+                userMgmtDisabled={tm.enabled}
                 onLogout={handleLogout}
             />
+
+            <TimemachineBanner />
 
             {showAddApi && (
                 <AddApiModal
@@ -767,7 +784,7 @@ const DashboardPage = () => {
                 않는다 — Suspense + lazy 도 ConfigEditorPage 안으로 이전. */}
 
             <div className='dashboard-content-wrapper'>
-                <div className='dashboard-content'>
+                <div className={`dashboard-content${tm.enabled ? " dashboard-content-tm" : ""}`}>
                     {dashboardWidgets.length === 0 ? (
                         <div className='empty-state'>
                             <div className='empty-icon'>📭</div>
@@ -806,6 +823,8 @@ const DashboardPage = () => {
                             containerPadding={[0, 0]}
                             draggableHandle='.api-card-header'
                             resizeHandles={["se"]}
+                            isDraggable={!tm.enabled}
+                            isResizable={!tm.enabled}
                             onDragStop={handleLayoutCommit}
                             onResizeStop={handleLayoutCommit}
                         >
@@ -877,6 +896,8 @@ const DashboardPage = () => {
 
             <AlarmBanner />
 
+            <TimemachineControlBar />
+
             <footer className='dashboard-footer'>
                 <span className='footer-copyright'>
                     Copyright © {CURRENT_YEAR} {COMPANY_NAME}. All rights
@@ -892,4 +913,10 @@ const DashboardPage = () => {
     );
 };
 
-export default DashboardPage;
+export default function DashboardPage() {
+    return (
+        <TimemachineProvider>
+            <DashboardPageInner />
+        </TimemachineProvider>
+    );
+}
