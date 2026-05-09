@@ -650,6 +650,21 @@
     position: relative;
 }
 
+/* Timemachine mode: double-click hint */
+.grid-item.grid-item-tm {
+    cursor: default;
+}
+.grid-item.grid-item-tm:hover::after {
+    content: "더블클릭으로 상세 보기";
+    position: absolute;
+    bottom: 4px;
+    right: 6px;
+    font-size: 9px;
+    color: rgba(196, 181, 253, 0.6);
+    pointer-events: none;
+    z-index: 5;
+}
+
 /* Alarm blinking border — shown when a widget's alarm status becomes active
  * (dead / slow-live / threshold violation / criteria match). The ring is drawn
  * via box-shadow on the first child card so it overlays the actual widget
