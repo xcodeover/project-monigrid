@@ -7,6 +7,7 @@ import {
 } from "react";
 import apiClient from "../services/http.js";
 import { monitorService } from "../services/dashboardService.js";
+import { useTimemachineEnabled } from "../contexts/TimemachineContext";
 import { useDocumentVisible } from "../hooks/useDocumentVisible.js";
 import {
     MAX_REFRESH_INTERVAL_SEC,
@@ -150,6 +151,9 @@ const ServerResourceCard = ({
     onWidgetConfigChange,
     onAlarmChange,
 }) => {
+    /* ── timemachine mode check ────────────────────────────────────── */
+    const tmActive = useTimemachineEnabled();
+
     /* ── mode: snapshot (BE-centralized) vs legacy (credentials in widget) */
     const targetIds = useMemo(
         () => (Array.isArray(widgetConfig?.targetIds) ? widgetConfig.targetIds : []),
@@ -402,14 +406,15 @@ const ServerResourceCard = ({
     }, [fetchAllServers]);
 
     useEffect(() => {
-        if (hasItems) fetchAllServers();
-    }, [pollKey, hasItems, fetchAllServers]);
+        if (tmActive || !hasItems) return;
+        fetchAllServers();
+    }, [pollKey, hasItems, fetchAllServers, tmActive]);
 
     // Exponential-backoff polling via recursive setTimeout.
     // On consecutive failures: base → 2× → 4× → 8× → 16× → 32× (cap at 5 min).
     // Returns to base interval on first successful response.
     useEffect(() => {
-        if (!hasItems) return undefined;
+        if (tmActive || !hasItems) return undefined;
         const baseSec = refreshIntervalSec ?? 30;
         // Reset failure count when poll key or interval changes so stale backoff
         // state from a previous configuration does not carry over.
@@ -427,7 +432,7 @@ const ServerResourceCard = ({
         };
         schedule(baseSec * 1000);
         return () => clearTimeout(timerRef.current);
-    }, [pollKey, hasItems, refreshIntervalSec, fetchAllServersWithTracking]);
+    }, [pollKey, hasItems, refreshIntervalSec, fetchAllServersWithTracking, tmActive]);
 
     // Visibility-flip: immediately refetch when the user returns to the tab so
     // the widget shows fresh data rather than stale results from before hiding.

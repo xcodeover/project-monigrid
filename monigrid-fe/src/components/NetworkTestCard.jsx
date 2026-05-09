@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import apiClient from "../services/http.js";
 import { monitorService } from "../services/dashboardService.js";
+import { useTimemachineEnabled } from "../contexts/TimemachineContext";
 import { useDocumentVisible } from "../hooks/useDocumentVisible.js";
 import {
     MAX_REFRESH_INTERVAL_SEC,
@@ -232,6 +233,9 @@ const NetworkTestCard = ({
     onWidgetConfigChange,
     onAlarmChange,
 }) => {
+    /* ── timemachine mode check ────────────────────────────────────── */
+    const tmActive = useTimemachineEnabled();
+
     /* ── mode: snapshot (BE-centralized) vs legacy (probe-from-browser) */
     const targetIds = useMemo(
         () => (Array.isArray(networkConfig?.targetIds) ? networkConfig.targetIds : []),
@@ -428,14 +432,15 @@ const NetworkTestCard = ({
     }, [checkAllTargets]);
 
     useEffect(() => {
-        if (hasItems) checkAllTargets();
-    }, [pollKey, hasItems, checkAllTargets]);
+        if (tmActive || !hasItems) return;
+        checkAllTargets();
+    }, [pollKey, hasItems, checkAllTargets, tmActive]);
 
     // Exponential-backoff polling via recursive setTimeout.
     // On consecutive failures: 5s → 10s → 20s → 40s → 80s → 160s (cap at 5 min).
     // Returns to base interval on first successful response.
     useEffect(() => {
-        if (!hasItems) return undefined;
+        if (tmActive || !hasItems) return undefined;
         const baseSec = Math.max(MIN_REFRESH_INTERVAL_SEC, Number(refreshIntervalSec) || 10);
         // Reset failure count when poll key or interval changes so stale backoff
         // state from a previous configuration does not carry over.
@@ -454,7 +459,7 @@ const NetworkTestCard = ({
         };
         schedule(baseSec * 1000);
         return () => clearTimeout(timerId);
-    }, [pollKey, hasItems, refreshIntervalSec, checkAllTargetsWithTracking]);
+    }, [pollKey, hasItems, refreshIntervalSec, checkAllTargetsWithTracking, tmActive]);
 
     // Visibility-flip: immediately refetch when the user returns to the tab so
     // the widget shows fresh data rather than stale results from before hiding.
