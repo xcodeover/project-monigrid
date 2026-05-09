@@ -447,6 +447,21 @@
     padding-right: 24px;
 }
 
+/* 모니터 탭(서버 리소스 / 네트워크 / API 상태) 그리드도 동일하게 헤더를
+   section 좌우 끝까지 full-bleed. 형제(.cfg-card 등)에는 24px 가로 margin
+   이 유지되도록 .cfg-grid 만 margin 을 0 으로 덮어쓰고, 그리드 자체의
+   `padding: 0 4px` 를 헤더가 negative margin 으로 흡수해 끝까지 확장. */
+.cfgpage-pane-monitor .cfg-section > .cfg-grid {
+    margin-left: 0;
+    margin-right: 0;
+}
+
+.cfgpage-pane-monitor .cfg-section > .cfg-grid > .cfg-grid-head {
+    margin: 0 -4px;
+    padding-left: 24px;
+    padding-right: 24px;
+}
+
 .cfg-grid-actions {
     display: flex;
     gap: 4px;
