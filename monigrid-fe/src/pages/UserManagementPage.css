@@ -74,8 +74,14 @@
 
 .um-main {
     flex: 1;
-    padding: 24px;
+    padding: 0;
     overflow: auto;
+}
+
+.um-main > .um-error,
+.um-main > .um-loading,
+.um-main > .um-empty {
+    margin: 16px 24px;
 }
 
 .um-error {
@@ -96,31 +102,49 @@
 
 .um-empty p { margin-bottom: 16px; }
 
+/* 백엔드 설정 그리드(.cfg-grid)와 톤 통일:
+   - 헤더: 불투명 elevated 배경 + sticky + edge-to-edge 느낌
+   - row: 얇은 1px 구분선(low alpha) + hover 톤 다운
+   - 폰트: 헤더 11px UPPERCASE, 본문 12px tabular-nums
+   - border-radius 0 (테이블 자체엔 외곽 둥글림 없이 flat) */
 .um-table {
     width: 100%;
     border-collapse: collapse;
-    background: #1e293b;
-    border: 1px solid #334155;
+    background: transparent;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 0;
+    font-variant-numeric: tabular-nums;
 }
 
 .um-table th,
 .um-table td {
-    padding: 10px 14px;
+    padding: 8px 12px;
     text-align: left;
-    border-bottom: 1px solid #334155;
-    font-size: 13px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+    font-size: 12px;
 }
 
-.um-table th {
-    background: #0f172a;
-    color: #94a3b8;
+.um-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-elevated, #1a2332);
+    color: var(--text-tertiary, #64748b);
     font-weight: 600;
-    text-transform: uppercase;
     font-size: 11px;
-    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.20);
 }
 
-.um-table tr:hover td { background: #253449; }
+.um-table tbody tr:hover td {
+    background: rgba(148, 163, 184, 0.06);
+}
+
+.um-table tbody tr:last-child td {
+    border-bottom: none;
+}
 
 .um-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #cbd5e1; }
 
