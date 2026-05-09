@@ -652,6 +652,12 @@ class SettingsStore:
                 cur.execute("SELECT DATABASE()")
                 row = cur.fetchone()
                 schema = row[0] if row else None
+                if not schema:
+                    self._logger.warning(
+                        "audit-migration: MariaDB session has no default database (DATABASE() is NULL); "
+                        "skipping audit column check. Configure JDBC URL with a database name."
+                    )
+                    return
 
                 triples = [
                     (
@@ -679,9 +685,18 @@ class SettingsStore:
                     exists = int(cur.fetchone()[0]) > 0
                     if not exists:
                         cur.execute(alter_sql)
+                        self._conn.commit()  # commit per ALTER so partial failure leaves a coherent state
                         self._logger.info("audit-migration: added %s.%s", table, column)
 
             elif db == "mssql":
+                cur.execute("SELECT SCHEMA_NAME()")
+                row = cur.fetchone()
+                mssql_schema = row[0] if row else None
+                if not mssql_schema:
+                    self._logger.warning(
+                        "audit-migration: cannot resolve MSSQL default schema; skipping audit column check"
+                    )
+                    return
                 triples = [
                     (
                         "monigrid_apis",
@@ -701,13 +716,15 @@ class SettingsStore:
                     ),
                 ]
                 for table, column, alter_sql in triples:
+                    qualified = f"{mssql_schema}.{table}"
                     cur.execute(
                         "SELECT COUNT(*) FROM sys.columns WHERE Name = ? AND Object_ID = OBJECT_ID(?)",
-                        [column, table],
+                        [column, qualified],
                     )
                     exists = int(cur.fetchone()[0]) > 0
                     if not exists:
                         cur.execute(alter_sql)
+                        self._conn.commit()  # commit per ALTER so partial failure leaves a coherent state
                         self._logger.info("audit-migration: added %s.%s", table, column)
 
             elif db == "oracle":
@@ -736,6 +753,7 @@ class SettingsStore:
                     exists = int(cur.fetchone()[0]) > 0
                     if not exists:
                         cur.execute(alter_sql)
+                        self._conn.commit()  # commit per ALTER so partial failure leaves a coherent state
                         self._logger.info(
                             "audit-migration: added %s.%s",
                             table.lower(),
