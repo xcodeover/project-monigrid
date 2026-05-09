@@ -966,38 +966,117 @@ class SettingsStore:
     # ── apis ──────────────────────────────────────────────────────────────
 
     @_sync
-    def replace_apis(self, apis: Iterable[dict[str, Any]]) -> None:
-        # See replace_connections — commit inside to make the method
-        # self-contained for ad-hoc callers.
+    def replace_apis(
+        self, apis: Iterable[dict[str, Any]], *, actor: str = "",
+    ) -> None:
+        """Replace all rows in monigrid_apis. Preserves audit (updated_at, updated_by)
+        for rows whose business content hasn't changed; stamps fresh audit values on
+        new or content-changed rows.
+
+        actor: caller's username. Empty string → updated_by stays NULL on changed rows.
+        """
+        new_list = list(apis)
+        prior_by_id = {a["id"]: a for a in self._load_apis_no_commit()}
         self._execute_simple("DELETE FROM monigrid_apis")
-        for item in apis:
-            self._insert_api(item)
+        actor_val = (actor or "").strip() or None
+        for item in new_list:
+            prior = prior_by_id.get(item["id"])
+            if prior and _api_business_equal(prior, item):
+                # 내용 미변경 — prior audit 보존
+                self._insert_api_with_audit(
+                    item,
+                    updated_at_iso=prior.get("updated_at"),
+                    updated_by=prior.get("updated_by"),
+                )
+            else:
+                # 신규 또는 변경 — 현재 시각 + actor 로 stamp
+                self._insert_api_with_audit(
+                    item,
+                    updated_at_iso=None,
+                    updated_by=actor_val,
+                )
         self._conn.commit()
 
-    def _insert_api(self, item: dict[str, Any]) -> None:
+    def _load_apis_no_commit(self) -> list[dict[str, Any]]:
+        """Same SELECT as load_apis but without @_sync (caller already locked)."""
         cur = self._cursor()
         try:
             cur.execute(
-                "INSERT INTO monigrid_apis "
-                "(id, title, rest_api_path, connection_id, sql_id, enabled, "
-                " refresh_interval_sec, query_timeout_sec) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    str(item["id"]),
-                    item.get("title") or str(item["id"]),
-                    str(item["rest_api_path"]),
-                    str(item["connection_id"]),
-                    str(item["sql_id"]),
-                    1 if item.get("enabled", True) else 0,
-                    int(item.get("refresh_interval_sec") or 5),
-                    int(item.get("query_timeout_sec") or 30),
-                ],
+                "SELECT id, title, rest_api_path, connection_id, sql_id, enabled, "
+                "refresh_interval_sec, query_timeout_sec, updated_at, updated_by "
+                "FROM monigrid_apis"
             )
+            rows = cur.fetchall()
         finally:
-            try:
-                cur.close()
-            except Exception:
-                pass
+            try: cur.close()
+            except Exception: pass
+        return [
+            {
+                "id": row[0], "title": row[1], "rest_api_path": row[2],
+                "connection_id": row[3], "sql_id": row[4], "enabled": bool(row[5]),
+                "refresh_interval_sec": int(row[6]), "query_timeout_sec": int(row[7]),
+                "updated_at": _to_utc_iso8601(row[8]),
+                "updated_by": row[9] if row[9] else None,
+            }
+            for row in rows
+        ]
+
+    def _insert_api_with_audit(
+        self,
+        item: dict[str, Any],
+        *,
+        updated_at_iso: str | None,
+        updated_by: str | None,
+    ) -> None:
+        cur = self._cursor()
+        try:
+            if updated_at_iso:
+                # Convert ISO8601 'Z' string to 'YYYY-MM-DD HH:MM:SS' (naive UTC)
+                # string for JayDeBeApi — MariaDB/MSSQL/Oracle all accept this literal.
+                from datetime import datetime, timezone
+                dt = datetime.fromisoformat(updated_at_iso.replace("Z", "+00:00"))
+                naive_utc = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                ts_str = naive_utc.strftime("%Y-%m-%d %H:%M:%S")
+                cur.execute(
+                    "INSERT INTO monigrid_apis "
+                    "(id, title, rest_api_path, connection_id, sql_id, enabled, "
+                    " refresh_interval_sec, query_timeout_sec, updated_at, updated_by) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        str(item["id"]),
+                        item.get("title") or str(item["id"]),
+                        str(item["rest_api_path"]),
+                        str(item["connection_id"]),
+                        str(item["sql_id"]),
+                        1 if item.get("enabled", True) else 0,
+                        int(item.get("refresh_interval_sec") or 5),
+                        int(item.get("query_timeout_sec") or 30),
+                        ts_str,
+                        updated_by,
+                    ],
+                )
+            else:
+                # DB DEFAULT CURRENT_TIMESTAMP populates updated_at; omit from INSERT.
+                cur.execute(
+                    "INSERT INTO monigrid_apis "
+                    "(id, title, rest_api_path, connection_id, sql_id, enabled, "
+                    " refresh_interval_sec, query_timeout_sec, updated_by) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        str(item["id"]),
+                        item.get("title") or str(item["id"]),
+                        str(item["rest_api_path"]),
+                        str(item["connection_id"]),
+                        str(item["sql_id"]),
+                        1 if item.get("enabled", True) else 0,
+                        int(item.get("refresh_interval_sec") or 5),
+                        int(item.get("query_timeout_sec") or 30),
+                        updated_by,
+                    ],
+                )
+        finally:
+            try: cur.close()
+            except Exception: pass
 
     @_sync
     def load_apis(self) -> list[dict[str, Any]]:
@@ -1005,7 +1084,8 @@ class SettingsStore:
         try:
             cur.execute(
                 "SELECT id, title, rest_api_path, connection_id, sql_id, enabled, "
-                "refresh_interval_sec, query_timeout_sec FROM monigrid_apis"
+                "refresh_interval_sec, query_timeout_sec, updated_at, updated_by "
+                "FROM monigrid_apis"
             )
             rows = cur.fetchall()
         finally:
@@ -1023,6 +1103,8 @@ class SettingsStore:
                 "enabled": bool(row[5]),
                 "refresh_interval_sec": int(row[6]),
                 "query_timeout_sec": int(row[7]),
+                "updated_at": _to_utc_iso8601(row[8]),
+                "updated_by": row[9] if row[9] else None,
             }
             for row in rows
         ]
@@ -2440,6 +2522,22 @@ def _to_utc_iso8601(value: Any) -> str | None:
         return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     except (ValueError, TypeError):
         return s  # final defensive fallback — return raw string
+
+
+def _api_business_equal(a: dict, b: dict) -> bool:
+    """True iff the non-audit fields of two api dicts match."""
+    keys = ("id", "title", "rest_api_path", "connection_id", "sql_id",
+            "enabled", "refresh_interval_sec", "query_timeout_sec")
+    def norm(d, k):
+        v = d.get(k)
+        if k == "enabled":
+            return bool(v) if v is not None else True
+        if k == "refresh_interval_sec":
+            return int(v) if v is not None else 5
+        if k == "query_timeout_sec":
+            return int(v) if v is not None else 30
+        return None if v is None else str(v)
+    return all(norm(a, k) == norm(b, k) for k in keys)
 
 
 def _extract_table_name(ddl: str) -> str | None:
