@@ -160,6 +160,43 @@ def register(app, backend, limiter) -> None:
 
         return jsonify({"items": items, "count": len(items)}), 200
 
+    @app.route("/dashboard/timemachine/series", methods=["GET"])
+    @require_auth
+    def timemachine_series():
+        store = backend.get_timemachine_store()
+        if store is None:
+            return jsonify({"message": "timemachine disabled"}), 503
+
+        source_type = (request.args.get("sourceType") or "").strip()
+        source_id = (request.args.get("sourceId") or "").strip()
+        if not source_type or not source_id:
+            return jsonify({"message": "sourceType, sourceId required"}), 400
+
+        from_ms = _parse_at_ms(request.args.get("from"))
+        to_ms = _parse_at_ms(request.args.get("to"))
+        if from_ms is None or to_ms is None:
+            return jsonify({"message": "from/to required"}), 400
+
+        try:
+            limit = int(request.args.get("limit", "500"))
+        except (TypeError, ValueError):
+            return jsonify({"message": "limit must be int"}), 400
+        limit = max(1, min(limit, 2000))
+
+        try:
+            items = store.list_samples_range(
+                source_type=source_type, source_id=source_id,
+                from_ms=from_ms, to_ms=to_ms, limit=limit,
+            )
+        except Exception:
+            backend.logger.exception("timemachine series failed")
+            return jsonify({"message": "series query failed"}), 500
+
+        return jsonify({
+            "items": items, "count": len(items),
+            "sourceType": source_type, "sourceId": source_id,
+        }), 200
+
     @app.route("/dashboard/timemachine/retention", methods=["PUT"])
     @require_auth
     @require_admin

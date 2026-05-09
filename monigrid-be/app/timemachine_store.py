@@ -260,6 +260,33 @@ class TimemachineStore:
             })
         return out
 
+    def list_samples_range(
+        self, *, source_type: str, source_id: str,
+        from_ms: int, to_ms: int, limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Return samples for one source within [from_ms, to_ms] ordered ascending.
+
+        Output shape: ``[{tsMs, payload}, ...]``. Used by the Phase 3 ``/series``
+        endpoint to feed detail modals with a 1-hour timeseries.
+        """
+        if self._conn is None:
+            return []
+        try:
+            with self._lock:
+                if self._conn is None:
+                    return []
+                rows = self._conn.execute(
+                    "SELECT ts_ms, payload FROM timemachine_samples "
+                    "WHERE source_type = ? AND source_id = ? "
+                    "AND ts_ms BETWEEN ? AND ? "
+                    "ORDER BY ts_ms ASC LIMIT ?",
+                    (source_type, source_id, int(from_ms), int(to_ms), int(limit)),
+                ).fetchall()
+        except Exception:
+            self._logger.exception("timemachine list_samples_range failed")
+            return []
+        return [{"tsMs": int(r[0]), "payload": _decode_payload(r[1])} for r in rows]
+
     def stats(self) -> dict[str, Any]:
         """Return basic stats for the Configuration page (row count, span)."""
         if self._conn is None:
