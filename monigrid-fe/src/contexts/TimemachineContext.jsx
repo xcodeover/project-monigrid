@@ -40,8 +40,7 @@ export function TimemachineProvider({ children }) {
         setError(null);
         try {
             const data = await timemachineService.queryAt(
-                { at: ms },
-                { signal: abortRef.current.signal },
+                { at: ms, signal: abortRef.current.signal },
             );
             const items = Array.isArray(data?.items) ? data.items : [];
             setSnapshotByKey(buildSnapshotMap(items));
