@@ -198,7 +198,7 @@ const ApiRow = ({
 
     return (
         <>
-            <div className={rowClasses} data-row-id={api.id}>
+            <div className={rowClasses} data-row-id={api._key || api.id}>
                 <span className="cfg-grid-no">{index + 1}</span>
                 <label className="cfg-toggle" title={api.enabled ? "활성" : "비활성"}>
                     <input
@@ -350,28 +350,33 @@ const ApisGrid = ({
             <span></span>
         </div>
         {items.map((api, idx) => {
-            const state = apiList.rowState(api.id);
+            // useDirtyList 의 stable map key. 사용자가 API ID 필드를 편집해도
+            // _key 는 변하지 않으므로 React 가 input 을 remount 하지 않는다.
+            const stableKey = api._key;
+            const state = apiList.rowState(stableKey);
             const rowStateClass =
                 state === "new" ? "row-state-new"
                 : state === "modified" ? "row-state-modified"
                 : state === "deleted" ? "row-state-deleted"
                 : "";
-            const valError = apiList.validationError(api.id);
+            const valError = apiList.validationError(stableKey);
+            // 임계치 카운트는 저장된 row(=api.id 가 안정한 경우) 에서만 의미가
+            // 있으므로 그대로 api.id 로 lookup.
             const tCount = thresholdsCountByApiId
                 ? (thresholdsCountByApiId[api.id] || 0)
                 : 0;
             return (
                 <ApiRow
-                    key={api.id}
+                    key={stableKey}
                     api={api}
                     index={idx}
                     rowStateClass={rowStateClass}
                     validationError={valError}
                     connectionIds={connectionIds}
-                    onUpdate={(next) => onUpdate(api.id, next)}
-                    onRemove={() => onRemove(api.id)}
-                    onRestore={() => onRestore(api.id)}
-                    onDuplicate={() => onDuplicate(api.id)}
+                    onUpdate={(next) => onUpdate(stableKey, next)}
+                    onRemove={() => onRemove(stableKey)}
+                    onRestore={() => onRestore(stableKey)}
+                    onDuplicate={() => onDuplicate(stableKey)}
                     onEditSql={onEditSql}
                     onEditThresholds={onEditThresholds}
                     thresholdsCount={tCount}
@@ -849,7 +854,8 @@ export default function ConfigEditorPage() {
     const handleApiRestore = useCallback((id) => apiList.restoreItem(id), [apiList]);
 
     const handleApiDuplicate = useCallback((id) => {
-        const src = apiList.visibleItems.find((a) => a.id === id);
+        // id 는 stable _key 라 lookup 도 _key 로 일치시킨다.
+        const src = apiList.visibleItems.find((a) => a._key === id);
         if (!src) return;
         const existingPaths = new Set(
             apiList.visibleItems.map((a) => a.rest_api_path).filter(Boolean),

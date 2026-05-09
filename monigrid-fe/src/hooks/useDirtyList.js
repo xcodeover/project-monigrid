@@ -182,7 +182,14 @@ export function useDirtyList({
     // ── visibleItems ─────────────────────────────────────────────────────────
 
     const visibleItems = useMemo(() => {
-        const all = Array.from(working.values());
+        // Each visibleItem 에 working Map 의 key 를 _key 로 노출.
+        // 사용 이유: 신규 row 의 id 필드를 사용자가 편집하는 동안 item.id 는
+        // 매 키 입력마다 변하지만, working Map 의 key 는 addItem 시점에 부여된
+        // tmp-id 로 안정적으로 유지된다. 소비자가 React key / 이벤트 핸들러 /
+        // rowState lookup 에 _key 를 쓰면 input remount → focus loss 가 사라진다.
+        const all = Array.from(working.entries()).map(
+            ([key, item]) => ({ ...item, _key: key }),
+        );
         const active = all.filter((it) => !it._isDeleted);
         const deleted = all.filter((it) => it._isDeleted);
         return [...active, ...deleted];
@@ -198,10 +205,15 @@ export function useDirtyList({
         (overrides = {}) => {
             const tmpId = genTmpId();
             const base = newItemFactory ? newItemFactory() : {};
+            // 신규 row 의 id 필드는 빈 문자열로 시작 — 사용자가 직접 입력해야 한다.
+            // tmpId 는 working Map 의 key (= visibleItem._key) 로만 쓰이고 BE 에는
+            // 노출되지 않는다. validator 가 비어있는 id 를 잡아 저장을 막는다.
             const item = {
                 ...base,
                 ...overrides,
-                [idKey]: tmpId,
+                [idKey]: overrides[idKey] != null && overrides[idKey] !== ""
+                    ? overrides[idKey]
+                    : "",
                 _isNew: true,
             };
             dispatch({ type: ACTIONS.ADD_ITEM, item, tmpId });
@@ -282,10 +294,10 @@ export function useDirtyList({
 
         for (const [id, item] of working.entries()) {
             if (item._isNew && !item._isDeleted) {
-                // Strip internals AND the client-assigned idKey — BE assigns real id
-                const clean = stripInternals(item);
-                delete clean[idKey];
-                creates.push(clean);
+                // 사용자가 입력한 id 를 그대로 BE 로 전달한다.
+                // (이전엔 idKey 를 strip 했지만 monigrid_apis / monigrid_monitor_targets
+                //  는 user-supplied PRIMARY KEY 라 strip 하면 BE 가 거부한다.)
+                creates.push(stripInternals(item));
             } else if (item._isDeleted && original.has(id)) {
                 deletes.push(id);
             } else if (!item._isNew && !item._isDeleted && original.has(id)) {

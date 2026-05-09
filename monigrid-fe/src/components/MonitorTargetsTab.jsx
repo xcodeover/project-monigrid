@@ -138,7 +138,7 @@ const ServerResourceRow = ({
 
     return (
         <>
-            <div className={rowClasses} data-row-id={target.id}>
+            <div className={rowClasses} data-row-id={target._key || target.id}>
                 <span className="cfg-grid-no">{index + 1}</span>
                 <label className="cfg-toggle" title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}>
                     <input
@@ -261,7 +261,7 @@ const NetworkRow = ({
 
     return (
         <>
-            <div className={rowClasses} data-row-id={target.id}>
+            <div className={rowClasses} data-row-id={target._key || target.id}>
                 <span className="cfg-grid-no">{index + 1}</span>
                 <label className="cfg-toggle" title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}>
                     <input
@@ -358,7 +358,7 @@ const HttpStatusRow = ({
 
     return (
         <>
-            <div className={rowClasses} data-row-id={target.id}>
+            <div className={rowClasses} data-row-id={target._key || target.id}>
                 <span className="cfg-grid-no">{index + 1}</span>
                 <label className="cfg-toggle" title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}>
                     <input
@@ -501,6 +501,10 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
 
     // ── validator ──────────────────────────────────────────────────────────────
     const validator = useCallback((item) => {
+        const id = (item.id || "").trim();
+        if (!id) return "ID는 필수입니다.";
+        if (!/^[a-zA-Z0-9_-]+$/.test(id)) return "ID는 영문자·숫자·밑줄·하이픈만 허용됩니다.";
+        if (id.length > 128) return "ID는 128자 이하여야 합니다.";
         const label = (item.label || "").trim();
         if (!label) return "이름(label)은 필수입니다.";
         if (label.length > 64) return "이름은 64자 이하여야 합니다.";
@@ -596,7 +600,8 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
     };
 
     const handleDuplicate = (id) => {
-        const src = list.visibleItems.find((t) => t.id === id);
+        // id 는 stable _key 라 lookup 도 _key 로 일치시킨다.
+        const src = list.visibleItems.find((t) => t._key === id);
         if (!src) return;
         const dupId = list.addItem({
             ...buildEmpty(targetType),
@@ -734,7 +739,9 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
                 <div className={`cfg-grid cfg-grid-monitor cfg-grid-monitor-${targetType}`} role="grid">
                     <TargetGridHeader targetType={targetType} />
                     {targets.map((t, idx) => {
-                        const state = list.rowState(t.id);
+                        // useDirtyList 가 노출하는 stable map key. id 필드 편집과 무관.
+                        const stableKey = t._key;
+                        const state = list.rowState(stableKey);
                         const rowStateClass =
                             state === "new"
                                 ? "row-state-new"
@@ -743,16 +750,16 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
                                   : state === "deleted"
                                     ? "row-state-deleted"
                                     : "";
-                        const valError = list.validationError(t.id);
+                        const valError = list.validationError(stableKey);
                         return (
                             <TargetGridRow
-                                key={t.id}
+                                key={stableKey}
                                 target={t}
                                 index={idx}
-                                onChange={(next) => handleChange(t.id, next)}
-                                onRemove={() => handleRemove(t.id)}
-                                onRestore={() => handleRestore(t.id)}
-                                onDuplicate={() => handleDuplicate(t.id)}
+                                onChange={(next) => handleChange(stableKey, next)}
+                                onRemove={() => handleRemove(stableKey)}
+                                onRestore={() => handleRestore(stableKey)}
+                                onDuplicate={() => handleDuplicate(stableKey)}
                                 rowStateClass={rowStateClass}
                                 validationError={valError}
                             />
