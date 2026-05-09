@@ -387,7 +387,7 @@ function buildEndpointValidator(allItems) {
     return (item) => {
         const id = (item.id || "").trim();
         if (!id) return "API ID는 필수입니다.";
-        if (!/^[a-zA-Z0-9_]+$/.test(id)) return "API ID는 영문자·숫자·밑줄만 허용됩니다.";
+        if (!/^[a-zA-Z0-9_-]+$/.test(id)) return "API ID는 영문자·숫자·밑줄·하이픈만 허용됩니다.";
 
         const dupCount = allItems.filter(
             (it) => !it._isDeleted && (it.id || "").trim() === id && it !== item,
@@ -717,13 +717,18 @@ export default function ConfigEditorPage() {
 
     const handleSave = async () => {
         if (apiList.isDirty && !apiList.isValid) {
-            const firstInvalidId = apiList.invalidIds[0];
-            const el = document.querySelector(`[data-row-id="${firstInvalidId}"]`);
-            if (el) {
-                setActiveTab("apis");
-                el.scrollIntoView({ behavior: "smooth", block: "center" });
-            }
+            // 데이터 API 탭은 위젯별 설정 그룹의 sub-tab — 두 state 모두 전환해야 한다.
+            // 과거에는 setActiveTab("apis") 만 호출해서 top-level 탭이 알 수 없는
+            // 키로 바뀌면서 어떤 분기에도 매칭되지 않아 본문이 빈 화면으로 보였다.
+            setActiveTab("widgetGroup");
+            setActiveWidgetSubTab("apis");
             setError(`데이터 API 설정에 ${apiList.invalidIds.length}개 오류가 있습니다. 확인 후 다시 저장하세요.`);
+            const firstInvalidId = apiList.invalidIds[0];
+            // DOM 업데이트 후에 scrollIntoView 가 동작하도록 다음 틱으로 미룬다.
+            setTimeout(() => {
+                const el = document.querySelector(`[data-row-id="${firstInvalidId}"]`);
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 0);
             return;
         }
 
