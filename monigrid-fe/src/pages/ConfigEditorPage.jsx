@@ -24,6 +24,7 @@ import {
 // 무겁다 — ConfigEditorPage 진입 직후가 아니라 row 의 버튼을 누른 시점에만 로드.
 const SqlEditorModal = lazy(() => import("../components/SqlEditorModal"));
 const ApiThresholdsEditorModal = lazy(() => import("../components/ApiThresholdsEditorModal"));
+import AuditCells from "../components/AuditCells.jsx";
 import "../components/ConfigEditorModal.css";
 import "./ConfigEditorPage.css";
 
@@ -247,18 +248,7 @@ const ApiRow = ({
                     max="3600"
                     disabled={isDeleted}
                 />
-                <span className="cfg-grid-flags">
-                    {api._isNew && <span className="cfg-card-badge">신규</span>}
-                    {isDeleted && <span className="cfg-card-badge" style={{ color: "#ff6b6b" }}>삭제 예정</span>}
-                    {!api._isNew && thresholdsCount > 0 && (
-                        <span
-                            className="cfg-card-badge cfg-thresholds-badge"
-                            title={`${thresholdsCount}개의 임계치가 정의됨`}
-                        >
-                            임계치 {thresholdsCount}
-                        </span>
-                    )}
-                </span>
+                <AuditCells updatedAt={api.updated_at} updatedBy={api.updated_by} />
                 <div className="cfg-grid-actions">
                     {/* SQL 편집 (요구 ②): row 의 sqlId 로 SQL 편집기 모달 진입 */}
                     {!isDeleted && (
@@ -276,12 +266,24 @@ const ApiRow = ({
                     {!isDeleted && (
                         <button
                             type="button"
-                            className="cfg-row-action-btn"
+                            className="cfg-row-action-btn cfg-thresholds-btn"
                             onClick={() => onEditThresholds?.(api)}
                             disabled={!isPersisted}
-                            title={isPersisted ? "알람 임계치 편집" : "신규 행은 저장 후 임계치 편집 가능"}
+                            title={
+                                isPersisted
+                                    ? (thresholdsCount > 0 ? `알람 임계치 편집 (${thresholdsCount}개 정의됨)` : "알람 임계치 편집")
+                                    : "신규 행은 저장 후 임계치 편집 가능"
+                            }
                         >
                             <span aria-hidden style={{ fontSize: 12, fontWeight: 700 }}>⚠</span>
+                            {!api._isNew && thresholdsCount > 0 && (
+                                <span
+                                    className="cfg-thresholds-count-badge"
+                                    aria-label={`임계치 ${thresholdsCount}개`}
+                                >
+                                    {thresholdsCount}
+                                </span>
+                            )}
                         </button>
                     )}
                     {!isDeleted && (
@@ -343,7 +345,8 @@ const ApisGrid = ({
             <span>Connection</span>
             <span>SQL ID</span>
             <span>주기(초)</span>
-            <span>상태</span>
+            <span>수정 시각</span>
+            <span>편집자</span>
             <span></span>
         </div>
         {items.map((api, idx) => {

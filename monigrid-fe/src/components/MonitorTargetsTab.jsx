@@ -4,6 +4,7 @@ import { DEFAULT_CRITERIA, OS_OPTIONS } from "./serverResourceHelpers";
 import PasswordInput from "./PasswordInput";
 import { useDirtyList } from "../hooks/useDirtyList";
 import { useConfigFooterRegister, useConfigFooterUnregister } from "../pages/configFooterContext";
+import AuditCells from "./AuditCells.jsx";
 import {
     IconCopy,
     IconPlus,
@@ -104,13 +105,6 @@ const RowActions = ({ isDeleted, isNew, onDuplicate, onRemove, onRestore }) => (
             </button>
         )}
     </div>
-);
-
-const RowFlags = ({ isNew, isDeleted }) => (
-    <span className="cfg-grid-flags">
-        {isNew && <span className="cfg-card-badge">신규</span>}
-        {isDeleted && <span className="cfg-card-badge" style={{ color: "#ff6b6b" }}>삭제 예정</span>}
-    </span>
 );
 
 const ServerResourceRow = ({
@@ -235,7 +229,7 @@ const ServerResourceRow = ({
                     title="Disk 알람 임계치 (%)"
                     disabled={isDeleted}
                 />
-                <RowFlags isNew={target._isNew} isDeleted={isDeleted} />
+                <AuditCells updatedAt={target.updated_at} updatedBy={target.updated_by} />
                 <RowActions
                     isDeleted={isDeleted}
                     isNew={target._isNew}
@@ -333,7 +327,7 @@ const NetworkRow = ({
                     title="Timeout (초)"
                     disabled={isDeleted}
                 />
-                <RowFlags isNew={target._isNew} isDeleted={isDeleted} />
+                <AuditCells updatedAt={target.updated_at} updatedBy={target.updated_by} />
                 <RowActions
                     isDeleted={isDeleted}
                     isNew={target._isNew}
@@ -414,7 +408,7 @@ const HttpStatusRow = ({
                     title="Timeout (초)"
                     disabled={isDeleted}
                 />
-                <RowFlags isNew={target._isNew} isDeleted={isDeleted} />
+                <AuditCells updatedAt={target.updated_at} updatedBy={target.updated_by} />
                 <RowActions
                     isDeleted={isDeleted}
                     isNew={target._isNew}
@@ -444,7 +438,8 @@ const TargetGridHeader = ({ targetType }) => {
                 <span>CPU%</span>
                 <span>Mem%</span>
                 <span>Disk%</span>
-                <span>상태</span>
+                <span>수정 시각</span>
+                <span>편집자</span>
                 <span></span>
             </div>
         );
@@ -461,7 +456,8 @@ const TargetGridHeader = ({ targetType }) => {
                 <span>호스트</span>
                 <span>Port</span>
                 <span>Timeout</span>
-                <span>상태</span>
+                <span>수정 시각</span>
+                <span>편집자</span>
                 <span></span>
             </div>
         );
@@ -476,7 +472,8 @@ const TargetGridHeader = ({ targetType }) => {
             <span>주기(초)</span>
             <span>URL</span>
             <span>Timeout</span>
-            <span>상태</span>
+            <span>수정 시각</span>
+            <span>편집자</span>
             <span></span>
         </div>
     );
