@@ -1,5 +1,6 @@
 import { IconClose, IconRefresh, IconSettings } from "./icons";
 import { formatInterval } from "./widgetUtils.js";
+import { useTimemachineEnabled } from "../contexts/TimemachineContext";
 import {
     useLineChartSettings,
     TIME_RANGES,
@@ -36,6 +37,7 @@ const LineChartCard = ({
     chartSettings,
     onChartSettingsChange,
 }) => {
+    const tmActive = useTimemachineEnabled();
     const settings = useLineChartSettings({
         title,
         endpoint,
@@ -111,7 +113,8 @@ const LineChartCard = ({
                                     event.stopPropagation();
                                     setShowSettings((v) => !v);
                                 }}
-                                title='설정'
+                                disabled={tmActive}
+                                title={tmActive ? '타임머신 모드에서는 편집 불가' : '설정'}
                             >
                                 <IconSettings size={14} />
                             </button>
@@ -122,7 +125,8 @@ const LineChartCard = ({
                                     event.stopPropagation();
                                     onRemove();
                                 }}
-                                title='삭제'
+                                disabled={tmActive}
+                                title={tmActive ? '타임머신 모드에서는 편집 불가' : '삭제'}
                             >
                                 <IconClose size={14} />
                             </button>

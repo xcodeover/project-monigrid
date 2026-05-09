@@ -563,8 +563,8 @@ const NetworkTestCard = ({
                         )}
                         <div className="title-actions">
                             <button type="button" className="compact-icon-btn" onClick={checkAllTargets} title="새로고침" aria-label="새로고침"><IconRefresh size={14} /></button>
-                            <button type="button" className="compact-icon-btn" onClick={openSettings} title="설정" aria-label="설정"><IconSettings size={14} /></button>
-                            <button type="button" className="compact-icon-btn remove" onClick={onRemove} title="제거" aria-label="제거"><IconClose size={14} /></button>
+                            <button type="button" className="compact-icon-btn" onClick={openSettings} disabled={tmActive} title={tmActive ? '타임머신 모드에서는 편집 불가' : '설정'} aria-label="설정"><IconSettings size={14} /></button>
+                            <button type="button" className="compact-icon-btn remove" onClick={onRemove} disabled={tmActive} title={tmActive ? '타임머신 모드에서는 편집 불가' : '제거'} aria-label="제거"><IconClose size={14} /></button>
                         </div>
                     </div>
                     <div className="api-endpoint-row">

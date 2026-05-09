@@ -8,6 +8,7 @@ import {
     MIN_WIDGET_W,
     SIZE_STEP,
 } from "../pages/dashboardConstants";
+import { useTimemachineEnabled } from "../contexts/TimemachineContext";
 import { useAutoScrollTopOnDataChange } from "../utils/widgetListHelpers";
 import { IconClose, IconRefresh, IconSettings } from "./icons";
 import MonitorTargetPicker from "./MonitorTargetPicker.jsx";
@@ -47,6 +48,7 @@ const StatusListCard = ({
     const [showSettings, setShowSettings] = useState(false);
     const [sizeDraft, setSizeDraft] = useState({ w: 4, h: 5 });
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 5);
+    const tmActive = useTimemachineEnabled();
     const [titleDraft, setTitleDraft] = useState(title);
     const safeTargetIds = useMemo(
         () => (Array.isArray(targetIds) ? targetIds.filter(Boolean) : []),
@@ -334,7 +336,8 @@ const StatusListCard = ({
                                     event.stopPropagation();
                                     setShowSettings(true);
                                 }}
-                                title='설정'
+                                disabled={tmActive}
+                                title={tmActive ? '타임머신 모드에서는 편집 불가' : '설정'}
                             >
                                 <IconSettings size={14} />
                             </button>
@@ -347,7 +350,8 @@ const StatusListCard = ({
                                         onRemove();
                                     }
                                 }}
-                                title='제거'
+                                disabled={tmActive}
+                                title={tmActive ? '타임머신 모드에서는 편집 불가' : '제거'}
                             >
                                 <IconClose size={14} />
                             </button>
