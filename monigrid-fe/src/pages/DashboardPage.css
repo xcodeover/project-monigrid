@@ -785,7 +785,7 @@
     padding: 8px 28px;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: 16px;
     font-size: 11px;
     color: var(--text-tertiary);
@@ -795,6 +795,30 @@
     bottom: 0;
     z-index: 24;
     backdrop-filter: blur(10px);
+}
+
+/* footer 좌측 끝 — copyright/version 은 우측에 자동 정렬되도록 left margin auto 안 줌. */
+.footer-tm-btn {
+    margin-right: auto;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-tertiary, #64748b);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.footer-tm-btn:hover {
+    background: rgba(168, 85, 247, 0.14);
+    border-color: rgba(168, 85, 247, 0.35);
+    color: #ddd6fe;
 }
 
 .footer-copyright {

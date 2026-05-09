@@ -21,7 +21,7 @@ import { useAuthStore } from "../store/authStore";
 import { useAlarmStore } from "../store/alarmStore";
 import AlarmBanner from "../components/AlarmBanner";
 import { TimemachineProvider, useTimemachine } from "../contexts/TimemachineContext";
-import TimemachineControlBar, { TimemachineEntryButton } from "../components/TimemachineControlBar";
+import TimemachineControlBar from "../components/TimemachineControlBar";
 // SQL 편집기 / 백엔드 설정 모달은 모두 ConfigEditorPage 안으로 이동했다.
 // 비밀번호 게이트는 ConfigEditorPage 내부에서 sessionStorage 기반으로 처리.
 import DashboardHeader from "./DashboardHeader";
@@ -883,9 +883,19 @@ const DashboardPageInner = () => {
             <AlarmBanner />
 
             <TimemachineControlBar />
-            <TimemachineEntryButton />
 
             <footer className='dashboard-footer'>
+                {!tm.enabled && (
+                    <button
+                        type="button"
+                        className="footer-tm-btn"
+                        onClick={() => tm.enable()}
+                        title="타임머신 모드 진입"
+                        aria-label="타임머신 모드 진입"
+                    >
+                        <span aria-hidden>⏪</span>
+                    </button>
+                )}
                 <span className='footer-copyright'>
                     Copyright © {CURRENT_YEAR} {COMPANY_NAME}. All rights
                     reserved.
