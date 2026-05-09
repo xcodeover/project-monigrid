@@ -413,6 +413,22 @@ export const timemachineService = {
         );
         return response.data;
     },
+    /**
+     * Fetch multiple snapshots in one call (Phase 2 playback prefetch).
+     * @param {Object} params
+     * @param {number} params.from - epoch ms (start of window)
+     * @param {number} params.to - epoch ms (end of window)
+     * @param {number} [params.stepMs=30000] - frame interval in ms
+     * @param {Object} [options]
+     * @param {AbortSignal} [options.signal]
+     */
+    queryWindow: async ({ from, to, stepMs = 30000 }, options = {}) => {
+        const response = await apiClient.get("/dashboard/timemachine/window", {
+            params: { from, to, stepMs },
+            signal: options.signal,
+        });
+        return response.data;
+    },
     /** Store stats (row count, time span, enabled flag). */
     stats: async () => {
         const response = await apiClient.get("/dashboard/timemachine/stats");
