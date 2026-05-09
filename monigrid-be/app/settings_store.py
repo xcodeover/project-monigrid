@@ -521,7 +521,36 @@ class SettingsStore:
             self._conn.jconn.setAutoCommit(False)
         except Exception:
             pass
+        self._normalize_session_timezone()
         self._ever_connected = True
+
+    def _normalize_session_timezone(self) -> None:
+        """Pin session timezone to UTC so TIMESTAMP / DATETIME values come back
+        in UTC regardless of the DB server's local timezone.
+
+        mssql DATETIME2 has no session timezone, so this is a no-op there.
+        """
+        db = self._cfg.db_type
+        sql = None
+        if db == "mariadb":
+            sql = "SET time_zone = '+00:00'"
+        elif db == "oracle":
+            sql = "ALTER SESSION SET TIME_ZONE = '+00:00'"
+        if sql is None:
+            return
+        cur = self._conn.cursor()
+        try:
+            cur.execute(sql)
+        except Exception as exc:
+            # Non-fatal — log and proceed; subsequent reads may have non-UTC
+            # offsets but the system is still functional.
+            self._logger.warning(
+                "session timezone normalization failed (%s): %s — falling back to server default",
+                db, exc,
+            )
+        finally:
+            try: cur.close()
+            except Exception: pass
 
     @_sync
     def close(self) -> None:
