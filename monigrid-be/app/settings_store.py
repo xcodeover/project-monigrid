@@ -1945,7 +1945,9 @@ class SettingsStore:
         return result
 
     @_sync
-    def save_config_dict(self, config_dict: dict[str, Any]) -> None:
+    def save_config_dict(
+        self, config_dict: dict[str, Any], *, actor: str = "",
+    ) -> None:
         """Persist a full config.json-shaped dict back to the DB.
 
         Semantics: replace-all for connections/apis; upsert for scalar KV.
@@ -1953,7 +1955,7 @@ class SettingsStore:
         """
         self.save_scalar_sections(config_dict)
         self.replace_connections(config_dict.get("connections") or [])
-        self.replace_apis(config_dict.get("apis") or [])
+        self.replace_apis(config_dict.get("apis") or [], actor=actor)
         self._conn.commit()
 
     # ── alert events (BE-side raise/clear transition log) ────────────────

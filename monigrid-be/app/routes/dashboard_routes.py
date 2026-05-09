@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
-from app.auth import caller_is_admin, require_admin, require_auth, verify_jwt_token
+from app.auth import caller_is_admin, current_username, require_admin, require_auth, verify_jwt_token
 from app.exceptions import SqlFileNotFoundError
 from app.utils import get_client_ip
 
@@ -192,14 +192,20 @@ def register(app, backend, limiter) -> None:
         applied/skipped/errors arrays for partial-reload diagnostics.
         """
         client_ip = get_client_ip()
+        username = current_username()
         config_data = request.get_json(silent=True)
         if not config_data or not isinstance(config_data, dict):
             return jsonify({"message": "invalid config JSON"}), 400
 
         try:
-            partial_result = backend.apply_partial_config_reload(config_data)
+            partial_result = backend.apply_partial_config_reload(
+                config_data, actor=username,
+            )
         except Exception:
-            backend.logger.exception("Partial config reload failed clientIp=%s", client_ip)
+            backend.logger.exception(
+                "Partial config reload failed clientIp=%s actor=%s",
+                client_ip, username,
+            )
             return jsonify({
                 "message": "config save+reload failed",
                 "detail": "internal error",
