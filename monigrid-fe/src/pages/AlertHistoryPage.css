@@ -145,12 +145,23 @@
 }
 
 /* ── Main scrollable region ─────────────────────────────────── */
-
+/*
+ * 레이아웃 정책: .ah-main 은 flex 컨테이너로만 쓰고 스크롤은 .ah-table-wrap
+ * 내부에서 처리한다. thead 의 position:sticky 가 .ah-table-wrap 의 viewport
+ * 에 정확히 anchor 되어, row 가 위로 스크롤되어도 헤더는 상단에 고정된다.
+ *
+ * 과거엔 .ah-main 이 overflow-y:auto 였지만, 그 경우 .ah-table-wrap 의
+ * overflow-x:auto 가 새 sticky 컨텍스트를 만들어 thead 가 .ah-main 과
+ * 같이 스크롤되는 문제가 있었다.
+ */
 .ah-main {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
     padding: 14px 24px;
+    overflow: hidden;
+    gap: 14px;
 }
 
 .ah-msg {
@@ -175,10 +186,11 @@
 /* ── Table ──────────────────────────────────────────────────── */
 
 .ah-table-wrap {
+    flex: 1;
+    min-height: 0;
     border: 1px solid rgba(148, 163, 184, 0.12);
     border-radius: 10px;
-    overflow-x: auto;     /* 고정 컬럼 합계가 좁은 화면을 넘으면 가로 스크롤 */
-    overflow-y: hidden;
+    overflow: auto;      /* 양 축 스크롤. thead 가 이 viewport 에 sticky */
 }
 
 /* table-layout: fixed → 컬럼 폭은 thead 의 width 만으로 결정.
@@ -196,6 +208,9 @@
 }
 
 .ah-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
     text-align: left;
     padding: 8px 12px;
     background: var(--bg-elevated, #1a2332);
@@ -206,6 +221,9 @@
     letter-spacing: 0.04em;
     border-bottom: 1px solid rgba(148, 163, 184, 0.20);
     white-space: nowrap;
+    /* sticky 이동 시 row 가 헤더 뒤로 비치는 것을 막기 위해 box-shadow 로
+       하단 경계 강조 (border-bottom 만으로는 collapse 시 사라질 수 있음) */
+    box-shadow: inset 0 -1px 0 rgba(148, 163, 184, 0.20);
 }
 
 /* 고정 컬럼 폭 — 백엔드 설정 그리드와 동일하게 명시적 픽셀/minmax 사용 */
