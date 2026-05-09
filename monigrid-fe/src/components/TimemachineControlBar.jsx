@@ -109,9 +109,12 @@ export default function TimemachineControlBar() {
                     onChange={(e) => tm.setFrameSizeMs(Number(e.target.value))}
                     title="프레임 간격 (한 tick 당 진행)"
                 >
+                    <option value={5_000}>5s</option>
+                    <option value={10_000}>10s</option>
                     <option value={30_000}>30s</option>
                     <option value={60_000}>1m</option>
-                    <option value={300_000}>5m</option>
+                    <option value={600_000}>10m</option>
+                    <option value={1_800_000}>30m</option>
                 </select>
             </div>
             <div className="tm-cb-center">

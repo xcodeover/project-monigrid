@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { timemachineService } from "../services/api";
-import { buildSnapshotMap } from "../utils/snapshotKey";
+import { dashboardService, timemachineService } from "../services/api";
+import { buildSnapshotMap, snapshotKeyForWidget as snapshotKeyForWidgetStatic } from "../utils/snapshotKey";
 import { createPrefetchBuffer } from "../utils/timemachinePrefetchBuffer";
 
 const Ctx = createContext(null);
@@ -15,6 +15,10 @@ export function TimemachineProvider({ children }) {
     const [error, setError] = useState(null);
     const [stats, setStats] = useState(null);
 
+    // endpoint catalog (api_id ↔ endpoint URL 매핑) — widget.endpoint 만 알고 있는
+    // 데이터 API 위젯의 snapshot key 를 정확히 풀기 위해 필요. 60s 주기로 갱신.
+    const [endpointCatalog, setEndpointCatalog] = useState([]);
+
     // Phase 2: playback state
     const [playing, setPlaying] = useState(false);
     const [speed, setSpeed] = useState(1);          // 1 / 2 / 5 / 10
@@ -24,6 +28,45 @@ export function TimemachineProvider({ children }) {
     const abortRef = useRef(null);
     const bufferRef = useRef(createPrefetchBuffer(200));
     const playTickRef = useRef(null);
+
+    // endpoint catalog 는 mount 후 한 번 + 60초 주기
+    useEffect(() => {
+        let cancelled = false;
+        const load = async () => {
+            try {
+                const list = await dashboardService.getApiEndpoints();
+                if (!cancelled) setEndpointCatalog(Array.isArray(list) ? list : []);
+            } catch {
+                /* swallow — fallback 으로 widget.id / endpoint URL 휴리스틱 사용 */
+            }
+        };
+        load();
+        const id = setInterval(load, 60_000);
+        return () => { cancelled = true; clearInterval(id); };
+    }, []);
+
+    // widget → (sourceType, sourceId) 키 풀이. 데이터 API 위젯은 widget.endpoint
+    // (URL) 를 endpoint catalog 와 매칭해 api_id 를 얻는다.
+    const resolveSnapshotKey = useCallback((widget) => {
+        if (!widget) return null;
+        // 명시적 apiId/endpointId 가 widget 에 있으면 우선 사용 (정적 helper 와 동일)
+        const staticKey = snapshotKeyForWidgetStatic(widget);
+        if (staticKey) return staticKey;
+        const t = widget.type;
+        if (t === "table" || t === "line-chart" || t === "bar-chart" || t === "health-check") {
+            const wEndpoint = (widget.endpoint || "").trim();
+            if (!wEndpoint) return null;
+            // catalog 에서 endpoint 가 일치하는 entry → id (api_id) 추출
+            const hit = endpointCatalog.find(
+                (ep) => (ep?.endpoint || "").trim() === wEndpoint,
+            );
+            if (hit?.id) return `data_api|${hit.id}`;
+            // fallback: "/api/{id}" 패턴이면 마지막 세그먼트를 api_id 로 추정
+            const m = /\/api\/([^/?#]+)/i.exec(wEndpoint);
+            if (m && m[1]) return `data_api|${m[1]}`;
+        }
+        return null;
+    }, [endpointCatalog]);
 
     // stats (earliest/latest) 는 모드 켜질 때 한 번 + 30초 주기
     useEffect(() => {
@@ -159,8 +202,9 @@ export function TimemachineProvider({ children }) {
         playing, speed, frameSizeMs,
         setAtMs, setPlaying, setSpeed, setFrameSizeMs,
         enable, disable,
+        resolveSnapshotKey,
     }), [enabled, atMs, snapshotByKey, loading, error, stats,
-        playing, speed, frameSizeMs, enable, disable]);
+        playing, speed, frameSizeMs, enable, disable, resolveSnapshotKey]);
 
     return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

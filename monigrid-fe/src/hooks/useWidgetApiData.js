@@ -444,7 +444,7 @@ const useWidgetApiData = (widgets) => {
         if (!tm.enabled) return null;
         const overridden = {};
         for (const widget of widgets) {
-            const key = snapshotKeyForWidget(widget);
+            const key = tm.resolveSnapshotKey ? tm.resolveSnapshotKey(widget) : snapshotKeyForWidget(widget);
             const snap = key ? tm.snapshotByKey.get(key) : null;
             overridden[widget.id] = {
                 id: widget.id,
@@ -460,7 +460,10 @@ const useWidgetApiData = (widgets) => {
 
     const activeResults = tm.enabled ? (tmResults ?? {}) : results;
     const activeLoadingMap = tm.enabled
-        ? Object.fromEntries(widgets.map((w) => [w.id, tm.loading && !tm.snapshotByKey.get(snapshotKeyForWidget(w))]))
+        ? Object.fromEntries(widgets.map((w) => {
+            const k = tm.resolveSnapshotKey ? tm.resolveSnapshotKey(w) : snapshotKeyForWidget(w);
+            return [w.id, tm.loading && !tm.snapshotByKey.get(k)];
+        }))
         : loadingMap;
     const activeRefreshingMap = tm.enabled ? {} : refreshingMap;
 

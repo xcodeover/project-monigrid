@@ -906,7 +906,9 @@ const DashboardPageInner = () => {
             </div>
 
             {detailWidget && (() => {
-                const snapKey = snapshotKeyForWidget(detailWidget);
+                const snapKey = tm.resolveSnapshotKey
+                    ? tm.resolveSnapshotKey(detailWidget)
+                    : snapshotKeyForWidget(detailWidget);
                 const [snapSourceType, snapSourceId] = snapKey ? snapKey.split("|") : [null, null];
                 const currentPayload = snapKey
                     ? (tm.snapshotByKey.get(snapKey)?.payload ?? null)
