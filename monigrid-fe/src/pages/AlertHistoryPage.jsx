@@ -3,8 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { dashboardService } from "../services/api";
 import { monitorService } from "../services/dashboardService";
-import { useDocumentVisible } from "../hooks/useDocumentVisible";
-import { IconRefresh } from "../components/icons";
+import { IconArrowLeft } from "../components/icons";
 import "./AlertHistoryPage.css";
 
 /* ── Helpers ──────────────────────────────────────────────────── */
@@ -86,7 +85,6 @@ export default function AlertHistoryPage() {
     const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
     const logout = useAuthStore((state) => state.logout);
     const user = useAuthStore((state) => state.user);
-    const visible = useDocumentVisible();
 
     // ── 필터 (UI draft) ────────────────────────────────────────
     const [from, setFrom] = useState("");
@@ -171,16 +169,13 @@ export default function AlertHistoryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [from, to, sourceType, sourceId, severity, keyword, page]);
 
-    // 첫 마운트 + 30초 주기 자동 새로고침 (현재 필터/페이지 그대로 재요청)
+    // 첫 마운트에 1회만 조회. 이후엔 사용자가 "조회" 또는 "초기화" 버튼을
+    // 누를 때만 fetch — 자동 새로고침은 폐지.
     useEffect(() => {
-        if (!isAuthenticated || !visible) return;
+        if (!isAuthenticated) return;
         fetchAlerts();
-        const id = setInterval(fetchAlerts, 30_000);
-        return () => clearInterval(id);
-    // fetchAlerts 는 deps 에서 의도적으로 제외 — 매 렌더의 새 reference 가
-    // functionally identical, 30s timer 가 매번 재설정될 필요 없음.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isAuthenticated, visible]);
+    }, [isAuthenticated]);
 
     // ── 핸들러 ─────────────────────────────────────────────────
     const handleSubmit = (e) => {
@@ -288,15 +283,21 @@ export default function AlertHistoryPage() {
     return (
         <div className="alert-history-page">
             <header className="ah-header">
+                <button
+                    type="button"
+                    className="ah-back-btn"
+                    onClick={() => navigate("/dashboard")}
+                    aria-label="뒤로가기"
+                    title="대시보드로 돌아가기"
+                >
+                    <IconArrowLeft size={16} />
+                </button>
                 <div className="ah-title-wrap">
                     <h1>🚨 알림 이력</h1>
                     <p>BE 가 수집 갱신 직후 평가한 임계치 위반 / 회복 transition 이력입니다.</p>
                 </div>
                 <div className="ah-actions">
                     <span className="ah-user">@{user?.username || "user"}</span>
-                    <button type="button" className="ah-btn" onClick={() => navigate("/dashboard")}>
-                        대시보드
-                    </button>
                     <button type="button" className="ah-btn" onClick={handleLogout}>
                         로그아웃
                     </button>
@@ -372,14 +373,6 @@ export default function AlertHistoryPage() {
                         title="현재 필터에 매칭되는 전체 결과를 CSV 파일로 저장"
                     >
                         {exporting ? "내보내는 중..." : "CSV 내보내기"}
-                    </button>
-                    <button
-                        type="button"
-                        className="ah-btn"
-                        onClick={() => fetchAlerts()}
-                        title="새로고침"
-                    >
-                        <IconRefresh size={14} />
                     </button>
                 </div>
             </form>

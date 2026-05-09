@@ -50,6 +50,29 @@
     flex-wrap: wrap;
 }
 
+/* 백엔드 설정의 .cfgpage-back-btn 과 동일한 32x32 아이콘 버튼.
+   3개 페이지(백엔드 설정 / 사용자 관리 / 알람 이력) 헤더의 뒤로가기를 통일. */
+.um-back-btn {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: var(--text-secondary, #94a3b8);
+    border-radius: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.um-back-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary, #e2e8f0);
+    border-color: rgba(148, 163, 184, 0.3);
+}
+
 .um-user {
     font-size: 12px;
     color: var(--text-secondary, #94a3b8);
