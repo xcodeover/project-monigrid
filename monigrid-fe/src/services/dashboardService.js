@@ -429,6 +429,24 @@ export const timemachineService = {
         });
         return response.data;
     },
+    /**
+     * Fetch a single source's samples in a time range (Phase 3 detail modal).
+     * @param {Object} params
+     * @param {string} params.sourceType  e.g. "monitor:server_resource"
+     * @param {string} params.sourceId
+     * @param {number} params.from        epoch ms
+     * @param {number} params.to          epoch ms
+     * @param {number} [params.limit=500]
+     * @param {Object} [options]
+     * @param {AbortSignal} [options.signal]
+     */
+    queryRange: async ({ sourceType, sourceId, from, to, limit = 500 }, options = {}) => {
+        const response = await apiClient.get("/dashboard/timemachine/series", {
+            params: { sourceType, sourceId, from, to, limit },
+            signal: options.signal,
+        });
+        return response.data;
+    },
     /** Store stats (row count, time span, enabled flag). */
     stats: async () => {
         const response = await apiClient.get("/dashboard/timemachine/stats");
