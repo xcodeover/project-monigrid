@@ -1143,7 +1143,7 @@ class SettingsStore:
         cur = self._cursor()
         try:
             cur.execute(
-                "SELECT id, type, label, spec, interval_sec, enabled "
+                "SELECT id, type, label, spec, interval_sec, enabled, updated_at, updated_by "
                 "FROM monigrid_monitor_targets"
             )
             rows = cur.fetchall()
@@ -1159,7 +1159,7 @@ class SettingsStore:
         cur = self._cursor()
         try:
             cur.execute(
-                "SELECT id, type, label, spec, interval_sec, enabled "
+                "SELECT id, type, label, spec, interval_sec, enabled, updated_at, updated_by "
                 "FROM monigrid_monitor_targets WHERE id = ?",
                 [target_id],
             )
@@ -1275,7 +1275,7 @@ class SettingsStore:
         cur = self._cursor()
         try:
             cur.execute(
-                "SELECT id, type, label, spec, interval_sec, enabled "
+                "SELECT id, type, label, spec, interval_sec, enabled, updated_at, updated_by "
                 "FROM monigrid_monitor_targets WHERE id = ?",
                 [target_id],
             )
@@ -2398,7 +2398,36 @@ def _row_to_monitor_target(row: Any) -> dict[str, Any]:
         "spec":         spec,
         "interval_sec": int(row[4]),
         "enabled":      bool(row[5]),
+        "updated_at":   _to_utc_iso8601(row[6]),
+        "updated_by":   row[7] if row[7] else None,
     }
+
+
+def _to_utc_iso8601(value: Any) -> str | None:
+    """Convert any datetime-ish value to a UTC ISO8601 string with 'Z'.
+
+    Accepts: datetime, java.sql.Timestamp (via JayDeBeApi), str, None.
+    Returns None on missing/empty input.
+    """
+    if value is None or value == "":
+        return None
+    from datetime import datetime, timezone
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        if "T" in s:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        else:
+            dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except (ValueError, TypeError):
+        return s  # final defensive fallback — return raw string
 
 
 def _extract_table_name(ddl: str) -> str | None:
