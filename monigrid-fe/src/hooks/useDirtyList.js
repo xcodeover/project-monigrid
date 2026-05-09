@@ -267,7 +267,11 @@ export function useDirtyList({
         const ids = [];
         for (const [id, item] of working.entries()) {
             if (item._isDeleted) continue; // deleted items skip validation
-            const err = validator(item);
+            // Inject stable _key so the validator can identify "self" against
+            // visibleItems (which all carry _key). Without this, dup checks
+            // using `it !== item` reference equality break because visibleItems
+            // creates new wrapper objects every render.
+            const err = validator({ ...item, _key: id });
             if (err != null) ids.push(id);
         }
         return ids;
@@ -280,7 +284,7 @@ export function useDirtyList({
             if (!validator) return null;
             const item = working.get(id);
             if (!item || item._isDeleted) return null;
-            return validator(item);
+            return validator({ ...item, _key: id });
         },
         [working, validator],
     );

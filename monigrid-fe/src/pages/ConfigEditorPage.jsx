@@ -394,8 +394,13 @@ function buildEndpointValidator(allItems) {
         if (!id) return "API ID는 필수입니다.";
         if (!/^[a-zA-Z0-9_-]+$/.test(id)) return "API ID는 영문자·숫자·밑줄·하이픈만 허용됩니다.";
 
+        // Self-exclusion via stable map key (_key). visibleItems 와 working Map
+        // 의 객체 참조가 다르므로 `it !== item` 으로는 자기 자신이 잡혀버려
+        // 모든 row 가 자기 자신과 중복으로 판정되는 버그가 있었다.
+        // 둘 다 _key 가 보장됨 — invalidIds/validationError 가 working entry
+        // 의 map key 를 _key 로 주입해 호출하므로.
         const dupCount = allItems.filter(
-            (it) => !it._isDeleted && (it.id || "").trim() === id && it !== item,
+            (it) => !it._isDeleted && (it.id || "").trim() === id && it._key !== item._key,
         ).length;
         if (dupCount > 0) return "API ID가 중복됩니다.";
 
