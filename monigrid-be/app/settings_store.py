@@ -12,7 +12,7 @@ Schema (all tables prefixed `monigrid_`):
   monigrid_connections         (id PK, ...)         — JDBC connections
   monigrid_apis                (id PK, ...)         — REST API endpoints
   monigrid_sql_queries         (sql_id PK, content, updated_at)
-  monigrid_monitor_targets     (id PK, type, label, spec, interval_sec, enabled, updated_at)
+  monigrid_monitor_targets     (id PK, type, label, spec, interval_sec, enabled, updated_at, updated_by)
                                — server-resource / network probes collected by the BE in the background
   monigrid_user_preferences    (username PK, value, updated_at)
                                — per-user UI state (layouts, thresholds, column order)
@@ -146,6 +146,10 @@ def _ddl_statements(db_type: str) -> list[str]:
                 extra_json LONGTEXT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
+            # MariaDB implicitly adds ON UPDATE CURRENT_TIMESTAMP to the first
+            # `TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP` column. For monigrid_apis
+            # this is harmless (persistence is DELETE+INSERT). For monigrid_monitor_targets
+            # the bump-on-UPDATE behavior matches the audit semantics we want.
             """
             CREATE TABLE IF NOT EXISTS monigrid_apis (
                 id VARCHAR(128) PRIMARY KEY,
@@ -378,7 +382,7 @@ def _ddl_statements(db_type: str) -> list[str]:
             enabled NUMBER(1) DEFAULT 1 NOT NULL,
             refresh_interval_sec NUMBER(10) DEFAULT 5 NOT NULL,
             query_timeout_sec NUMBER(10) DEFAULT 30 NOT NULL,
-            updated_at TIMESTAMP DEFAULT SYS_EXTRACT_UTC(SYSTIMESTAMP) NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updated_by VARCHAR2(128) NULL
         )
         """,
