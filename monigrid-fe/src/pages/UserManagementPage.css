@@ -1,31 +1,46 @@
+/* ══════════════════════════════════════════════════════════════════
+   UserManagementPage  –  /admin/users
+
+   백엔드 설정 페이지(.cfgpage-root)와 동일한 색/타이포 토큰을 사용해
+   페이지 chrome / 버튼 / 입력 / 모달 / 테이블 모두 톤을 통일한다.
+   ══════════════════════════════════════════════════════════════════ */
+
 .user-mgmt-page {
-    min-height: 100vh;
-    background: #0f172a;
-    color: #e2e8f0;
+    position: fixed;
+    inset: 0;
     display: flex;
     flex-direction: column;
+    background: var(--bg-base, #0b1220);
+    color: var(--text-primary, #e2e8f0);
+    z-index: 10;
 }
+
+/* ── Page header ─────────────────────────────────────────────── */
 
 .um-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 18px 24px;
-    background: #1e293b;
-    border-bottom: 1px solid #334155;
-    gap: 16px;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px 24px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    flex-shrink: 0;
     flex-wrap: wrap;
 }
 
 .um-title-wrap h1 {
-    font-size: 20px;
-    margin: 0 0 4px 0;
+    margin: 0 0 2px;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary, #e2e8f0);
 }
 
 .um-title-wrap p {
     margin: 0;
-    font-size: 13px;
-    color: #94a3b8;
+    font-size: 12px;
+    color: var(--text-secondary, #94a3b8);
+    line-height: 1.4;
 }
 
 .um-actions {
@@ -37,22 +52,36 @@
 
 .um-user {
     font-size: 12px;
-    color: #94a3b8;
-    margin-right: 4px;
+    color: var(--text-secondary, #94a3b8);
 }
+
+/* ── Buttons (백엔드 설정 ah-btn / cfgpage-back-btn 토큰 일치) ─ */
 
 .um-btn {
     padding: 6px 12px;
-    border: 1px solid #475569;
-    background: #334155;
-    color: #e2e8f0;
-    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: var(--text-secondary, #94a3b8);
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 13px;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 
-.um-btn:hover { background: #475569; }
-.um-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.um-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary, #e2e8f0);
+    border-color: rgba(148, 163, 184, 0.3);
+}
+
+.um-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
 
 .um-btn-icon-text {
     display: inline-flex;
@@ -61,21 +90,34 @@
 }
 
 .um-btn-primary {
-    background: #2563eb;
-    border-color: #2563eb;
+    background: rgba(25, 160, 255, 0.15);
+    border-color: rgba(25, 160, 255, 0.3);
+    color: rgba(25, 160, 255, 0.95);
 }
-.um-btn-primary:hover { background: #1d4ed8; }
+
+.um-btn-primary:hover:not(:disabled) {
+    background: rgba(25, 160, 255, 0.25);
+    color: rgba(25, 160, 255, 1);
+}
 
 .um-btn-danger {
-    background: #7f1d1d;
-    border-color: #991b1b;
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
 }
-.um-btn-danger:hover:not(:disabled) { background: #991b1b; }
+
+.um-btn-danger:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fecaca;
+}
+
+/* ── Main scrollable region ─────────────────────────────────── */
 
 .um-main {
     flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     padding: 0;
-    overflow: auto;
 }
 
 .um-main > .um-error,
@@ -86,41 +128,42 @@
 
 .um-error {
     padding: 10px 14px;
-    background: #7f1d1d;
-    color: #fecaca;
-    border-radius: 4px;
-    margin-bottom: 16px;
-    font-size: 13px;
+    background: rgba(239, 68, 68, 0.08);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    font-size: 12px;
 }
 
 .um-loading,
 .um-empty {
     padding: 40px;
     text-align: center;
-    color: #94a3b8;
+    color: var(--text-tertiary, #64748b);
+    font-size: 13px;
+    border: 1px dashed rgba(148, 163, 184, 0.14);
+    border-radius: 10px;
 }
 
 .um-empty p { margin-bottom: 16px; }
 
-/* 백엔드 설정 그리드(.cfg-grid)와 톤 통일:
-   - 헤더: 불투명 elevated 배경 + sticky + edge-to-edge 느낌
-   - row: 얇은 1px 구분선(low alpha) + hover 톤 다운
-   - 폰트: 헤더 11px UPPERCASE, 본문 12px tabular-nums
-   - border-radius 0 (테이블 자체엔 외곽 둥글림 없이 flat) */
+/* ── Table — 백엔드 설정 .cfg-grid-head 톤과 일치 ─────────────── */
+
 .um-table {
     width: 100%;
     border-collapse: collapse;
     background: transparent;
-    border: 1px solid rgba(148, 163, 184, 0.12);
-    border-radius: 0;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
     font-variant-numeric: tabular-nums;
+    user-select: text;
 }
 
 .um-table th,
 .um-table td {
-    padding: 8px 12px;
+    padding: 8px 14px;
     text-align: left;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
     font-size: 12px;
 }
 
@@ -134,69 +177,87 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    padding: 8px 12px;
+    padding: 8px 14px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.20);
+    white-space: nowrap;
 }
 
 .um-table tbody tr:hover td {
-    background: rgba(148, 163, 184, 0.06);
+    background: rgba(148, 163, 184, 0.05);
 }
 
 .um-table tbody tr:last-child td {
     border-bottom: none;
 }
 
-.um-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #cbd5e1; }
+.um-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--text-primary, #e2e8f0);
+}
+
+/* ── Inline pills / badges ──────────────────────────────────── */
 
 .um-badge {
     display: inline-block;
     margin-left: 6px;
     padding: 1px 6px;
-    border-radius: 8px;
-    background: #1d4ed8;
-    color: #fff;
+    border-radius: 6px;
+    background: rgba(25, 160, 255, 0.18);
+    color: rgba(25, 160, 255, 0.95);
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: 0.04em;
 }
 
 .um-role-pill {
     display: inline-block;
     padding: 2px 8px;
-    border-radius: 10px;
-    background: #475569;
-    color: #e2e8f0;
-    font-size: 11px;
-    font-weight: 600;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary, #94a3b8);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    font-size: 10px;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.04em;
 }
 
 .um-role-pill.admin {
-    background: #7c3aed;
-    color: #fff;
+    background: rgba(124, 58, 237, 0.15);
+    border-color: rgba(124, 58, 237, 0.35);
+    color: #c4b5fd;
 }
 
 .um-toggle {
-    padding: 4px 10px;
-    border-radius: 10px;
-    font-size: 11px;
-    font-weight: 600;
-    background: #475569;
-    color: #e2e8f0;
-    border: none;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-tertiary, #64748b);
+    border: 1px solid rgba(148, 163, 184, 0.15);
     cursor: pointer;
+    transition: background 0.15s, color 0.15s;
 }
 
-.um-toggle.on { background: #15803d; }
+.um-toggle.on {
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.3);
+    color: #86efac;
+}
+
 .um-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .um-row-actions { display: flex; gap: 6px; }
 
-/* modal */
+/* ── Modal — 백엔드 설정 .cfg-* 토큰 / SqlEditorModal 류와 일치 ─ */
+
 .um-modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(2px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -204,37 +265,54 @@
 }
 
 .um-modal {
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 6px;
+    background: var(--bg-elevated, #1a2332);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 10px;
     width: min(520px, 96vw);
     max-height: 90vh;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
 }
 
 .um-modal-header {
-    padding: 14px 18px;
-    border-bottom: 1px solid #334155;
+    padding: 12px 18px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
     display: flex;
     justify-content: space-between;
     align-items: center;
+    background: rgba(255, 255, 255, 0.02);
 }
 
-.um-modal-header h3 { margin: 0; font-size: 16px; }
+.um-modal-header h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary, #e2e8f0);
+}
 
 .um-icon-btn {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: transparent;
-    border: none;
-    color: #94a3b8;
-    font-size: 18px;
+    border: 1px solid transparent;
+    color: var(--text-secondary, #94a3b8);
+    border-radius: 6px;
     cursor: pointer;
+    transition: background 0.15s, color 0.15s;
 }
-.um-icon-btn:hover { color: #e2e8f0; }
+
+.um-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary, #e2e8f0);
+}
 
 .um-modal-body {
-    padding: 16px 18px;
+    padding: 14px 18px;
     overflow: auto;
     display: flex;
     flex-direction: column;
@@ -242,8 +320,9 @@
 }
 
 .um-modal-footer {
-    padding: 12px 18px;
-    border-top: 1px solid #334155;
+    padding: 10px 18px;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    background: rgba(255, 255, 255, 0.02);
     display: flex;
     justify-content: flex-end;
     gap: 8px;
@@ -258,37 +337,45 @@
 .um-modal label {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    font-size: 12px;
-    color: #cbd5e1;
+    gap: 3px;
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
 }
 
-.um-modal label > span { color: #94a3b8; font-weight: 500; }
+.um-modal label > span {
+    color: var(--text-tertiary, #64748b);
+    font-weight: 600;
+}
 
 .um-modal input[type="text"],
 .um-modal input[type="password"],
 .um-modal select {
-    background: #0f172a;
-    color: #e2e8f0;
-    border: 1px solid #334155;
-    border-radius: 4px;
-    padding: 6px 8px;
-    font-size: 13px;
+    background-color: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary, #e2e8f0);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 12px;
+    box-sizing: border-box;
 }
 
 .um-modal input:focus,
 .um-modal select:focus {
     outline: none;
-    border-color: #2563eb;
+    border-color: rgba(25, 160, 255, 0.34);
+    box-shadow: 0 0 0 3px rgba(25, 160, 255, 0.1);
 }
 
 .um-modal input:disabled {
-    opacity: 0.7;
+    opacity: 0.55;
     cursor: not-allowed;
+    border-style: dashed;
 }
 
 .um-checkbox {
     flex-direction: row !important;
     align-items: center;
     gap: 8px !important;
+    color: var(--text-secondary, #94a3b8) !important;
+    font-size: 12px !important;
 }
