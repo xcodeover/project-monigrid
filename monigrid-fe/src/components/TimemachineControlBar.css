@@ -36,8 +36,11 @@
 }
 .tm-cb-scrubber {
     width: 100%;
+    height: 6px;
     accent-color: #a855f7;
 }
+/* center 영역(스크러버)이 점프 버튼이 사라진 만큼 더 넓게 차지하도록 minmax 부여 */
+.tm-cb-center { min-width: 320px; }
 .tm-cb-step {
     padding: 4px 10px;
     background: rgba(255, 255, 255, 0.04);

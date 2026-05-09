@@ -72,6 +72,12 @@ const DashboardHeader = ({
 
             <div className='header-right'>
                 <div className='header-info-row'>
+                    {!timemachineActive && (
+                        <span className='live-indicator' title='라이브 모드'>
+                            <span className='live-dot' aria-hidden />
+                            LIVE
+                        </span>
+                    )}
                     <span className='header-user-id'>
                         @{user?.username || "administrator"}
                     </span>

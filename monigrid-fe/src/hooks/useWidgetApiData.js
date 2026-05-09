@@ -446,9 +446,17 @@ const useWidgetApiData = (widgets) => {
         for (const widget of widgets) {
             const key = tm.resolveSnapshotKey ? tm.resolveSnapshotKey(widget) : snapshotKeyForWidget(widget);
             const snap = key ? tm.snapshotByKey.get(key) : null;
+            // BE 가 data_api 를 {title, endpoint, data: [...]} 로 wrapping 해서
+            // 저장하지만 라이브 응답은 [...] 평탄 배열. 위젯은 평탄 형태를
+            // 기대하므로 .data 를 unwrap. 모니터 타입 payload 는 .data 가 없어
+            // ?? 로 자기 자신 fallback.
+            const payload = snap?.payload ?? null;
+            const unwrapped = payload && typeof payload === "object" && "data" in payload
+                ? payload.data
+                : payload;
             overridden[widget.id] = {
                 id: widget.id,
-                data: snap?.payload ?? null,
+                data: unwrapped,
                 status: snap ? "live" : "dead",
                 error: tm.error || (snap ? null : "이 시점에 데이터 없음"),
                 lastUpdatedAt: snap?.tsMs ?? null,

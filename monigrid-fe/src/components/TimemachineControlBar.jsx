@@ -54,13 +54,6 @@ export default function TimemachineControlBar() {
     const latest = tm.latestMs ?? Date.now();
     const safeAt = tm.atMs ?? latest;
 
-    const step = (deltaMs) => {
-        let next = (tm.atMs ?? latest) + deltaMs;
-        if (next < earliest) next = earliest;
-        if (next > latest) next = latest;
-        tm.setAtMs(next);
-    };
-
     const onScrubber = (e) => {
         const v = Number(e.target.value);
         if (Number.isFinite(v)) tm.setAtMs(v);
@@ -129,12 +122,6 @@ export default function TimemachineControlBar() {
                 />
             </div>
             <div className="tm-cb-right">
-                <button type="button" className="tm-cb-step" onClick={() => step(-3600_000)} title="-1h">-1h</button>
-                <button type="button" className="tm-cb-step" onClick={() => step(-900_000)} title="-15m">-15m</button>
-                <button type="button" className="tm-cb-step" onClick={() => step(-300_000)} title="-5m">-5m</button>
-                <button type="button" className="tm-cb-step" onClick={() => step(300_000)} title="+5m">+5m</button>
-                <button type="button" className="tm-cb-step" onClick={() => step(900_000)} title="+15m">+15m</button>
-                <button type="button" className="tm-cb-step" onClick={() => step(3600_000)} title="+1h">+1h</button>
                 <button
                     type="button"
                     className="tm-cb-live"
