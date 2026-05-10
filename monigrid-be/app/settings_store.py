@@ -506,7 +506,20 @@ class SettingsStore:
     def connect(self) -> None:
         if jaydebeapi is None:
             raise RuntimeError("jaydebeapi is required for settings DB access")
-        ensure_jvm_started(classpath=list(self._cfg.jdbc_jars))
+        # JVM 시작 시 settings DB driver 만 넣지 말고, 같은 drivers/ 디렉토리에
+        # 있는 *.jar 도 모두 포함시킨다. JPype 는 startJVM 이후 classpath 추가가
+        # 불가능하기 때문에, MonitoringBackend 가 나중에 connection 별 driver 를
+        # 추가하려 해도 silent ignore 된다 (기존엔 "JDBC jars not on classpath at
+        # boot" 경고로 노출됨). settings_store 가 부팅 첫 진입점이라 여기서 한
+        # 번에 다 로드해두면 connection 등록 / 추가, ConfigEditor 의 connection
+        # test 등 모든 후속 JDBC 사용처에서 driver class 를 찾을 수 있다.
+        import glob as _glob
+        classpath_jars = list(self._cfg.jdbc_jars)
+        for d in {os.path.dirname(j) for j in classpath_jars if j}:
+            for jar_path in _glob.glob(os.path.join(d, "*.jar")):
+                if jar_path not in classpath_jars:
+                    classpath_jars.append(jar_path)
+        ensure_jvm_started(classpath=classpath_jars)
         self._logger.info(
             "Settings DB connecting dbType=%s url=%s",
             self._cfg.db_type, self._cfg.jdbc_url,

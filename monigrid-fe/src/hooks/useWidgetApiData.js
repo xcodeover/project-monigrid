@@ -9,7 +9,6 @@ import {
     monitorService,
 } from "../services/dashboardService.js";
 import { formatErrorMessage } from "../services/http.js";
-import { getEnabledCriteriaColumns } from "../utils/helpers.js";
 import { useDocumentVisible } from "./useDocumentVisible.js";
 import { snapshotKeyForWidget } from "../utils/snapshotKey";
 import { useTimemachine } from "../contexts/TimemachineContext";
@@ -66,17 +65,6 @@ const resolveWidgetType = (widget) => {
     return "table";
 };
 
-/**
- * criteria 기반 알람이 활성화된 테이블 위젯인지 판정.
- * 활성화된 경우 백엔드 캐시를 우회(?fresh=1)해 실시간 상태로 알람을 평가해야 한다.
- */
-const widgetNeedsFreshData = (widget) => {
-    if (resolveWidgetType(widget) !== "table") return false;
-    const criteria = widget?.tableSettings?.criteria;
-    if (!criteria) return false;
-    return getEnabledCriteriaColumns(criteria).length > 0;
-};
-
 // Stable string hash (mulberry-ish, FNV-1a in spirit). Used to compute a
 // deterministic per-widget phase shift so 30 widgets sharing a 5s interval
 // don't all fire on the same tick — that "thundering herd" filled the
@@ -110,9 +98,7 @@ const scheduleKeyFor = (widget) => {
                   Array.isArray(widget.targetIds) ? widget.targetIds : [],
               )
             : widget.endpoint;
-    // fresh 모드 토글도 키에 포함 — 알람 criteria가 켜지거나 꺼지면 즉시 재스케줄
-    const freshFlag = widgetNeedsFreshData(widget) ? "fresh" : "cached";
-    return `${target}::${intervalSec}::${freshFlag}`;
+    return `${target}::${intervalSec}`;
 };
 
 // Compute the next polling delay for a widget based on its consecutive failure count.
@@ -196,8 +182,10 @@ const useWidgetApiData = (widgets) => {
                     .getSnapshot(widget.targetIds, { signal })
                     .then(transformMonitorSnapshotToStatusList);
             }
+            // Phase 2 이후 알람 평가는 BE 단일 출처 (/dashboard/alerts/active 폴링).
+            // 더 이상 cache 를 우회할 이유가 없어 항상 cached data 사용. BE 스케줄러
+            // 가 refresh_interval_sec 마다 endpoint 를 갱신하므로 timing 영향 없음.
             return dataService.getApiData(widgetId, widget.endpoint, {
-                fresh: widgetNeedsFreshData(widget),
                 signal,
             });
         })()

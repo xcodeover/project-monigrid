@@ -8,4 +8,4 @@ Kept as a simple Python module (not in config.json) so:
 Bump this string when cutting a release.
 """
 
-__version__ = "2.0.0"
+__version__ = "4.0.0"

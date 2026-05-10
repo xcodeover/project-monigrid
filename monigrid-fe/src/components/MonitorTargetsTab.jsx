@@ -73,6 +73,19 @@ const needsServerCreds = (target) => {
  * 가능한 모든 필드를 한 행에 inline 으로 노출 — 가로 스크롤 허용.
  *  ───────────────────────────────────────────────────────────────── */
 
+// 데이터 API 탭과 동일한 per-cell 필수값 표시 헬퍼.
+// validationTriggered 가 true 이고 value 가 trim 후 비었으면 cfg-cell-invalid
+// 클래스 + placeholder "Required" 로 빨간 테두리 시각.
+const requiredCell = (value, fallback, { triggered, disabled = false } = {}) => {
+    if (disabled) return { className: "", placeholder: fallback };
+    const empty = !String(value ?? "").trim();
+    const invalid = triggered && empty;
+    return {
+        className: invalid ? "cfg-cell-invalid" : "",
+        placeholder: invalid ? "Required" : fallback,
+    };
+};
+
 const RowActions = ({ isDeleted, isNew, onDuplicate, onRemove, onRestore }) => (
     <div className="cfg-grid-actions">
         {!isDeleted && (
@@ -109,7 +122,7 @@ const RowActions = ({ isDeleted, isNew, onDuplicate, onRemove, onRestore }) => (
 
 const ServerResourceRow = ({
     target, index, onChange, onRemove, onRestore, onDuplicate,
-    rowStateClass, validationError,
+    rowStateClass, validationError, validationTriggered,
 }) => {
     const update = (field, value) => onChange({ ...target, [field]: value });
     const updateSpec = (field, value) =>
@@ -153,14 +166,20 @@ const ServerResourceRow = ({
                     type="text"
                     value={target.id || ""}
                     onChange={(e) => update("id", e.target.value)}
-                    placeholder="db-01"
+                    {...requiredCell(target.id, "db-01", {
+                        triggered: validationTriggered,
+                        disabled: !target._isNew || isDeleted,
+                    })}
                     disabled={!target._isNew || isDeleted}
                 />
                 <input
                     type="text"
                     value={target.label || ""}
                     onChange={(e) => update("label", e.target.value)}
-                    placeholder="prod DB"
+                    {...requiredCell(target.label, "prod DB", {
+                        triggered: validationTriggered,
+                        disabled: isDeleted,
+                    })}
                     disabled={isDeleted}
                 />
                 <input
@@ -174,7 +193,10 @@ const ServerResourceRow = ({
                     type="text"
                     value={target.spec?.host || ""}
                     onChange={(e) => updateSpec("host", e.target.value)}
-                    placeholder="192.168.0.10"
+                    {...requiredCell(target.spec?.host, "192.168.0.10", {
+                        triggered: validationTriggered,
+                        disabled: isDeleted,
+                    })}
                     disabled={isDeleted}
                 />
                 <select
@@ -187,10 +209,40 @@ const ServerResourceRow = ({
                     ))}
                 </select>
                 <input
+                    type="number"
+                    min="1"
+                    max="65535"
+                    value={target.spec?.port ?? ""}
+                    onChange={(e) =>
+                        updateSpec(
+                            "port",
+                            e.target.value === "" ? "" : Number(e.target.value),
+                        )
+                    }
+                    placeholder={
+                        osType === "windows-winrm"
+                            ? "5985"
+                            : osType === "windows"
+                                ? "(불필요)"
+                                : "22"
+                    }
+                    title={
+                        osType === "windows-winrm"
+                            ? "WinRM port (HTTP=5985, HTTPS=5986)"
+                            : osType === "windows"
+                                ? "WMI 로컬 — port 미사용"
+                                : "SSH port (default 22)"
+                    }
+                    disabled={isDeleted || osType === "windows"}
+                />
+                <input
                     type="text"
                     value={target.spec?.username || ""}
                     onChange={(e) => updateSpec("username", e.target.value)}
-                    placeholder={showCreds ? "user" : "(불필요)"}
+                    {...requiredCell(target.spec?.username, showCreds ? "user" : "(불필요)", {
+                        triggered: validationTriggered && showCreds,
+                        disabled: isDeleted || !showCreds,
+                    })}
                     disabled={isDeleted || !showCreds}
                 />
                 <PasswordInput
@@ -198,6 +250,25 @@ const ServerResourceRow = ({
                     onChange={(e) => updateSpec("password", e.target.value)}
                     placeholder={showCreds ? "" : "(불필요)"}
                     disabled={isDeleted || !showCreds}
+                />
+                <input
+                    type="text"
+                    value={target.spec?.domain || ""}
+                    onChange={(e) => updateSpec("domain", e.target.value)}
+                    placeholder={
+                        osType === "windows" || osType === "windows-winrm"
+                            ? "WORKGROUP"
+                            : "(불필요)"
+                    }
+                    title={
+                        osType === "windows" || osType === "windows-winrm"
+                            ? "Windows 도메인/워크그룹 (선택)"
+                            : "Linux/SSH 에서는 사용하지 않음"
+                    }
+                    disabled={
+                        isDeleted
+                        || (osType !== "windows" && osType !== "windows-winrm")
+                    }
                 />
                 <input
                     type="number"
@@ -245,7 +316,7 @@ const ServerResourceRow = ({
 
 const NetworkRow = ({
     target, index, onChange, onRemove, onRestore, onDuplicate,
-    rowStateClass, validationError,
+    rowStateClass, validationError, validationTriggered,
 }) => {
     const update = (field, value) => onChange({ ...target, [field]: value });
     const updateSpec = (field, value) =>
@@ -276,14 +347,20 @@ const NetworkRow = ({
                     type="text"
                     value={target.id || ""}
                     onChange={(e) => update("id", e.target.value)}
-                    placeholder="net-01"
+                    {...requiredCell(target.id, "net-01", {
+                        triggered: validationTriggered,
+                        disabled: !target._isNew || isDeleted,
+                    })}
                     disabled={!target._isNew || isDeleted}
                 />
                 <input
                     type="text"
                     value={target.label || ""}
                     onChange={(e) => update("label", e.target.value)}
-                    placeholder="DC-A 게이트웨이"
+                    {...requiredCell(target.label, "DC-A 게이트웨이", {
+                        triggered: validationTriggered,
+                        disabled: isDeleted,
+                    })}
                     disabled={isDeleted}
                 />
                 <input
@@ -306,7 +383,10 @@ const NetworkRow = ({
                     type="text"
                     value={target.spec?.host || ""}
                     onChange={(e) => updateSpec("host", e.target.value)}
-                    placeholder="192.168.0.10"
+                    {...requiredCell(target.spec?.host, "192.168.0.10", {
+                        triggered: validationTriggered,
+                        disabled: isDeleted,
+                    })}
                     disabled={isDeleted}
                 />
                 <input
@@ -343,7 +423,7 @@ const NetworkRow = ({
 
 const HttpStatusRow = ({
     target, index, onChange, onRemove, onRestore, onDuplicate,
-    rowStateClass, validationError,
+    rowStateClass, validationError, validationTriggered,
 }) => {
     const update = (field, value) => onChange({ ...target, [field]: value });
     const updateSpec = (field, value) =>
@@ -373,14 +453,20 @@ const HttpStatusRow = ({
                     type="text"
                     value={target.id || ""}
                     onChange={(e) => update("id", e.target.value)}
-                    placeholder="api-status-01"
+                    {...requiredCell(target.id, "api-status-01", {
+                        triggered: validationTriggered,
+                        disabled: !target._isNew || isDeleted,
+                    })}
                     disabled={!target._isNew || isDeleted}
                 />
                 <input
                     type="text"
                     value={target.label || ""}
                     onChange={(e) => update("label", e.target.value)}
-                    placeholder="결제 API"
+                    {...requiredCell(target.label, "결제 API", {
+                        triggered: validationTriggered,
+                        disabled: isDeleted,
+                    })}
                     disabled={isDeleted}
                 />
                 <input
@@ -394,7 +480,10 @@ const HttpStatusRow = ({
                     type="text"
                     value={target.spec?.url || ""}
                     onChange={(e) => updateSpec("url", e.target.value)}
-                    placeholder="https://api.example.com/health"
+                    {...requiredCell(target.spec?.url, "https://api.example.com/health", {
+                        triggered: validationTriggered,
+                        disabled: isDeleted,
+                    })}
                     spellCheck={false}
                     autoComplete="off"
                     disabled={isDeleted}
@@ -433,8 +522,10 @@ const TargetGridHeader = ({ targetType }) => {
                 <span>주기(초)</span>
                 <span>호스트</span>
                 <span>OS 유형</span>
+                <span>Port</span>
                 <span>Username</span>
                 <span>Password</span>
+                <span>Domain</span>
                 <span>CPU%</span>
                 <span>Mem%</span>
                 <span>Disk%</span>
@@ -481,6 +572,7 @@ const TargetGridHeader = ({ targetType }) => {
 
 const TargetGridRow = (props) => {
     const t = props.target?.type;
+    // validationTriggered 는 모든 row 타입에 동일하게 props 로 흘려준다.
     if (t === "server_resource") return <ServerResourceRow {...props} />;
     if (t === "network") return <NetworkRow {...props} />;
     return <HttpStatusRow {...props} />;
@@ -498,6 +590,9 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
     const [error, setError] = useState(null);
     const [collapsed, setCollapsed] = useState({});
     const [isSaving, setIsSaving] = useState(false);
+    // 데이터 API 탭과 동일 패턴 — 저장 시도 시 필수값 빈 셀이 있으면 ON.
+    // 사용자가 셀을 채우면 자동으로 무효화 시각이 사라짐 (cell-level recompute).
+    const [validationTriggered, setValidationTriggered] = useState(false);
 
     // ── validator ──────────────────────────────────────────────────────────────
     const validator = useCallback((item) => {
@@ -634,10 +729,13 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
     // ── batch save ─────────────────────────────────────────────────────────────
     const handleBatchSave = async () => {
         if (!list.isValid) {
+            // 필수값 빈 셀에 빨간 테두리 + "Required" placeholder 시각 표시.
+            // 데이터 API 탭과 동일한 패턴.
+            setValidationTriggered(true);
             const firstInvalidId = list.invalidIds[0];
             const el = document.querySelector(`[data-row-id="${firstInvalidId}"]`);
             el?.scrollIntoView({ behavior: "smooth", block: "center" });
-            window.alert(`${list.invalidIds.length}개 항목에 오류가 있습니다.`);
+            window.alert(`${list.invalidIds.length}개 항목에 오류가 있습니다. 빨간 셀을 채워 주세요.`);
             return;
         }
 
@@ -652,6 +750,7 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
             if (result.success) {
                 invalidateMonitorTargetsCache();
                 await reload();
+                setValidationTriggered(false);
             } else {
                 const failed = result.failedItem;
                 window.alert(`저장 실패: ${failed?.message || result.error}`);
@@ -762,6 +861,7 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
                                 onDuplicate={() => handleDuplicate(stableKey)}
                                 rowStateClass={rowStateClass}
                                 validationError={valError}
+                                validationTriggered={validationTriggered}
                             />
                         );
                     })}

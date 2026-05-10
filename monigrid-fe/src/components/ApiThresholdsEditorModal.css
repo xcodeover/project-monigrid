@@ -73,8 +73,19 @@
 .ate-body {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
+    /* body 자체는 더 이상 스크롤하지 않는다. hint + 추가 버튼은 sticky 로
+       유지되고 임계치 grid 영역만 .ate-grid-scroll 에서 세로 스크롤. */
+    display: flex;
+    flex-direction: column;
     padding: 14px 18px;
+}
+
+.ate-grid-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    /* head sticky 가 부모 padding 위에 깔끔하게 깔리도록 자체 padding 미세조정. */
+    padding-right: 2px;
 }
 
 .ate-loading,
@@ -146,13 +157,34 @@
     color: var(--text-primary, #e2e8f0);
     background-color: var(--bg-elevated, #1a2332);
 }
+
+/* 필수값 검증 — 저장 시 column 이 비어 있으면 빨간 테두리. select 의
+   placeholder 옵션 라벨은 JSX 에서 "Required" 로 치환되어 함께 표시된다. */
+.ate-grid-row > select.ate-cell-invalid,
+.ate-grid-row > input.ate-cell-invalid {
+    border-color: rgba(239, 68, 68, 0.65);
+    background: rgba(239, 68, 68, 0.06);
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+}
+.ate-grid-row > select.ate-cell-invalid:focus,
+.ate-grid-row > input.ate-cell-invalid:focus {
+    border-color: rgba(239, 68, 68, 0.85);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
 .ate-grid-head {
     font-size: 11px;
     font-weight: 600;
     color: var(--text-tertiary, #64748b);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    padding: 0 4px;
+    padding: 6px 4px 8px;
+    /* 스크롤 영역 안에서 컬럼 헤더가 항상 위쪽에 붙어 있도록. */
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-base, #0b1220);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .ate-footer {

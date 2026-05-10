@@ -181,13 +181,26 @@ class MonitoringBackend:
             )
             self._tm_retention_thread.start()
 
-        # Pre-start JVM once before any JDBC work begins, with all JDBC jars on classpath
-        if self.config.connections:
-            all_jars = list(dict.fromkeys(
-                jar
-                for conn in self.config.connections.values()
-                for jar in conn.jdbc_jars
-            ))
+        # Pre-start JVM once before any JDBC work begins, with all JDBC jars on classpath.
+        # JPype can't extend a running JVM's classpath, so any driver JAR we
+        # might possibly need (now or later — e.g. ConfigEditor 의 connection
+        # test 가 다른 db_type 으로 시도) MUST be loaded here.
+        all_jars = list(dict.fromkeys(
+            jar
+            for conn in self.config.connections.values()
+            for jar in conn.jdbc_jars
+        ))
+        # 사용자가 connection 으로 등록하지 않은 driver 까지 포함되도록, 이미
+        # 알려진 jar 들의 부모 디렉토리(보통 drivers/)에 있는 *.jar 모두 스캔.
+        # 이렇게 하면 connection test 가 oracle / mssql 등 미등록 db_type 도
+        # 시도 가능. 디스크 스캔이 startup 1회뿐이라 비용 무시.
+        import glob
+        candidate_dirs = {os.path.dirname(j) for j in all_jars if j}
+        for d in candidate_dirs:
+            for jar_path in glob.glob(os.path.join(d, "*.jar")):
+                if jar_path not in all_jars:
+                    all_jars.append(jar_path)
+        if all_jars:
             try:
                 ensure_jvm_started(classpath=all_jars)
             except Exception as exc:

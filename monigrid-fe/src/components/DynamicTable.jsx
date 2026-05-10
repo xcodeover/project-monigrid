@@ -1,5 +1,10 @@
 import React, { useMemo, useRef, useState } from "react";
-import { doesRowMatchCriteria, evaluateCriteria } from "../utils/helpers";
+import {
+    doesRowMatchCriteria,
+    doesRowMatchThresholds,
+    evaluateCriteria,
+    getCellThresholdLevel,
+} from "../utils/helpers";
 import { useAutoScrollTopOnDataChange } from "../utils/widgetListHelpers";
 import "./DynamicTable.css";
 
@@ -24,6 +29,7 @@ const DynamicTable = ({
     columnLabels = {},
     columnWidths = {},
     criteria = {},
+    thresholds = null,
     showAlertsOnly = false,
     fontSize = 13,
     maxRows = 50,
@@ -75,40 +81,50 @@ const DynamicTable = ({
         return Array.from(columnSet);
     }, [columns, dataArray]);
 
+    // 알람 매칭 — 레거시 user-side criteria 또는 BE 임계치 둘 중 하나라도 충족.
+    const isAlertRow = (row) =>
+        doesRowMatchCriteria(row, criteria)
+        || doesRowMatchThresholds(row, thresholds);
+
     const filteredData = useMemo(
         () => (showAlertsOnly
-            ? dataArray.filter((row) => doesRowMatchCriteria(row, criteria))
+            ? dataArray.filter(isAlertRow)
             : dataArray),
-        [dataArray, showAlertsOnly, criteria],
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [dataArray, showAlertsOnly, criteria, thresholds],
     );
 
-    const hasCriteria = useMemo(
-        () => Object.keys(criteria).some(
-            (col) =>
-                criteria[col]?.enabled &&
-                String(criteria[col]?.value ?? "").trim() !== "",
-        ),
-        [criteria],
+    const hasAlertSource = useMemo(
+        () => {
+            const criteriaActive = Object.keys(criteria).some(
+                (col) =>
+                    criteria[col]?.enabled &&
+                    String(criteria[col]?.value ?? "").trim() !== "",
+            );
+            const thresholdsActive = Array.isArray(thresholds) && thresholds.length > 0;
+            return criteriaActive || thresholdsActive;
+        },
+        [criteria, thresholds],
     );
 
     const sortedData = useMemo(() => {
         let working = [...filteredData];
 
-        // criteria 매칭 행을 상단으로 끌어올림
-        if (hasCriteria && !showAlertsOnly) {
+        // 알람 매칭 행을 상단으로 끌어올림
+        if (hasAlertSource && !showAlertsOnly) {
             working.sort((a, b) => {
-                const aMatch = doesRowMatchCriteria(a, criteria) ? 0 : 1;
-                const bMatch = doesRowMatchCriteria(b, criteria) ? 0 : 1;
+                const aMatch = isAlertRow(a) ? 0 : 1;
+                const bMatch = isAlertRow(b) ? 0 : 1;
                 return aMatch - bMatch;
             });
         }
 
         if (sortConfig.key) {
-            // stable sort: criteria 그룹 내에서만 정렬
+            // stable sort: 알람 그룹 내에서만 정렬
             working.sort((a, b) => {
-                if (hasCriteria && !showAlertsOnly) {
-                    const aMatch = doesRowMatchCriteria(a, criteria) ? 0 : 1;
-                    const bMatch = doesRowMatchCriteria(b, criteria) ? 0 : 1;
+                if (hasAlertSource && !showAlertsOnly) {
+                    const aMatch = isAlertRow(a) ? 0 : 1;
+                    const bMatch = isAlertRow(b) ? 0 : 1;
                     if (aMatch !== bMatch) return aMatch - bMatch;
                 }
 
@@ -131,7 +147,8 @@ const DynamicTable = ({
         }
 
         return working.slice(0, maxRows);
-    }, [filteredData, sortConfig, criteria, showAlertsOnly, hasCriteria, maxRows]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filteredData, sortConfig, criteria, thresholds, showAlertsOnly, hasAlertSource, maxRows]);
 
     if (loading) {
         return (
@@ -356,25 +373,38 @@ const DynamicTable = ({
                                     onRowDoubleClick && onRowDoubleClick(row)
                                 }
                             >
-                                {tableColumns.map((column) => (
-                                    <td
-                                        key={`${rowIndex}-${column}`}
-                                        className={
-                                            isAbnormalByCriteria(
-                                                column,
-                                                row[column],
-                                            )
+                                {tableColumns.map((column) => {
+                                    // 우선순위: BE 임계치 (level=critical → warn) > 레거시 user-side criteria.
+                                    // BE 임계치는 widget_configs 에서 내려오는 단일 출처 정의. 레거시
+                                    // criteria 는 사용자가 위젯 설정에서 직접 만든 보조 표시.
+                                    const beLevel = getCellThresholdLevel(
+                                        column,
+                                        row[column],
+                                        thresholds,
+                                    );
+                                    const isLegacyAbnormal =
+                                        !beLevel &&
+                                        isAbnormalByCriteria(column, row[column]);
+                                    const cellClass = beLevel === "critical"
+                                        ? "cell-critical"
+                                        : beLevel === "warn"
+                                            ? "cell-warn"
+                                            : isLegacyAbnormal
                                                 ? "abnormal-cell"
-                                                : ""
-                                        }
-                                        style={{
-                                            width: `${getColumnWidth(column)}px`,
-                                            minWidth: `${getColumnWidth(column)}px`,
-                                        }}
-                                    >
-                                        {renderCell(row[column])}
-                                    </td>
-                                ))}
+                                                : "";
+                                    return (
+                                        <td
+                                            key={`${rowIndex}-${column}`}
+                                            className={cellClass}
+                                            style={{
+                                                width: `${getColumnWidth(column)}px`,
+                                                minWidth: `${getColumnWidth(column)}px`,
+                                            }}
+                                        >
+                                            {renderCell(row[column])}
+                                        </td>
+                                    );
+                                })}
                             </tr>
                         ))}
                     </tbody>

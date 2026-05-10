@@ -156,6 +156,24 @@
     padding: 16px 24px;
 }
 
+/* JSON 모드 view-only 상태 — textarea 가 read-only 임을 cursor + 톤으로 표시.
+   .cfg-raw-json 자체는 ConfigEditorModal 과 공유라 [readonly] attribute selector
+   로 한정해 모달의 편집 가능 텍스트영역에는 영향 없게 한다. */
+.cfg-raw-json[readonly] {
+    cursor: default;
+    background: rgba(0, 0, 0, 0.30);
+    color: var(--text-secondary, #94a3b8);
+}
+.cfg-raw-json-hint {
+    margin: 0 0 10px;
+    padding: 8px 12px;
+    background: rgba(168, 85, 247, 0.08);
+    border: 1px solid rgba(168, 85, 247, 0.25);
+    border-radius: 6px;
+    font-size: 12px;
+    color: #ddd6fe;
+}
+
 .cfgpage-pane-footer {
     flex-shrink: 0;
     padding: 8px 24px;
@@ -308,6 +326,11 @@
     box-sizing: border-box;
 }
 
+.cfgpage-group-body select option {
+    color: var(--text-primary, #e2e8f0);
+    background-color: var(--bg-elevated, #1a2332);
+}
+
 .cfgpage-group-body input.input-disabled {
     opacity: 0.55;
     cursor: not-allowed;
@@ -422,6 +445,30 @@
     cursor: not-allowed;
 }
 
+/* 셀별 필수값 검증 시각 — DB 연결 탭 저장 시 빈 칸이 있으면 해당 cell
+   에 빨간 테두리 + "Required" placeholder 표시. PasswordInput 은
+   wrapper 가 grid item 이라 inner .pw-input 에 invalid 클래스가 붙는다. */
+.cfg-grid-row > input.cfg-cell-invalid,
+.cfg-grid-row > select.cfg-cell-invalid,
+.cfg-grid-row > .pw-input-wrap > .pw-input.cfg-cell-invalid {
+    border-color: rgba(239, 68, 68, 0.65);
+    background: rgba(239, 68, 68, 0.06);
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.25);
+}
+.cfg-grid-row > input.cfg-cell-invalid::placeholder,
+.cfg-grid-row > .pw-input-wrap > .pw-input.cfg-cell-invalid::placeholder {
+    color: #fca5a5;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+.cfg-grid-row > input.cfg-cell-invalid:focus,
+.cfg-grid-row > select.cfg-cell-invalid:focus,
+.cfg-grid-row > .pw-input-wrap > .pw-input.cfg-cell-invalid:focus {
+    border-color: rgba(239, 68, 68, 0.85);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
 .cfg-grid-head {
     position: sticky;
     top: 0;
@@ -436,6 +483,17 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     border-bottom: 1px solid rgba(148, 163, 184, 0.20);
+}
+
+/* 헤더 span 라벨을 데이터 셀 input/select 의 시각적 텍스트 시작점 (셀
+   왼쪽 끝 + 1px border + 8px input padding) 과 맞춰 컬럼 정렬을 일치시킨다.
+   "No" 헤더만 데이터 (.cfg-grid-no) 와 동일하게 가운데 정렬. */
+.cfg-grid-head > span {
+    padding: 0 9px;
+}
+.cfg-grid-head > span:first-child {
+    padding: 0;
+    text-align: center;
 }
 
 /* DB 연결 / 데이터 API 탭(=cfgpage-pane-body-grid) 만 헤더가 pane-body
@@ -546,8 +604,8 @@
     user-select: none;
 }
 
-/* DB 연결 grid 컬럼 폭 (총 8 컬럼):
-   No / ID / DB type / Driver Class / JDBC URL / 사용자 / 비밀번호 / 액션 */
+/* DB 연결 grid 컬럼 폭 (총 9 컬럼):
+   No / ID / DB type / Driver Class / JDBC URL / 사용자 / 비밀번호 / 연결 테스트 / 액션 */
 .cfg-grid-connections .cfg-grid-row {
     grid-template-columns:
         46px                 /* No */
@@ -557,8 +615,47 @@
         minmax(260px, 2fr)   /* JDBC URL */
         minmax(120px, 1fr)   /* user */
         minmax(140px, 1fr)   /* password */
+        minmax(110px, 130px) /* 연결 테스트 (Test 버튼 + status) */
         76px;                /* actions (복제 + 삭제) */
 }
+
+/* DB 연결 row 의 Test 버튼 + 결과 status. 현재 입력값으로 즉시 JDBC connect
+   를 시도해보는 편의 기능. driver/url/user/pwd 가 바뀌면 status 자동 idle. */
+.cfg-grid-test {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.cfg-test-btn {
+    padding: 5px 10px;
+    background: rgba(34, 197, 94, 0.10);
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    color: #86efac;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.cfg-test-btn:hover:not(:disabled) {
+    background: rgba(34, 197, 94, 0.20);
+    border-color: rgba(34, 197, 94, 0.55);
+    color: #bbf7d0;
+}
+.cfg-test-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+.cfg-test-status {
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+}
+.cfg-test-status-ok { color: #22c55e; }
+.cfg-test-status-error { color: #ef4444; }
+.cfg-test-status-testing { color: #94a3b8; }
 
 /* ── 모니터 대상 grid (요구 ③) ─────────────────────────────────
    서버 리소스 / 네트워크 / API 상태 — 카드 → grid 전환. 모니터 탭은
@@ -570,8 +667,10 @@
     padding: 0 4px;
 }
 
-/* server_resource: No / 활성 / ID / 이름 / 주기 / 호스트 / OS / Username
-   / Password / CPU% / Mem% / Disk% / 수정 시각 / 편집자 / 액션 — 15 컬럼 */
+/* server_resource: No / 활성 / ID / 이름 / 주기 / 호스트 / OS / Port / Username
+   / Password / Domain / CPU% / Mem% / Disk% / 수정 시각 / 편집자 / 액션 — 17 컬럼.
+   Port 와 Domain 은 OS 유형에 따라 disable 되지만 layout 은 항상 자리를 잡아
+   row 사이의 컬럼 정렬이 깨지지 않게 한다. */
 .cfg-grid-monitor-server_resource .cfg-grid-row {
     grid-template-columns:
         46px                   /* No */
@@ -581,15 +680,17 @@
         80px                   /* 주기 */
         minmax(140px, 1fr)     /* 호스트 */
         minmax(160px, 180px)   /* OS */
+        80px                   /* Port */
         minmax(120px, 1fr)     /* Username */
         minmax(150px, 1fr)     /* Password */
+        minmax(110px, 140px)   /* Domain */
         70px                   /* CPU% */
         70px                   /* Mem% */
         70px                   /* Disk% */
         140px                  /* 수정 시각 */
         110px                  /* 편집자 */
         76px;                  /* 액션 */
-    min-width: 1620px;
+    min-width: 1830px;
 }
 
 /* network: No / 활성 / ID / 이름 / 주기 / 유형 / 호스트 / Port / Timeout

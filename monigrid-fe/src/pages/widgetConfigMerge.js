@@ -56,11 +56,34 @@ export function mergeWidgetsWithBeConfigs({
         configByKey.set(`${c.apiId}|${c.widgetType}`, c.config || {});
     }
 
+    // widget.endpoint 가 normalizeUserEndpoint 를 거쳐 full URL 로 저장되는
+    // 케이스가 있어 catalog (relative path) 와 직접 매칭이 실패한다. URL 파싱
+    // 으로 pathname 만 뽑아 다시 시도하는 fallback 추가. (alarmMapping.js 와
+    // 동일한 패턴 — 두 곳에서 같은 endpoint→apiId 풀이가 필요)
+    const resolveApiId = (w) => {
+        if (w?.apiId) return w.apiId;
+        const ep = w?.endpoint;
+        if (!ep) return undefined;
+        let hit = apiIdByEndpoint.get(ep);
+        if (hit) return hit;
+        const stripped = ep.split("?")[0];
+        if (stripped !== ep) {
+            hit = apiIdByEndpoint.get(stripped);
+            if (hit) return hit;
+        }
+        try {
+            const u = new URL(ep, typeof window !== "undefined" ? window.location.origin : undefined);
+            hit = apiIdByEndpoint.get(u.pathname);
+            if (hit) return hit;
+        } catch {
+            /* 잘못된 endpoint — no-op */
+        }
+        return undefined;
+    };
+
     return widgets.map((w) => {
         if (!w || !MERGEABLE_WIDGET_TYPES.has(w.type)) return w;
-        const apiId = w.apiId
-            || apiIdByEndpoint.get(w.endpoint)
-            || apiIdByEndpoint.get((w.endpoint || "").split("?")[0]);
+        const apiId = resolveApiId(w);
         if (!apiId) return w;
         const beCfg = configByKey.get(`${apiId}|${w.type}`);
         if (!beCfg) return w;

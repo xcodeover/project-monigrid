@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { widgetConfigService } from "../services/api";
+import { dataService, widgetConfigService } from "../services/api";
+import { getAllColumns } from "./apiCardHelpers";
 import { IconClose, IconPlus, IconTrash } from "./icons";
 import "./ApiThresholdsEditorModal.css";
 
@@ -38,13 +39,20 @@ function configsEqual(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 
 const EMPTY_THRESHOLDS = [];
 
-const ApiThresholdsEditorModal = ({ open, apiId, apiTitle, onClose, onSaved }) => {
+const ApiThresholdsEditorModal = ({ open, apiId, apiTitle, restApiPath, onClose, onSaved }) => {
     const [serverThresholds, setServerThresholds] = useState(EMPTY_THRESHOLDS);
     const [draft, setDraft] = useState(EMPTY_THRESHOLDS);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
     const [successMsg, setSuccessMsg] = useState(null);
+    // 컬럼 dropdown 옵션 — 데이터 API 의 한 번 sample 호출에서 키만 추출.
+    // restApiPath 가 비어있으면 (예: 신규 row) fetch 생략하고 빈 배열로 둔다.
+    const [columns, setColumns] = useState([]);
+    const [columnsLoading, setColumnsLoading] = useState(false);
+    // 필수값 검증 trigger — 저장 시도 시 column 이 비어 있으면 켜진다.
+    // 사용자가 셀을 채우면 (값이 trim 후 비지 않으면) invalid 시각이 사라짐.
+    const [validationTriggered, setValidationTriggered] = useState(false);
 
     const load = useCallback(async () => {
         if (!apiId) return;
@@ -63,6 +71,7 @@ const ApiThresholdsEditorModal = ({ open, apiId, apiTitle, onClose, onSaved }) =
             }));
             setServerThresholds(normalized);
             setDraft(deepClone(normalized));
+            setValidationTriggered(false);
         } catch (e) {
             setError(e?.response?.data?.message || e?.message || "임계치를 불러올 수 없습니다.");
         } finally {
@@ -74,11 +83,36 @@ const ApiThresholdsEditorModal = ({ open, apiId, apiTitle, onClose, onSaved }) =
         if (open && apiId) load();
     }, [open, apiId, load]);
 
+    // 모달 오픈 시 데이터 API 한 번 sample 호출 → 컬럼 키만 추출. 임계치
+    // 작성 시 사용자가 컬럼명을 외워서 typo 없이 입력할 필요가 없도록.
+    useEffect(() => {
+        if (!open || !apiId || !restApiPath) {
+            setColumns([]);
+            return undefined;
+        }
+        let cancelled = false;
+        setColumnsLoading(true);
+        dataService.getApiData(apiId, restApiPath)
+            .then((data) => {
+                if (cancelled) return;
+                setColumns(getAllColumns(data));
+            })
+            .catch(() => {
+                // 컬럼 로드 실패는 silent — 사용자가 직접 입력으로 fallback 할 수
+                // 있도록 fallback option 을 dropdown 에 함께 노출 (수동 입력).
+                if (!cancelled) setColumns([]);
+            })
+            .finally(() => {
+                if (!cancelled) setColumnsLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [open, apiId, restApiPath]);
+
     const isDirty = useMemo(() => !configsEqual(serverThresholds, draft), [serverThresholds, draft]);
 
     const addRow = () => setDraft((prev) => [
         ...prev,
-        { column: "", operator: ">=", value: "", level: "warn", message: "" },
+        { column: "", operator: "=", value: "", level: "warn", message: "" },
     ]);
     const updateRow = (idx, field, value) => setDraft((prev) =>
         prev.map((t, i) => (i === idx ? { ...t, [field]: value } : t)),
@@ -87,12 +121,16 @@ const ApiThresholdsEditorModal = ({ open, apiId, apiTitle, onClose, onSaved }) =
     const resetDraft = () => setDraft(deepClone(serverThresholds));
 
     const handleSave = async () => {
+        // column 필수값 검증 — 빈 column 이 있으면 trigger ON 으로 셀별 빨간
+        // 테두리 + "Required" 안내 가 나타나고 저장은 abort.
+        const hasEmptyColumn = draft.some((t) => !String(t?.column ?? "").trim());
+        if (hasEmptyColumn) {
+            setValidationTriggered(true);
+            setError("Column 이 비어 있는 임계치가 있습니다. 빨간 셀을 채워 주세요.");
+            return;
+        }
         for (let i = 0; i < draft.length; i += 1) {
             const t = draft[i];
-            if (!t.column?.trim()) {
-                setError(`임계치 #${i + 1}: column 이 비어 있습니다.`);
-                return;
-            }
             if (!t.operator) {
                 setError(`임계치 #${i + 1}: operator 가 비어 있습니다.`);
                 return;
@@ -114,6 +152,7 @@ const ApiThresholdsEditorModal = ({ open, apiId, apiTitle, onClose, onSaved }) =
             });
             setServerThresholds(normalized);
             setDraft(deepClone(normalized));
+            setValidationTriggered(false);
             setSuccessMsg("저장 완료");
             onSaved?.();
         } catch (e) {
@@ -179,6 +218,9 @@ const ApiThresholdsEditorModal = ({ open, apiId, apiTitle, onClose, onSaved }) =
                         <div className="ate-loading">불러오는 중...</div>
                     ) : (
                         <>
+                            {/* sticky 상단 영역 — hint + 추가 버튼 은 스크롤 시에도
+                                계속 보인다. 임계치 행만 .ate-grid-scroll 안에서
+                                세로 스크롤. */}
                             <div className="ate-hint">
                                 BE 가 데이터 API 캐시 갱신 직후 모든 row 에 대해 아래 임계치를 평가합니다.
                                 위반 transition 발생 시 알람 이벤트가 자동 기록됩니다.
@@ -196,72 +238,87 @@ const ApiThresholdsEditorModal = ({ open, apiId, apiTitle, onClose, onSaved }) =
                                 <span className="ate-count">{draft.length} 건</span>
                             </div>
 
-                            {draft.length === 0 ? (
-                                <div className="ate-empty">정의된 임계치가 없습니다.</div>
-                            ) : (
-                                <div className="ate-grid">
-                                    <div className="ate-grid-row ate-grid-head">
-                                        <span>Column</span>
-                                        <span>Operator</span>
-                                        <span>Value</span>
-                                        <span>Level</span>
-                                        <span>Message</span>
-                                        <span></span>
-                                    </div>
-                                    {draft.map((th, idx) => (
-                                        <div key={idx} className="ate-grid-row">
-                                            <input
-                                                type="text"
-                                                value={th.column}
-                                                onChange={(e) => updateRow(idx, "column", e.target.value)}
-                                                placeholder="cpu_pct"
-                                                disabled={saving}
-                                            />
-                                            <select
-                                                value={th.operator}
-                                                onChange={(e) => updateRow(idx, "operator", e.target.value)}
-                                                disabled={saving}
-                                            >
-                                                {OPERATORS.map((op) => (
-                                                    <option key={op.value} value={op.value}>{op.label}</option>
-                                                ))}
-                                            </select>
-                                            <input
-                                                type="text"
-                                                value={th.value}
-                                                onChange={(e) => updateRow(idx, "value", e.target.value)}
-                                                placeholder="80"
-                                                disabled={saving}
-                                            />
-                                            <select
-                                                value={th.level}
-                                                onChange={(e) => updateRow(idx, "level", e.target.value)}
-                                                disabled={saving}
-                                            >
-                                                {LEVELS.map((lv) => (
-                                                    <option key={lv.value} value={lv.value}>{lv.label}</option>
-                                                ))}
-                                            </select>
-                                            <input
-                                                type="text"
-                                                value={th.message}
-                                                onChange={(e) => updateRow(idx, "message", e.target.value)}
-                                                placeholder="(선택) 사람-친화 메시지"
-                                                disabled={saving}
-                                            />
-                                            <button
-                                                type="button"
-                                                className="cfg-remove-btn"
-                                                onClick={() => removeRow(idx)}
-                                                disabled={saving}
-                                                title="삭제"
-                                            >
-                                                <IconTrash size={14} />
-                                            </button>
+                            <div className="ate-grid-scroll">
+                                {draft.length === 0 ? (
+                                    <div className="ate-empty">정의된 임계치가 없습니다.</div>
+                                ) : (
+                                    <div className="ate-grid">
+                                        <div className="ate-grid-row ate-grid-head">
+                                            <span>Column</span>
+                                            <span>Operator</span>
+                                            <span>Value</span>
+                                            <span>Level</span>
+                                            <span>Message</span>
+                                            <span></span>
                                         </div>
-                                    ))}
-                                </div>
-                            )}
+                                        {draft.map((th, idx) => {
+                                            const colInvalid = validationTriggered && !String(th?.column ?? "").trim();
+                                            return (
+                                            <div key={idx} className="ate-grid-row">
+                                                <select
+                                                    value={th.column}
+                                                    onChange={(e) => updateRow(idx, "column", e.target.value)}
+                                                    disabled={saving || columnsLoading}
+                                                    className={colInvalid ? "ate-cell-invalid" : ""}
+                                                    title={columnsLoading ? "컬럼 목록 로드 중..." : ""}
+                                                >
+                                                    <option value="">{colInvalid ? "Required" : "-- 컬럼 선택 --"}</option>
+                                                    {columns.map((col) => (
+                                                        <option key={col} value={col}>{col}</option>
+                                                    ))}
+                                                    {/* 기존 임계치가 현재 API 결과에 없는 컬럼을 가리키는
+                                                        경우 (스키마 변경 등) 그대로 보존되도록 fallback 옵션. */}
+                                                    {th.column && !columns.includes(th.column) && (
+                                                        <option value={th.column}>{th.column} (수동)</option>
+                                                    )}
+                                                </select>
+                                                <select
+                                                    value={th.operator}
+                                                    onChange={(e) => updateRow(idx, "operator", e.target.value)}
+                                                    disabled={saving}
+                                                >
+                                                    {OPERATORS.map((op) => (
+                                                        <option key={op.value} value={op.value}>{op.label}</option>
+                                                    ))}
+                                                </select>
+                                                <input
+                                                    type="text"
+                                                    value={th.value}
+                                                    onChange={(e) => updateRow(idx, "value", e.target.value)}
+                                                    placeholder="value"
+                                                    disabled={saving}
+                                                />
+                                                <select
+                                                    value={th.level}
+                                                    onChange={(e) => updateRow(idx, "level", e.target.value)}
+                                                    disabled={saving}
+                                                >
+                                                    {LEVELS.map((lv) => (
+                                                        <option key={lv.value} value={lv.value}>{lv.label}</option>
+                                                    ))}
+                                                </select>
+                                                <input
+                                                    type="text"
+                                                    value={th.message}
+                                                    onChange={(e) => updateRow(idx, "message", e.target.value)}
+                                                    placeholder="(optional)"
+                                                    disabled={saving}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    className="cfg-remove-btn"
+                                                    onClick={() => removeRow(idx)}
+                                                    disabled={saving}
+                                                    title="삭제"
+                                                >
+                                                    <IconTrash size={14} />
+                                                </button>
+                                            </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
                         </>
                     )}
                 </div>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import {
-    countRowsMatchingCriteria,
+    doesRowMatchCriteria,
+    doesRowMatchThresholds,
     getEnabledCriteriaColumns,
 } from "../utils/helpers";
 import DynamicTable from "./DynamicTable";
@@ -203,13 +204,26 @@ const ApiCard = ({
         [criteriaMap],
     );
 
+    // BE 임계치 (widget_configs.thresholds) 가 단일 출처. 레거시 user-side
+    // criteriaMap 도 정의돼 있으면 합쳐서 카운트 — 둘 중 하나라도 매칭되는 row.
+    const beThresholds = tableSettings?._beThresholds;
     const alertCount = useMemo(() => {
-        if (enabledCriteriaColumns.length === 0 || dataRows.length === 0) {
-            return 0;
+        if (dataRows.length === 0) return 0;
+        const hasCriteria = enabledCriteriaColumns.length > 0;
+        const hasBeThresholds = Array.isArray(beThresholds) && beThresholds.length > 0;
+        if (!hasCriteria && !hasBeThresholds) return 0;
+        let count = 0;
+        for (const row of dataRows) {
+            if (hasCriteria && doesRowMatchCriteria(row, criteriaMap)) {
+                count += 1;
+                continue;
+            }
+            if (hasBeThresholds && doesRowMatchThresholds(row, beThresholds)) {
+                count += 1;
+            }
         }
-
-        return countRowsMatchingCriteria(dataRows, criteriaMap);
-    }, [criteriaMap, dataRows, enabledCriteriaColumns.length]);
+        return count;
+    }, [criteriaMap, dataRows, enabledCriteriaColumns.length, beThresholds]);
 
     useEffect(() => {
         if (alertCount === 0) {
@@ -218,10 +232,11 @@ const ApiCard = ({
     }, [alertCount]);
 
     useEffect(() => {
-        if (enabledCriteriaColumns.length === 0) {
+        const hasBeThresholds = Array.isArray(beThresholds) && beThresholds.length > 0;
+        if (enabledCriteriaColumns.length === 0 && !hasBeThresholds) {
             setShowAlertsOnly(false);
         }
-    }, [enabledCriteriaColumns.length]);
+    }, [enabledCriteriaColumns.length, beThresholds]);
 
     const statusLabel = loading
         ? "loading"
@@ -446,11 +461,12 @@ const ApiCard = ({
                             <span className='status-dot' />
                             {statusText}
                         </span>
-                        {enabledCriteriaColumns.length > 0 && (
+                        {(enabledCriteriaColumns.length > 0
+                            || (Array.isArray(beThresholds) && beThresholds.length > 0)) && (
                             <button
                                 type='button'
                                 className={`alert-pill ${alertCount > 0 ? "has-alert" : "no-alert"}`}
-                                title={`Criteria 조건 충족 row: ${alertCount}`}
+                                title={`알람 임계치 충족 row: ${alertCount}`}
                                 onClick={() => {
                                     if (alertCount > 0) {
                                         setShowAlertsOnly(
@@ -563,6 +579,7 @@ const ApiCard = ({
                     columns={visibleColumns}
                     columnWidths={columnWidths}
                     criteria={criteriaMap}
+                    thresholds={tableSettings?._beThresholds}
                     showAlertsOnly={showAlertsOnly}
                     fontSize={widgetFontSize}
                     loading={loading}

@@ -1,27 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useTimemachine } from "../contexts/TimemachineContext";
 import "./TimemachineControlBar.css";
 
-const dateToInput = (ms) => {
-    if (ms == null) return "";
+const pad = (n) => String(n).padStart(2, "0");
+const formatAt = (ms) => {
+    if (ms == null) return "--";
     const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) return "";
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-const inputToMs = (s) => {
-    if (!s) return null;
-    const d = new Date(s);
-    return Number.isNaN(d.getTime()) ? null : d.getTime();
+    if (Number.isNaN(d.getTime())) return "--";
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 };
 
 export default function TimemachineControlBar() {
     const tm = useTimemachine();
-    const [localInput, setLocalInput] = useState(() => dateToInput(tm.atMs));
-
-    useEffect(() => {
-        setLocalInput(dateToInput(tm.atMs));
-    }, [tm.atMs]);
 
     // Keyboard shortcuts — Space, ArrowLeft/Right, Esc
     useEffect(() => {
@@ -59,11 +49,6 @@ export default function TimemachineControlBar() {
         if (Number.isFinite(v)) tm.setAtMs(v);
     };
 
-    const onInputCommit = () => {
-        const ms = inputToMs(localInput);
-        if (ms != null) tm.setAtMs(ms);
-    };
-
     return (
         <div className="tm-controlbar">
             <button
@@ -75,49 +60,29 @@ export default function TimemachineControlBar() {
                 <span className="tm-cb-mode-dot" aria-hidden />
                 LIVE
             </button>
-            <div className="tm-cb-left">
-                <label className="tm-cb-label">시점</label>
-                <input
-                    type="datetime-local"
-                    value={localInput}
-                    onChange={(e) => setLocalInput(e.target.value)}
-                    onBlur={onInputCommit}
-                    onKeyDown={(e) => e.key === "Enter" && onInputCommit()}
-                    className="tm-cb-datetime"
-                />
-            </div>
-            <div className="tm-cb-playback">
-                <button
-                    type="button"
-                    className="tm-cb-play"
-                    onClick={() => tm.setPlaying(!tm.playing)}
-                    title={tm.playing ? "일시정지 (Space)" : "재생 (Space)"}
-                    aria-label={tm.playing ? "일시정지" : "재생"}
-                >{tm.playing ? "⏸" : "▶"}</button>
-                <select
-                    className="tm-cb-select"
-                    value={tm.speed}
-                    onChange={(e) => tm.setSpeed(Number(e.target.value))}
-                    title="재생 속도"
-                >
-                    <option value={1}>1x</option>
-                    <option value={2}>2x</option>
-                    <option value={5}>5x</option>
-                    <option value={10}>10x</option>
-                </select>
-                <select
-                    className="tm-cb-select"
-                    value={tm.frameSizeMs}
-                    onChange={(e) => tm.setFrameSizeMs(Number(e.target.value))}
-                    title="프레임 간격 (한 tick 당 진행)"
-                >
-                    <option value={5_000}>5s</option>
-                    <option value={10_000}>10s</option>
-                    <option value={30_000}>30s</option>
-                    <option value={60_000}>1m</option>
-                    <option value={600_000}>10m</option>
-                    <option value={1_800_000}>30m</option>
-                </select>
+            <button
+                type="button"
+                className="tm-cb-play"
+                onClick={() => tm.setPlaying(!tm.playing)}
+                title={tm.playing ? "일시정지 (Space)" : "재생 (Space)"}
+                aria-label={tm.playing ? "일시정지" : "재생"}
+            >{tm.playing ? "⏸" : "▶"}</button>
+            <select
+                className="tm-cb-select"
+                value={tm.frameSizeMs}
+                onChange={(e) => tm.setFrameSizeMs(Number(e.target.value))}
+                title="재생 배속 — 1초 real-time 마다 전진할 시간"
+            >
+                <option value={1_000}>1초</option>
+                <option value={5_000}>5초</option>
+                <option value={10_000}>10초</option>
+                <option value={30_000}>30초</option>
+                <option value={60_000}>1분</option>
+                <option value={600_000}>10분</option>
+                <option value={1_800_000}>30분</option>
+            </select>
+            <div className="tm-cb-time-display" title="현재 시점">
+                {formatAt(safeAt)}
             </div>
             <div className="tm-cb-center">
                 <input

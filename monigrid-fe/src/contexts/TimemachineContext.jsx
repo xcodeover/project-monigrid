@@ -19,10 +19,10 @@ export function TimemachineProvider({ children }) {
     // 데이터 API 위젯의 snapshot key 를 정확히 풀기 위해 필요. 60s 주기로 갱신.
     const [endpointCatalog, setEndpointCatalog] = useState([]);
 
-    // Phase 2: playback state
+    // playback state — 1초 real-time tick 마다 frameSizeMs 만큼 전진.
+    // frameSizeMs 는 사용자가 dropdown 으로 선택 (1s 기본 = 실시간, 그 이상은 빨리감기).
     const [playing, setPlaying] = useState(false);
-    const [speed, setSpeed] = useState(1);          // 1 / 2 / 5 / 10
-    const [frameSizeMs, setFrameSizeMs] = useState(30_000); // 30s default
+    const [frameSizeMs, setFrameSizeMs] = useState(1_000);
 
     const debounceRef = useRef(null);
     const abortRef = useRef(null);
@@ -158,7 +158,8 @@ export function TimemachineProvider({ children }) {
         return () => clearTimeout(debounceRef.current);
     }, [enabled, atMs, frameSizeMs, fetchAt, ensurePrefetched]);
 
-    // Phase 2: playback tick — 1초 tick, atMs 를 frameSizeMs * speed 만큼 전진
+    // playback tick — 1초 real-time 마다 atMs 를 frameSizeMs 만큼 전진.
+    // latest 도달하면 자동 stop.
     useEffect(() => {
         if (!enabled || !playing) {
             clearInterval(playTickRef.current);
@@ -166,7 +167,7 @@ export function TimemachineProvider({ children }) {
         }
         playTickRef.current = setInterval(() => {
             setAtMs((cur) => {
-                const next = (cur ?? Date.now()) + frameSizeMs * speed;
+                const next = (cur ?? Date.now()) + frameSizeMs;
                 const latest = stats?.maxTsMs ?? Date.now();
                 if (next >= latest) {
                     setPlaying(false);
@@ -176,12 +177,24 @@ export function TimemachineProvider({ children }) {
             });
         }, 1000);
         return () => clearInterval(playTickRef.current);
-    }, [enabled, playing, frameSizeMs, speed, stats]);
+    }, [enabled, playing, frameSizeMs, stats]);
 
-    const enable = useCallback((initialMs) => {
-        const ms = initialMs ?? Date.now() - 5 * 60 * 1000; // 5분 전 기본
-        setAtMs(ms);
+    const enable = useCallback(async (initialMs) => {
+        // 사용자가 명시한 시점이 있으면 그대로 사용. 아니면 BE 의 timemachine
+        // archive 가 가지고 있는 가장 오래된 데이터 시점을 시작점으로 잡는다.
+        // stats 조회 실패 시 fallback 으로 "5분 전" 사용 (이전 default).
+        const fallback = Date.now() - 5 * 60 * 1000;
+        setAtMs(initialMs ?? fallback);
         setEnabled(true);
+        if (initialMs != null) return;
+        try {
+            const s = await timemachineService.stats();
+            setStats(s);
+            const earliest = s?.minTsMs;
+            if (earliest != null) setAtMs(earliest);
+        } catch {
+            /* fallback 유지 — 에러는 enabled 후 useEffect 가 잡아서 표시 */
+        }
     }, []);
 
     const disable = useCallback(() => {
@@ -199,12 +212,12 @@ export function TimemachineProvider({ children }) {
         earliestMs: stats?.minTsMs ?? null,
         latestMs: stats?.maxTsMs ?? null,
         retentionEnabled: stats?.enabled !== false,
-        playing, speed, frameSizeMs,
-        setAtMs, setPlaying, setSpeed, setFrameSizeMs,
+        playing, frameSizeMs,
+        setAtMs, setPlaying, setFrameSizeMs,
         enable, disable,
         resolveSnapshotKey,
     }), [enabled, atMs, snapshotByKey, loading, error, stats,
-        playing, speed, frameSizeMs, enable, disable, resolveSnapshotKey]);
+        playing, frameSizeMs, enable, disable, resolveSnapshotKey]);
 
     return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

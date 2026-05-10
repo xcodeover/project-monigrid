@@ -76,7 +76,12 @@ export function computeAlarmedWidgets({
         }
     }
 
-    // endpoint REST path → api id (so widget.endpoint resolves cheaply)
+    // endpoint REST path → api id. catalog 의 endpoint 는 항상 BE 의
+    // rest_api_path (예: "/api/status") 인 반면, widget 에 저장된 endpoint 는
+    // DashboardPage 가 normalizeUserEndpoint 를 통과시켜 full URL
+    // (예: "http://host:5000/api/status") 로 변환해 두는 경우가 있다.
+    // 따라서 widget endpoint 를 catalog 키로 풀 때 (a) 원본 그대로, (b) query
+    // 제거 후, (c) URL 파싱으로 pathname 추출 — 세 단계로 fallback 해 매칭한다.
     const apiIdByEndpoint = new Map();
     if (Array.isArray(endpointCatalog)) {
         for (const ep of endpointCatalog) {
@@ -85,6 +90,30 @@ export function computeAlarmedWidgets({
             if (path && id) apiIdByEndpoint.set(path, id);
         }
     }
+
+    const resolveApiId = (widget) => {
+        if (widget?.apiId) return widget.apiId;
+        const ep = widget?.endpoint;
+        if (!ep) return undefined;
+        // 1) catalog 키와 동일 (relative path 케이스)
+        let hit = apiIdByEndpoint.get(ep);
+        if (hit) return hit;
+        // 2) query string strip 후 매칭
+        const stripped = ep.split("?")[0];
+        if (stripped !== ep) {
+            hit = apiIdByEndpoint.get(stripped);
+            if (hit) return hit;
+        }
+        // 3) full URL 로 저장된 widget — URL 파싱으로 pathname 만 사용
+        try {
+            const u = new URL(ep, typeof window !== "undefined" ? window.location.origin : undefined);
+            hit = apiIdByEndpoint.get(u.pathname);
+            if (hit) return hit;
+        } catch {
+            /* parsing 실패 — 외부 host 가 아닌 잘못된 endpoint, no-op */
+        }
+        return undefined;
+    };
 
     for (const w of widgets) {
         if (!w || !w.id) continue;
@@ -106,13 +135,7 @@ export function computeAlarmedWidgets({
         // ── data API widgets (table / line-chart / bar-chart) ────────
         if (DATA_API_WIDGET_TYPES.has(w.type)) {
             if (dataApiAlertSourceIds.size === 0) continue;
-            // Prefer explicit apiId when the widget carries one; otherwise
-            // resolve via the endpoint catalog. New widgets created via the
-            // FE today carry `endpoint`, so the catalog lookup is the
-            // typical path.
-            const apiId = w.apiId
-                || apiIdByEndpoint.get(w.endpoint)
-                || apiIdByEndpoint.get((w.endpoint || "").split("?")[0]);
+            const apiId = resolveApiId(w);
             if (apiId && dataApiAlertSourceIds.has(apiId)) {
                 out.add(widgetId);
             }

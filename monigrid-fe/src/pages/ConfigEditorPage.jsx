@@ -83,8 +83,95 @@ const shiftCollapsedForInsert = (prev, idx) => {
  * 입력(ID/주기/체크박스)은 짧게, 긴 입력(JDBC URL)은 넓게.
  *  ───────────────────────────────────────────────────────────── */
 
-const ConnectionRow = ({ conn, index, onChange, onRemove, onDuplicate }) => {
+/* db_type 별 표준 JDBC driver class / URL 예시. driver class 는 type 변경 시
+   자동으로 채워지며, 사용자가 custom driver 를 직접 입력해 둔 경우 (현재 값이
+   KNOWN_DRIVERS 에 없으면) 덮어쓰지 않는다. URL 은 운영 환경마다 host/port/db
+   가 달라 placeholder 만 type 별로 바꿔 표시. */
+const DB_DEFAULTS = {
+    oracle: {
+        driver: "oracle.jdbc.OracleDriver",
+        urlPlaceholder: "jdbc:oracle:thin:@//localhost:1521/XEPDB1",
+    },
+    mariadb: {
+        driver: "org.mariadb.jdbc.Driver",
+        urlPlaceholder: "jdbc:mariadb://localhost:3306/dbname",
+    },
+    mssql: {
+        driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+        urlPlaceholder: "jdbc:sqlserver://localhost:1433;databaseName=dbname",
+    },
+};
+const KNOWN_DRIVERS = new Set(Object.values(DB_DEFAULTS).map((d) => d.driver));
+
+const ConnectionRow = ({ conn, index, onChange, onRemove, onDuplicate, validationTriggered }) => {
     const update = (field, value) => onChange(index, { ...conn, [field]: value });
+
+    // DB 연결 테스트 결과 — idle / testing / ok / error.
+    // 사용자가 connection 정보 (driver/url/user/pwd) 를 바꾸면 결과는 stale 이라
+    // 자동 idle 로 리셋된다.
+    const [testState, setTestState] = useState({ status: "idle", message: "" });
+    useEffect(() => {
+        setTestState({ status: "idle", message: "" });
+    }, [conn.jdbc_driver_class, conn.jdbc_url, conn.username, conn.password]);
+
+    const handleTest = async () => {
+        setTestState({ status: "testing", message: "테스트 중..." });
+        try {
+            const result = await configService.testConnection({
+                jdbc_driver_class: conn.jdbc_driver_class || "",
+                jdbc_url: conn.jdbc_url || "",
+                username: conn.username || "",
+                password: conn.password || "",
+            });
+            if (result?.success) {
+                setTestState({
+                    status: "ok",
+                    message: result.message || "연결 성공",
+                });
+            } else {
+                setTestState({
+                    status: "error",
+                    message: result?.message || "연결 실패",
+                });
+            }
+        } catch (e) {
+            setTestState({
+                status: "error",
+                message:
+                    e?.response?.data?.message
+                    || e?.message
+                    || "테스트 요청 실패",
+            });
+        }
+    };
+
+    // db_type 변경 시 driver class 도 함께 패치. 단, 현재 값이 사용자 custom
+    // (= 우리가 알고 있는 표준 driver 가 아님) 이면 덮어쓰지 않는다.
+    const onDbTypeChange = (value) => {
+        const def = DB_DEFAULTS[value];
+        const currentDriver = conn.jdbc_driver_class || "";
+        const shouldUpdateDriver = !currentDriver || KNOWN_DRIVERS.has(currentDriver);
+        const patch = { ...conn, db_type: value };
+        if (shouldUpdateDriver && def) patch.jdbc_driver_class = def.driver;
+        onChange(index, patch);
+    };
+
+    const urlPlaceholder = DB_DEFAULTS[conn.db_type]?.urlPlaceholder
+        || "jdbc:oracle:thin:@//localhost:1521/XEPDB1";
+
+    // 기존 (이미 저장된) 연결의 ID 는 immutable. ID 를 rename 하면 이를
+    // 참조하는 모든 API.connection_id 가 dangling 이 되어 BE config validation 이
+    // 깨진다 (config.py 의 "references unknown connection" 에러). 신규 row 와
+    // duplicate 로 들어온 row 만 ID 편집 가능.
+    const isExisting = !conn._isNew;
+
+    // 셀별 빈값 검증 — trigger 켜진 상태에서 trim 후 빈 필드면 빨간 테두리 +
+    // placeholder "Required". 사용자가 채우면 자동으로 정상 시각으로 복귀.
+    const isInvalid = (field) =>
+        validationTriggered && !String(conn?.[field] ?? "").trim();
+    const cellClass = (field) => (isInvalid(field) ? "cfg-cell-invalid" : "");
+    const reqOr = (field, fallback) => (isInvalid(field) ? "Required" : fallback);
+
     return (
         <div className="cfg-grid-row">
             <span className="cfg-grid-no">{index + 1}</span>
@@ -92,11 +179,15 @@ const ConnectionRow = ({ conn, index, onChange, onRemove, onDuplicate }) => {
                 type="text"
                 value={conn.id || ""}
                 onChange={(e) => update("id", e.target.value)}
-                placeholder="oracle-main"
+                placeholder={reqOr("id", "oracle-main")}
+                className={cellClass("id")}
+                disabled={isExisting}
+                title={isExisting ? "Connection ID 는 생성 후에는 변경할 수 없습니다 (참조하는 API 가 있어 immutable)" : ""}
             />
             <select
                 value={conn.db_type || ""}
-                onChange={(e) => update("db_type", e.target.value)}
+                onChange={(e) => onDbTypeChange(e.target.value)}
+                className={cellClass("db_type")}
             >
                 <option value="oracle">Oracle</option>
                 <option value="mariadb">MariaDB</option>
@@ -106,24 +197,50 @@ const ConnectionRow = ({ conn, index, onChange, onRemove, onDuplicate }) => {
                 type="text"
                 value={conn.jdbc_driver_class || ""}
                 onChange={(e) => update("jdbc_driver_class", e.target.value)}
-                placeholder="oracle.jdbc.OracleDriver"
+                placeholder={reqOr("jdbc_driver_class", "oracle.jdbc.OracleDriver")}
+                className={cellClass("jdbc_driver_class")}
             />
             <input
                 type="text"
                 value={conn.jdbc_url || ""}
                 onChange={(e) => update("jdbc_url", e.target.value)}
-                placeholder="jdbc:oracle:thin:@//localhost:1521/XEPDB1"
+                placeholder={reqOr("jdbc_url", urlPlaceholder)}
+                className={cellClass("jdbc_url")}
             />
             <input
                 type="text"
                 value={conn.username || ""}
                 onChange={(e) => update("username", e.target.value)}
-                placeholder="user"
+                placeholder={reqOr("username", "user")}
+                className={cellClass("username")}
             />
             <PasswordInput
                 value={conn.password || ""}
                 onChange={(e) => update("password", e.target.value)}
+                placeholder={reqOr("password", "")}
+                className={cellClass("password")}
             />
+            <div className="cfg-grid-test">
+                <button
+                    type="button"
+                    className="cfg-test-btn"
+                    onClick={handleTest}
+                    disabled={testState.status === "testing"}
+                    title="현재 입력값으로 DB 연결을 시도합니다 (저장 없이 즉시 테스트)"
+                >
+                    {testState.status === "testing" ? "..." : "Test"}
+                </button>
+                {testState.status !== "idle" && (
+                    <span
+                        className={`cfg-test-status cfg-test-status-${testState.status}`}
+                        title={testState.message}
+                    >
+                        {testState.status === "ok" && "✓"}
+                        {testState.status === "error" && "✗"}
+                        {testState.status === "testing" && "…"}
+                    </span>
+                )}
+            </div>
             <div className="cfg-grid-actions">
                 <button
                     type="button"
@@ -146,7 +263,7 @@ const ConnectionRow = ({ conn, index, onChange, onRemove, onDuplicate }) => {
     );
 };
 
-const ConnectionsGrid = ({ connections, onChange, onRemove, onDuplicate }) => (
+const ConnectionsGrid = ({ connections, onChange, onRemove, onDuplicate, validationTriggered }) => (
     <div className="cfg-grid cfg-grid-connections" role="grid">
         <div className="cfg-grid-row cfg-grid-head" role="row">
             <span>No</span>
@@ -156,6 +273,7 @@ const ConnectionsGrid = ({ connections, onChange, onRemove, onDuplicate }) => (
             <span>JDBC URL</span>
             <span>사용자</span>
             <span>비밀번호</span>
+            <span>연결 테스트</span>
             <span></span>
         </div>
         {connections.map((conn, i) => (
@@ -166,6 +284,7 @@ const ConnectionsGrid = ({ connections, onChange, onRemove, onDuplicate }) => (
                 onChange={onChange}
                 onRemove={onRemove}
                 onDuplicate={onDuplicate}
+                validationTriggered={validationTriggered}
             />
         ))}
     </div>
@@ -506,6 +625,10 @@ export default function ConfigEditorPage() {
     // 모두 선언된 뒤에 위치해야 한다 (TDZ 회피). 이곳에는 ref 만 미리 두고
     // 실제 useCallback 은 아래 apiList 정의 후 부분에서 만든다.
     const loadConfigRef = useRef();
+    // 직전 로드 시점의 (server / auth / logging / connections / globals / sql_validation)
+    // JSON snapshot. 탭 이동 시 일반 편집 영역 (apiList / monitor 외) 의
+    // dirty 판정 기준이 된다 — JSON.stringify(현재) !== ref 면 미저장 변경 있음.
+    const lastLoadedSnapshotRef = useRef(null);
 
     const handleEditSql = useCallback((api) => {
         if (!api?.id) return;
@@ -518,7 +641,12 @@ export default function ConfigEditorPage() {
     }, []);
     const handleEditThresholds = useCallback((api) => {
         if (!api?.id) return;
-        setThresholdsEditorApi({ apiId: api.id, title: api.title || api.id });
+        setThresholdsEditorApi({
+            apiId: api.id,
+            title: api.title || api.id,
+            // 임계치 모달이 컬럼 dropdown 채우기 위해 sample 호출에 사용.
+            restApiPath: api.rest_api_path || "",
+        });
     }, []);
     const handleCloseThresholds = useCallback(() => setThresholdsEditorApi(null), []);
     const handleThresholdsSaved = useCallback(() => {
@@ -582,6 +710,10 @@ export default function ConfigEditorPage() {
 
     const [jsonMode, setJsonMode] = useState(false);
     const [rawJson, setRawJson] = useState("");
+    // DB 연결 탭 필수값 검증 trigger — 저장 시도 후 빈 셀이 있으면 켜져
+    // 셀별 빨간 테두리 + "Required" placeholder 가 표시된다. 사용자가
+    // 셀을 채우면 (값이 trim 후 비지 않으면) 자동으로 invalid 시각이 사라짐.
+    const [connectionsValidationTriggered, setConnectionsValidationTriggered] = useState(false);
 
     // Monitor 탭 dirty 신호 (children → parent aggregation)
     const [monitorDirtyMap, setMonitorDirtyMap] = useState({});
@@ -639,9 +771,35 @@ export default function ConfigEditorPage() {
         reloadWidgetConfigs();
     }, [apiList.isDirty, apiList.dirtyCount.total, reloadWidgetConfigs]);
 
-    // 페이지 전체 dirty
-    const isPageDirty = apiList.isDirty || monitorTotalDirty > 0;
-    const pageDirtyCount = apiList.dirtyCount.total + monitorTotalDirty;
+    // 일반 영역 (server / auth / logging / connections / globals / sql_validation)
+    // 의 dirty 판정 — 마지막 로드된 snapshot 과 현재 state 의 JSON 비교.
+    // connections 의 _isNew 같은 FE-only 플래그는 strip 후 비교한다.
+    const generalDirty = useMemo(() => {
+        const ref = lastLoadedSnapshotRef.current;
+        if (!ref) return false;
+        const cur = JSON.stringify({
+            server,
+            auth,
+            logging,
+            connections: connections.map(({ _isNew: _n, ...rest }) => rest),
+            globalJdbcJars,
+            sqlValidation,
+        });
+        return cur !== ref;
+    }, [server, auth, logging, connections, globalJdbcJars, sqlValidation]);
+
+    // 사용자가 폐기 confirm 을 수락한 직후 ~ loadConfig 완료 까지의 transition
+    // 윈도우. 이 동안엔 isPageDirty 를 강제로 false 처리해 (a) 다음 탭 클릭에서
+    // 확인 모달이 또 뜨는 것 방지, (b) 페이지 이탈 가드도 발동 안 함. loadConfig
+    // 완료 시점에 .finally() 로 false 로 리셋.
+    const [discarding, setDiscarding] = useState(false);
+
+    // 페이지 전체 dirty — apiList / monitor / 일반 영역 합산. discarding 중엔 무시.
+    const isPageDirty = !discarding
+        && (apiList.isDirty || monitorTotalDirty > 0 || generalDirty);
+    const pageDirtyCount = discarding
+        ? 0
+        : apiList.dirtyCount.total + monitorTotalDirty + (generalDirty ? 1 : 0);
 
     // 닫기 가드 — 페이지 이탈 시 navigate
     const closeToDashboard = useCallback(() => {
@@ -677,6 +835,16 @@ export default function ConfigEditorPage() {
             setGlobalJdbcJars(data.global_jdbc_jars || "");
             setSqlValidation(data.sql_validation || {});
             setRawJson(JSON.stringify(data, null, 2));
+            // 일반 영역 dirty 판정용 snapshot — connections 는 _isNew 등 FE-only
+            // 플래그가 없는 raw API 응답 그대로 저장 (비교 시 FE 쪽도 _isNew strip).
+            lastLoadedSnapshotRef.current = JSON.stringify({
+                server: data.server || {},
+                auth: data.auth || {},
+                logging: data.logging || {},
+                connections: Array.isArray(data.connections) ? data.connections : [],
+                globalJdbcJars: data.global_jdbc_jars || "",
+                sqlValidation: data.sql_validation || {},
+            });
         } catch (e) {
             setError(e?.response?.data?.message || e?.message || "설정을 불러오지 못했습니다.");
         } finally {
@@ -688,6 +856,10 @@ export default function ConfigEditorPage() {
     // handleRefreshApis 가 ref 로 latest loadConfig 를 참조하도록 매 렌더 갱신.
     useEffect(() => { loadConfigRef.current = loadConfig; });
 
+    // 최초 1회 로드 — verified 가 true 가 되면 즉시 DB 에서 가져온다.
+    // 탭 이동 시의 재조회는 handleTabChange / handleWidgetSubTabChange 에서
+    // 명시적으로 처리해 (useEffect-기반 간접 발화는 closure timing 이슈로
+    // 누락된 적이 있어) onClick 에서 직접 호출하는 방식이 신뢰성 있다.
     useEffect(() => {
         if (verified) loadConfig();
     }, [verified, loadConfig]);
@@ -714,18 +886,85 @@ export default function ConfigEditorPage() {
 
     const buildConfigObject = () => {
         if (jsonMode) return JSON.parse(rawJson);
+        // _isNew 플래그는 FE-only state — BE/store 는 모르는 필드라 strip.
+        const cleanConnections = connections.map(({ _isNew: _n, ...rest }) => rest);
         return {
             server,
             auth,
             logging,
             global_jdbc_jars: globalJdbcJars,
             sql_validation: sqlValidation,
-            connections,
+            connections: cleanConnections,
             apis: buildApisForSave(),
         };
     };
 
+    /* ── 탭 이동 핸들러 ──────────────────────────────────────
+     * 모든 탭 클릭은 이 핸들러를 통해 (a) 미저장 변경 confirm, (b) 활성탭
+     * 갱신, (c) DB 재조회 를 단일 흐름에서 처리한다. useEffect 기반 자동
+     * reload 는 closure / batched-state-update 타이밍 문제로 누락되는 경우가
+     * 있어 onClick 에서 명시적으로 loadConfig 를 호출. */
+    const confirmDiscardIfDirty = () => {
+        if (!isPageDirty) return true;
+        return window.confirm(
+            `미저장 변경이 ${pageDirtyCount}건 있습니다.\n` +
+            `폐기하고 다른 탭으로 이동할까요?\n` +
+            `(이동 시 현재 편집 내용이 사라집니다.)`,
+        );
+    };
+
+    // 탭 전환 시 dirty 가 잔존하지 않도록 명시적 reset 묶음. confirm 수락
+    // 직후 호출 — discarding flag ON / monitorDirtyMap clear / loadConfig 후
+    // discarding OFF. 이렇게 해야 transition 중 발생하는 다음 클릭에서 stale
+    // dirty 로 confirm 이 또 뜨는 일이 없다.
+    const beginDiscardTransition = () => {
+        setDiscarding(true);
+        // MonitorTargetsTab 은 unmount 시 onDirtyChange(false, 0) 콜백을
+        // 호출하지 않아 dirty 신호가 parent 에 남는 leak 가능. 명시적으로 clear.
+        setMonitorDirtyMap({});
+        setConnectionsValidationTriggered(false);
+    };
+
+    const handleTabChange = (newTab) => {
+        if (newTab === activeTab) return;
+        if (!confirmDiscardIfDirty()) return;
+        beginDiscardTransition();
+        setActiveTab(newTab);
+        loadConfig().finally(() => setDiscarding(false));
+    };
+
+    const handleWidgetSubTabChange = (newSubTab) => {
+        if (newSubTab === activeWidgetSubTab) return;
+        if (!confirmDiscardIfDirty()) return;
+        beginDiscardTransition();
+        setActiveWidgetSubTab(newSubTab);
+        // 위젯 sub-tab (apis / *Targets) 도 일반 영역과 위젯 그룹 데이터를
+        // 다시 가져온다. MonitorTargetsTab 은 conditional render 라 sub-tab
+        // 변경 시 unmount → mount 되어 자체 로직으로 fresh fetch 하지만,
+        // apis 탭은 페이지 state 를 쓰므로 loadConfig 가 필요.
+        loadConfig().finally(() => setDiscarding(false));
+    };
+
     const handleSave = async () => {
+        // DB 연결 필수값 검증 — id / db_type / driver / url / username / password.
+        // jsonMode 에서는 raw JSON 을 직접 파싱하므로 이 검증은 건너뛴다.
+        const REQUIRED_CONN_FIELDS = ["id", "db_type", "jdbc_driver_class", "jdbc_url", "username", "password"];
+        if (!jsonMode) {
+            const hasEmpty = connections.some((c) =>
+                REQUIRED_CONN_FIELDS.some((f) => !String(c?.[f] ?? "").trim()),
+            );
+            if (hasEmpty) {
+                setConnectionsValidationTriggered(true);
+                setActiveTab("connections");
+                setError("DB 연결의 필수 항목이 비어 있습니다. 빨간 셀을 채워 주세요.");
+                setTimeout(() => {
+                    const el = document.querySelector(".cfg-grid-connections .cfg-cell-invalid");
+                    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+                }, 0);
+                return;
+            }
+        }
+
         if (apiList.isDirty && !apiList.isValid) {
             // 데이터 API 탭은 위젯별 설정 그룹의 sub-tab — 두 state 모두 전환해야 한다.
             // 과거에는 setActiveTab("apis") 만 호출해서 top-level 탭이 알 수 없는
@@ -751,8 +990,12 @@ export default function ConfigEditorPage() {
             setSuccessMsg(
                 `저장 완료! API ${result.endpointCount ?? "?"}개, Connection ${result.connectionCount ?? "?"}개 로드됨.`,
             );
-            setRawJson(JSON.stringify(configObj, null, 2));
-            apiList.reset(configObj.apis || []);
+            // 저장 직후 BE 에서 다시 읽어 화면 반영. apiList.reset / connections
+            // 의 _isNew 클리어 / rawJson 갱신 등은 모두 loadConfig 안에서
+            // 처리되어 (a) audit 컬럼 (updated_at / updated_by) 즉시 반영,
+            // (b) BE-side 정규화/기본값 적용 결과가 그대로 화면에 보임.
+            await loadConfig();
+            setConnectionsValidationTriggered(false);
         } catch (e) {
             if (e instanceof SyntaxError) setError("JSON 형식이 올바르지 않습니다.");
             else setError(e?.response?.data?.message || e?.message || "저장 실패");
@@ -821,10 +1064,13 @@ export default function ConfigEditorPage() {
         });
     };
 
+    // _isNew 플래그는 ID 편집 허용 여부를 결정한다 (기존 row 에서 ID rename 시
+    // 이를 참조하는 API.connection_id 가 dangling reference 가 되어 BE validation 이
+    // 깨지므로 immutable 하게 강제). 저장 시 buildConfigObject 에서 strip.
     const handleConnectionAdd = () =>
         setConnections((prev) => [
             ...prev,
-            { id: "", db_type: "oracle", jdbc_driver_class: "oracle.jdbc.OracleDriver", jdbc_url: "", username: "", password: "" },
+            { id: "", db_type: "oracle", jdbc_driver_class: "oracle.jdbc.OracleDriver", jdbc_url: "", username: "", password: "", _isNew: true },
         ]);
 
     const handleConnectionDuplicate = (idx) => {
@@ -832,7 +1078,7 @@ export default function ConfigEditorPage() {
             const src = prev[idx];
             if (!src) return prev;
             const existingIds = new Set(prev.map((c) => c.id).filter(Boolean));
-            const dup = { ...src, id: nextAvailable(src.id, existingIds) };
+            const dup = { ...src, id: nextAvailable(src.id, existingIds), _isNew: true };
             return insertAfter(prev, idx, dup);
         });
         setCollapsedConns((prev) => shiftCollapsedForInsert(prev, idx));
@@ -950,7 +1196,7 @@ export default function ConfigEditorPage() {
                         key={tab.key}
                         type="button"
                         className={`cfg-tab ${activeTab === tab.key ? "active" : ""}`}
-                        onClick={() => setActiveTab(tab.key)}
+                        onClick={() => handleTabChange(tab.key)}
                         disabled={jsonMode}
                     >
                         {tab.label}
@@ -973,7 +1219,7 @@ export default function ConfigEditorPage() {
                             key={tab.key}
                             type="button"
                             className={`cfg-tab ${activeWidgetSubTab === tab.key ? "active" : ""}`}
-                            onClick={() => setActiveWidgetSubTab(tab.key)}
+                            onClick={() => handleWidgetSubTabChange(tab.key)}
                         >
                             {tab.label}
                         </button>
@@ -988,10 +1234,16 @@ export default function ConfigEditorPage() {
                 ) : jsonMode ? (
                     <div className="cfgpage-pane">
                         <div className="cfgpage-pane-body cfgpage-pane-body-padded">
+                            {/* JSON 모드는 view-only — 편집은 일반 탭에서만 가능. raw JSON
+                                직접 편집을 허용하면 schema 검증을 우회한 invalid 설정이
+                                저장돼 BE reload 가 깨지는 사고가 잦아 read-only 로 고정. */}
+                            <p className="cfg-raw-json-hint">
+                                JSON 모드는 view-only 입니다. 편집은 일반 탭에서 진행해 주세요.
+                            </p>
                             <textarea
                                 className="cfg-raw-json"
                                 value={rawJson}
-                                onChange={(e) => setRawJson(e.target.value)}
+                                readOnly
                                 spellCheck={false}
                             />
                         </div>
@@ -1122,6 +1374,7 @@ export default function ConfigEditorPage() {
                                             onChange={handleConnectionChange}
                                             onRemove={handleConnectionRemove}
                                             onDuplicate={handleConnectionDuplicate}
+                                            validationTriggered={connectionsValidationTriggered}
                                         />
                                     )}
                                 </div>
@@ -1231,6 +1484,7 @@ export default function ConfigEditorPage() {
                         open={!!thresholdsEditorApi}
                         apiId={thresholdsEditorApi.apiId}
                         apiTitle={thresholdsEditorApi.title}
+                        restApiPath={thresholdsEditorApi.restApiPath}
                         onClose={handleCloseThresholds}
                         onSaved={handleThresholdsSaved}
                     />

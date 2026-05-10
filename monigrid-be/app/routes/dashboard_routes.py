@@ -231,6 +231,92 @@ def register(app, backend, limiter) -> None:
         status_code = 207 if partial_result["errors"] else 200
         return jsonify(body), status_code
 
+    @app.route("/dashboard/connections/test", methods=["POST"])
+    @require_auth
+    @require_admin
+    def test_connection():
+        """One-shot DB connection test for the ConfigEditorPage's connection
+        rows. Body: {jdbc_driver_class, jdbc_url, username, password}.
+
+        Uses the union of currently-loaded JARs from all configured
+        connections — that's enough classpath to load any known driver
+        regardless of which connection the user is editing. Opens a real
+        JDBC connection, closes it immediately, and returns a structured
+        result. Failure cases (driver not found, auth error, network) all
+        come back as 200 with success=false so the FE can display the
+        message inline without treating it as an HTTP error.
+        """
+        import jaydebeapi
+
+        from app.db import ensure_jvm_started
+
+        body = request.get_json(silent=True) or {}
+        driver_class = str(body.get("jdbc_driver_class") or "").strip()
+        jdbc_url = str(body.get("jdbc_url") or "").strip()
+        if not driver_class or not jdbc_url:
+            return jsonify({
+                "success": False,
+                "message": "jdbc_driver_class / jdbc_url 은 필수입니다.",
+            }), 400
+
+        username = str(body.get("username") or "")
+        password = str(body.get("password") or "")
+        driver_args = [username, password] if (username or password) else []
+
+        # 현재 로딩된 모든 connection 의 JAR union — 어떤 driver class 를
+        # 테스트하든 classpath 에 들어 있을 가능성을 최대화. dict.fromkeys 로
+        # 순서 보존 + dedupe. 추가로 알려진 jar 들의 부모 디렉토리(drivers/)
+        # 의 *.jar 까지 포함해 미등록 db_type 도 테스트 가능하게.
+        # 주의: JVM 은 이미 시작되어 classpath 변경 불가하지만, jaydebeapi 의
+        # jars 인자는 startup 시점의 classpath 와 일치해야 ClassLoader 가
+        # 해당 driver 를 찾을 수 있다 (service.py 의 startup 도 동일 스캔).
+        import glob as _glob
+        import os as _os
+        all_jars = list(dict.fromkeys(
+            jar
+            for cc in backend.config.connections.values()
+            for jar in cc.jdbc_jars
+        ))
+        candidate_dirs = {_os.path.dirname(j) for j in all_jars if j}
+        for d in candidate_dirs:
+            for jar_path in _glob.glob(_os.path.join(d, "*.jar")):
+                if jar_path not in all_jars:
+                    all_jars.append(jar_path)
+
+        client_ip = get_client_ip()
+        try:
+            ensure_jvm_started()
+            conn = jaydebeapi.connect(
+                driver_class, jdbc_url, driver_args, all_jars,
+            )
+        except Exception as exc:
+            # Driver/JAR/credential/network 등 모든 실패는 message 로 흘려준다.
+            # 운영자가 입력값을 고치는 데 쓰일 수 있도록 원본 메시지 그대로
+            # (단, 길이 제한). DB 비밀번호가 응답에 포함되는 일은 없다.
+            backend.logger.info(
+                "Connection test failed driverClass=%s jdbcUrl=%s clientIp=%s error=%s",
+                driver_class, jdbc_url, client_ip, exc,
+            )
+            return jsonify({
+                "success": False,
+                "message": str(exc)[:1000],
+            }), 200
+
+        try:
+            conn.close()
+        except Exception:
+            # close 실패는 success 판정에 영향 주지 않음 — 어차피 connect 는 성공.
+            pass
+
+        backend.logger.info(
+            "Connection test ok driverClass=%s jdbcUrl=%s clientIp=%s",
+            driver_class, jdbc_url, client_ip,
+        )
+        return jsonify({
+            "success": True,
+            "message": "연결 성공",
+        }), 200
+
     @app.route("/dashboard/reload-config", methods=["POST"])
     @require_auth
     @require_admin

@@ -483,6 +483,15 @@ export const configService = {
         const response = await apiClient.post("/dashboard/reload-config");
         return response.data;
     },
+    /** Admin: one-shot DB connection test. Body: {jdbc_driver_class, jdbc_url,
+     *  username, password}. Returns {success, message}. */
+    testConnection: async (body) => {
+        const response = await apiClient.post(
+            "/dashboard/connections/test",
+            body,
+        );
+        return response.data;
+    },
 };
 
 // ── Monitor targets & snapshots (BE-centralized collection) ──────────────────

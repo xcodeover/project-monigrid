@@ -325,6 +325,87 @@ export const countRowsMatchingCriteria = (rows = [], criteriaMap = {}) => {
 };
 
 /**
+ * BE 임계치 (widget_configs.thresholds) 와 동일한 의미의 셀 단위 evaluator.
+ * BE 의 _row_matches_threshold (alert_evaluator.py) 와 동일한 contract:
+ *   - 숫자 비교 연산자(>, >=, <, <=) 는 양쪽 모두 float 캐스팅 성공 시에만 비교.
+ *     실패 시 false.
+ *   - = / == / eq : 숫자 캐스팅이 둘 다 성공하면 숫자 비교, 아니면 문자열 비교.
+ *   - != / <> / ne : 위와 동일하되 부정.
+ *   - contains : str(value) in str(cell).
+ *
+ * 알람 발화 owner 는 BE 이지만, 셀 색칠 같은 시각화는 FE 가 widget_configs 의
+ * 임계치 정의를 받아 화면 상의 row 에 적용해야 한다 (BE 알람 이벤트가 per-cell
+ * 이 아니라 per-(api,column) 단위라 cell 매핑 시 같은 로직을 다시 돌릴 필요).
+ */
+export const evaluateThreshold = (threshold, cellValue) => {
+    if (!threshold) return false;
+    if (cellValue === null || cellValue === undefined) return false;
+    const op = String(threshold.operator ?? "").trim();
+    const tv = threshold.value;
+    if (op === "" || tv === undefined || tv === null || tv === "") return false;
+
+    const numericOps = new Set([">", ">=", "<", "<="]);
+    const eqOps = new Set(["=", "==", "eq"]);
+    const neOps = new Set(["!=", "<>", "ne"]);
+
+    if (numericOps.has(op)) {
+        const c = Number(cellValue);
+        const t = Number(tv);
+        if (Number.isNaN(c) || Number.isNaN(t)) return false;
+        if (op === ">") return c > t;
+        if (op === ">=") return c >= t;
+        if (op === "<") return c < t;
+        if (op === "<=") return c <= t;
+    }
+    if (eqOps.has(op)) {
+        const c = Number(cellValue);
+        const t = Number(tv);
+        if (!Number.isNaN(c) && !Number.isNaN(t)) return c === t;
+        return String(cellValue) === String(tv);
+    }
+    if (neOps.has(op)) {
+        const c = Number(cellValue);
+        const t = Number(tv);
+        if (!Number.isNaN(c) && !Number.isNaN(t)) return c !== t;
+        return String(cellValue) !== String(tv);
+    }
+    if (op === "contains") {
+        return String(cellValue).includes(String(tv));
+    }
+    return false;
+};
+
+/**
+ * row 안에 thresholds 중 하나라도 매칭되는 셀이 있으면 true.
+ * ALERT pill 카운트 / "alerts only" 필터 등에서 사용.
+ */
+export const doesRowMatchThresholds = (row, thresholds) => {
+    if (!Array.isArray(thresholds) || thresholds.length === 0) return false;
+    if (row == null || typeof row !== "object") return false;
+    return thresholds.some((th) =>
+        th && evaluateThreshold(th, row[th.column]),
+    );
+};
+
+/**
+ * 주어진 (column, cellValue) 가 thresholds 중 어떤 level 에 해당하는지 반환.
+ * "critical" > "warn" — critical 매칭이 하나라도 있으면 critical 로 즉시 결정.
+ * 매칭이 없으면 null.
+ */
+export const getCellThresholdLevel = (column, cellValue, thresholds) => {
+    if (!Array.isArray(thresholds) || thresholds.length === 0) return null;
+    let best = null;
+    for (const th of thresholds) {
+        if (!th || th.column !== column) continue;
+        if (!evaluateThreshold(th, cellValue)) continue;
+        const level = String(th.level || "warn").toLowerCase();
+        if (level === "critical") return "critical";
+        if (level === "warn") best = "warn";
+    }
+    return best;
+};
+
+/**
  * 페이지네이션
  * @param {Array} array - 배열
  * @param {number} pageNumber - 페이지 번호 (1부터 시작)
