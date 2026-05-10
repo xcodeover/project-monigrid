@@ -15,6 +15,7 @@ import {
     titleService,
     widgetConfigService,
 } from "../services/dashboardService";
+import { IconHistory } from "../components/icons.jsx";
 import { API_BASE_URL as BUILDTIME_API_BASE_URL } from "../services/http";
 import { useDashboardStore } from "../store/dashboardStore";
 import { useAuthStore } from "../store/authStore";
@@ -893,7 +894,7 @@ const DashboardPageInner = () => {
                         title="타임머신 모드 진입"
                         aria-label="타임머신 모드 진입"
                     >
-                        <span aria-hidden>⏪</span>
+                        <IconHistory size={14} />
                     </button>
                 )}
                 <span className='footer-copyright'>
