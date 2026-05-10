@@ -4,6 +4,7 @@ import { DEFAULT_CRITERIA, OS_OPTIONS } from "./serverResourceHelpers";
 import PasswordInput from "./PasswordInput";
 import { useDirtyList } from "../hooks/useDirtyList";
 import { useConfigFooterRegister, useConfigFooterUnregister } from "../pages/configFooterContext";
+import AuditCells from "./AuditCells.jsx";
 import {
     IconCopy,
     IconPlus,
@@ -106,13 +107,6 @@ const RowActions = ({ isDeleted, isNew, onDuplicate, onRemove, onRestore }) => (
     </div>
 );
 
-const RowFlags = ({ isNew, isDeleted }) => (
-    <span className="cfg-grid-flags">
-        {isNew && <span className="cfg-card-badge">신규</span>}
-        {isDeleted && <span className="cfg-card-badge" style={{ color: "#ff6b6b" }}>삭제 예정</span>}
-    </span>
-);
-
 const ServerResourceRow = ({
     target, index, onChange, onRemove, onRestore, onDuplicate,
     rowStateClass, validationError,
@@ -144,7 +138,7 @@ const ServerResourceRow = ({
 
     return (
         <>
-            <div className={rowClasses} data-row-id={target.id}>
+            <div className={rowClasses} data-row-id={target._key || target.id}>
                 <span className="cfg-grid-no">{index + 1}</span>
                 <label className="cfg-toggle" title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}>
                     <input
@@ -235,7 +229,7 @@ const ServerResourceRow = ({
                     title="Disk 알람 임계치 (%)"
                     disabled={isDeleted}
                 />
-                <RowFlags isNew={target._isNew} isDeleted={isDeleted} />
+                <AuditCells updatedAt={target.updated_at} updatedBy={target.updated_by} />
                 <RowActions
                     isDeleted={isDeleted}
                     isNew={target._isNew}
@@ -267,7 +261,7 @@ const NetworkRow = ({
 
     return (
         <>
-            <div className={rowClasses} data-row-id={target.id}>
+            <div className={rowClasses} data-row-id={target._key || target.id}>
                 <span className="cfg-grid-no">{index + 1}</span>
                 <label className="cfg-toggle" title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}>
                     <input
@@ -333,7 +327,7 @@ const NetworkRow = ({
                     title="Timeout (초)"
                     disabled={isDeleted}
                 />
-                <RowFlags isNew={target._isNew} isDeleted={isDeleted} />
+                <AuditCells updatedAt={target.updated_at} updatedBy={target.updated_by} />
                 <RowActions
                     isDeleted={isDeleted}
                     isNew={target._isNew}
@@ -364,7 +358,7 @@ const HttpStatusRow = ({
 
     return (
         <>
-            <div className={rowClasses} data-row-id={target.id}>
+            <div className={rowClasses} data-row-id={target._key || target.id}>
                 <span className="cfg-grid-no">{index + 1}</span>
                 <label className="cfg-toggle" title={target.enabled ? "수집 켜짐" : "수집 꺼짐"}>
                     <input
@@ -414,7 +408,7 @@ const HttpStatusRow = ({
                     title="Timeout (초)"
                     disabled={isDeleted}
                 />
-                <RowFlags isNew={target._isNew} isDeleted={isDeleted} />
+                <AuditCells updatedAt={target.updated_at} updatedBy={target.updated_by} />
                 <RowActions
                     isDeleted={isDeleted}
                     isNew={target._isNew}
@@ -444,7 +438,8 @@ const TargetGridHeader = ({ targetType }) => {
                 <span>CPU%</span>
                 <span>Mem%</span>
                 <span>Disk%</span>
-                <span>상태</span>
+                <span>수정 시각</span>
+                <span>편집자</span>
                 <span></span>
             </div>
         );
@@ -461,7 +456,8 @@ const TargetGridHeader = ({ targetType }) => {
                 <span>호스트</span>
                 <span>Port</span>
                 <span>Timeout</span>
-                <span>상태</span>
+                <span>수정 시각</span>
+                <span>편집자</span>
                 <span></span>
             </div>
         );
@@ -476,7 +472,8 @@ const TargetGridHeader = ({ targetType }) => {
             <span>주기(초)</span>
             <span>URL</span>
             <span>Timeout</span>
-            <span>상태</span>
+            <span>수정 시각</span>
+            <span>편집자</span>
             <span></span>
         </div>
     );
@@ -504,6 +501,10 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
 
     // ── validator ──────────────────────────────────────────────────────────────
     const validator = useCallback((item) => {
+        const id = (item.id || "").trim();
+        if (!id) return "ID는 필수입니다.";
+        if (!/^[a-zA-Z0-9_-]+$/.test(id)) return "ID는 영문자·숫자·밑줄·하이픈만 허용됩니다.";
+        if (id.length > 128) return "ID는 128자 이하여야 합니다.";
         const label = (item.label || "").trim();
         if (!label) return "이름(label)은 필수입니다.";
         if (label.length > 64) return "이름은 64자 이하여야 합니다.";
@@ -599,7 +600,8 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
     };
 
     const handleDuplicate = (id) => {
-        const src = list.visibleItems.find((t) => t.id === id);
+        // id 는 stable _key 라 lookup 도 _key 로 일치시킨다.
+        const src = list.visibleItems.find((t) => t._key === id);
         if (!src) return;
         const dupId = list.addItem({
             ...buildEmpty(targetType),
@@ -737,7 +739,9 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
                 <div className={`cfg-grid cfg-grid-monitor cfg-grid-monitor-${targetType}`} role="grid">
                     <TargetGridHeader targetType={targetType} />
                     {targets.map((t, idx) => {
-                        const state = list.rowState(t.id);
+                        // useDirtyList 가 노출하는 stable map key. id 필드 편집과 무관.
+                        const stableKey = t._key;
+                        const state = list.rowState(stableKey);
                         const rowStateClass =
                             state === "new"
                                 ? "row-state-new"
@@ -746,16 +750,16 @@ const MonitorTargetsTab = ({ targetType, onDirtyChange }) => {
                                   : state === "deleted"
                                     ? "row-state-deleted"
                                     : "";
-                        const valError = list.validationError(t.id);
+                        const valError = list.validationError(stableKey);
                         return (
                             <TargetGridRow
-                                key={t.id}
+                                key={stableKey}
                                 target={t}
                                 index={idx}
-                                onChange={(next) => handleChange(t.id, next)}
-                                onRemove={() => handleRemove(t.id)}
-                                onRestore={() => handleRestore(t.id)}
-                                onDuplicate={() => handleDuplicate(t.id)}
+                                onChange={(next) => handleChange(stableKey, next)}
+                                onRemove={() => handleRemove(stableKey)}
+                                onRestore={() => handleRestore(stableKey)}
+                                onDuplicate={() => handleDuplicate(stableKey)}
                                 rowStateClass={rowStateClass}
                                 validationError={valError}
                             />

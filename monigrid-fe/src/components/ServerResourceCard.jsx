@@ -7,6 +7,7 @@ import {
 } from "react";
 import apiClient from "../services/http.js";
 import { monitorService } from "../services/dashboardService.js";
+import { useTimemachine } from "../contexts/TimemachineContext";
 import { useDocumentVisible } from "../hooks/useDocumentVisible.js";
 import {
     MAX_REFRESH_INTERVAL_SEC,
@@ -150,6 +151,10 @@ const ServerResourceCard = ({
     onWidgetConfigChange,
     onAlarmChange,
 }) => {
+    /* ── timemachine mode check ────────────────────────────────────── */
+    const tm = useTimemachine();
+    const tmActive = tm.enabled;
+
     /* ── mode: snapshot (BE-centralized) vs legacy (credentials in widget) */
     const targetIds = useMemo(
         () => (Array.isArray(widgetConfig?.targetIds) ? widgetConfig.targetIds : []),
@@ -402,14 +407,61 @@ const ServerResourceCard = ({
     }, [fetchAllServers]);
 
     useEffect(() => {
-        if (hasItems) fetchAllServers();
-    }, [pollKey, hasItems, fetchAllServers]);
+        if (tmActive || !hasItems) return;
+        fetchAllServers();
+    }, [pollKey, hasItems, fetchAllServers, tmActive]);
+
+    // 타임머신 모드: live polling 대신 tm.snapshotByKey 에서 monitor:server_resource
+    // 의 snapshot 을 각 targetId 별로 읽어 serverStates 에 반영. snapshot.payload =
+    // {label, data, errorMessage, spec, ...} (BE _tm_archive_monitor 와 동일 shape).
+    useEffect(() => {
+        if (!tmActive || !hasItems || !useSnapshot) return;
+        const items = [];
+        for (const tid of targetIds) {
+            const snap = tm.snapshotByKey.get(`monitor:server_resource|${tid}`);
+            if (!snap) {
+                items.push({ targetId: tid, data: null, errorMessage: "이 시점에 데이터 없음" });
+                continue;
+            }
+            const p = snap.payload || {};
+            items.push({
+                targetId: tid,
+                label: p.label,
+                spec: p.spec,
+                data: p.data,
+                errorMessage: p.errorMessage,
+                updatedAt: snap.tsMs ? new Date(snap.tsMs).toISOString() : null,
+            });
+        }
+        const derivedServers = items.map((it) => ({
+            id: it.targetId,
+            label: it.label || it.spec?.host || it.targetId,
+            osType: it.spec?.os_type || it.spec?.osType || "linux-generic",
+            host: it.spec?.host || "",
+            criteria: { ...DEFAULT_CRITERIA, ...(it.spec?.criteria || {}) },
+        }));
+        setSnapshotServers(derivedServers);
+        setServerStates(() => {
+            const next = {};
+            items.forEach((it) => {
+                next[it.targetId] = {
+                    data: it.data,
+                    error: it.errorMessage || null,
+                    loading: false,
+                    lastUpdated: it.updatedAt ? new Date(it.updatedAt) : null,
+                    lastAttempted: new Date(),
+                };
+            });
+            return next;
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tmActive, tm.snapshotByKey, useSnapshot, hasItems, targetIds]);
 
     // Exponential-backoff polling via recursive setTimeout.
     // On consecutive failures: base → 2× → 4× → 8× → 16× → 32× (cap at 5 min).
     // Returns to base interval on first successful response.
     useEffect(() => {
-        if (!hasItems) return undefined;
+        if (tmActive || !hasItems) return undefined;
         const baseSec = refreshIntervalSec ?? 30;
         // Reset failure count when poll key or interval changes so stale backoff
         // state from a previous configuration does not carry over.
@@ -427,7 +479,7 @@ const ServerResourceCard = ({
         };
         schedule(baseSec * 1000);
         return () => clearTimeout(timerRef.current);
-    }, [pollKey, hasItems, refreshIntervalSec, fetchAllServersWithTracking]);
+    }, [pollKey, hasItems, refreshIntervalSec, fetchAllServersWithTracking, tmActive]);
 
     // Visibility-flip: immediately refetch when the user returns to the tab so
     // the widget shows fresh data rather than stale results from before hiding.
@@ -562,11 +614,16 @@ const ServerResourceCard = ({
         });
     }, [servers, serverStates, isDead, refreshIntervalSec]);
 
-    // Report alarm status to parent
+    // Report alarm status to parent. 타임머신 모드에서는 과거 시점 데이터에
+    // 대해 라이브 알람을 발화하지 않는다 (알람 이력은 별도 페이지에서 확인).
     useEffect(() => {
         if (!onAlarmChange) return;
+        if (tmActive) {
+            onAlarmChange("live");
+            return;
+        }
         onAlarmChange(totalViolations > 0 || isDead ? "dead" : "live");
-    }, [totalViolations, isDead, onAlarmChange]);
+    }, [totalViolations, isDead, onAlarmChange, tmActive]);
 
     /* ── 갱신 주기마다 목록 스크롤 최상단으로 ─────────────────────── */
     const scrollRef = useRef(null);
@@ -642,6 +699,7 @@ const ServerResourceCard = ({
                                 type='button'
                                 className='compact-icon-btn'
                                 onClick={openSettings}
+                               
                                 title='설정'
                             >
                                 <IconSettings size={14} />
@@ -650,6 +708,7 @@ const ServerResourceCard = ({
                                 type='button'
                                 className='compact-icon-btn remove'
                                 onClick={onRemove}
+                               
                                 title='제거'
                             >
                                 <IconClose size={14} />

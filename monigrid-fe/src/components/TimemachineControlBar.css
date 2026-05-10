@@ -1,0 +1,186 @@
+.tm-controlbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    display: grid;
+    /* LIVE-복귀 버튼 / 시점 입력 / 재생 컨트롤 / 스크러버 / TimeMachine 인디케이터 */
+    grid-template-columns: auto auto auto 1fr auto;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    background: var(--bg-elevated, #1a2332);
+    border-top: 1px solid rgba(168, 85, 247, 0.35);
+    box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.35);
+    color: var(--text-primary, #e2e8f0);
+}
+.tm-cb-left, .tm-cb-center, .tm-cb-right, .tm-cb-playback {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.tm-cb-label {
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+.tm-cb-datetime {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: var(--text-primary, #e2e8f0);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+}
+.tm-cb-scrubber {
+    width: 100%;
+    height: 6px;
+    accent-color: #a855f7;
+}
+/* center 영역(스크러버)이 점프 버튼이 사라진 만큼 더 넓게 차지하도록 minmax 부여 */
+.tm-cb-center { min-width: 320px; }
+.tm-cb-step {
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: var(--text-secondary, #94a3b8);
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+}
+.tm-cb-step:hover {
+    background: rgba(168, 85, 247, 0.12);
+    border-color: rgba(168, 85, 247, 0.35);
+    color: #ddd6fe;
+}
+/* LIVE 복귀 버튼 (좌측 끝). 빨간 dot + LIVE 라벨, 일반 버튼 hover. */
+.tm-cb-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.tm-cb-mode-btn-live {
+    background: rgba(239, 68, 68, 0.10);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+}
+.tm-cb-mode-btn-live:hover {
+    background: rgba(239, 68, 68, 0.20);
+    border-color: rgba(239, 68, 68, 0.6);
+    color: #fecaca;
+}
+.tm-cb-mode-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+/* TimeMachine 인디케이터 (우측 끝). 라벤더 dot + 라벨 천천히 blink — 비디오
+   플레이어의 LIVE 표시 mental model 의 타임머신 버전. */
+.tm-cb-tm-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    background: rgba(168, 85, 247, 0.14);
+    border: 1px solid rgba(168, 85, 247, 0.45);
+    color: #ddd6fe;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    animation: tm-mode-blink 1.6s ease-in-out infinite;
+}
+.tm-cb-tm-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #a855f7;
+    box-shadow: 0 0 8px rgba(168, 85, 247, 0.8);
+}
+@keyframes tm-mode-blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.45; }
+}
+
+/* 라이브 모드 entry 버튼 — 좌측 하단에 떠 있다. TM 모드에선 ControlBar 의
+   LIVE 복귀 버튼이 같은 위치를 차지한다. */
+.tm-entry-btn {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    z-index: 40;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    background: rgba(168, 85, 247, 0.14);
+    border: 1px solid rgba(168, 85, 247, 0.45);
+    color: #ddd6fe;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.15s;
+}
+.tm-entry-btn:hover {
+    background: rgba(168, 85, 247, 0.24);
+    border-color: rgba(168, 85, 247, 0.65);
+    color: #fff;
+    transform: translateY(-1px);
+}
+.tm-entry-icon { font-size: 13px; }
+
+/* Phase 2: playback controls */
+.tm-cb-playback {
+    gap: 6px;
+}
+.tm-cb-play {
+    width: 30px;
+    height: 30px;
+    background: rgba(168, 85, 247, 0.18);
+    border: 1px solid rgba(168, 85, 247, 0.5);
+    color: #ddd6fe;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+.tm-cb-play:hover {
+    background: rgba(168, 85, 247, 0.28);
+    color: #fff;
+}
+.tm-cb-select {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: var(--text-secondary, #94a3b8);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+.tm-cb-select:focus {
+    outline: none;
+    border-color: rgba(168, 85, 247, 0.5);
+}

@@ -111,6 +111,7 @@ const LineChartCard = ({
                                     event.stopPropagation();
                                     setShowSettings((v) => !v);
                                 }}
+                               
                                 title='설정'
                             >
                                 <IconSettings size={14} />
@@ -122,6 +123,7 @@ const LineChartCard = ({
                                     event.stopPropagation();
                                     onRemove();
                                 }}
+                               
                                 title='삭제'
                             >
                                 <IconClose size={14} />

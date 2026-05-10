@@ -63,12 +63,6 @@
     border-left: 4px solid #ffd43b;
 }
 
-.row-state-modified::after {
-    content: "●";
-    color: #ffd43b;
-    margin-left: 8px;
-}
-
 .row-state-deleted {
     opacity: 0.5;
     text-decoration: line-through;

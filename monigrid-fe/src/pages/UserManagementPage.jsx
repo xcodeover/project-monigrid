@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { adminUserService } from "../services/dashboardService";
 import PasswordInput from "../components/PasswordInput";
-import { IconClose, IconPlus, IconRefresh } from "../components/icons";
+import { IconArrowLeft, IconClose, IconLogout, IconPlus, IconRefresh } from "../components/icons";
 import "./UserManagementPage.css";
 
 /**
@@ -167,23 +167,47 @@ export default function UserManagementPage() {
     return (
         <div className="user-mgmt-page">
             <header className="um-header">
+                <button
+                    type="button"
+                    className="um-back-btn"
+                    onClick={() => navigate("/dashboard")}
+                    aria-label="뒤로가기"
+                    title="대시보드로 돌아가기"
+                >
+                    <IconArrowLeft size={16} />
+                </button>
                 <div className="um-title-wrap">
                     <h1>👥 사용자 계정 관리</h1>
                     <p>시스템에 로그인할 수 있는 계정을 관리합니다. 비밀번호는 bcrypt로 저장됩니다.</p>
                 </div>
                 <div className="um-actions">
                     <span className="um-user">@{user?.username || "admin"}</span>
-                    <button type="button" className="um-btn" onClick={() => navigate("/dashboard")}>
-                        대시보드
+                    <button
+                        type="button"
+                        className="um-icon-btn-action um-icon-btn-primary"
+                        onClick={handleNew}
+                        title="새 사용자"
+                        aria-label="새 사용자"
+                    >
+                        <IconPlus size={16} />
                     </button>
-                    <button type="button" className="um-btn um-btn-primary um-btn-icon-text" onClick={handleNew}>
-                        <IconPlus size={14} /> 새 사용자
+                    <button
+                        type="button"
+                        className="um-icon-btn-action"
+                        onClick={loadUsers}
+                        title="새로고침"
+                        aria-label="새로고침"
+                    >
+                        <IconRefresh size={16} />
                     </button>
-                    <button type="button" className="um-btn um-btn-icon-text" onClick={loadUsers}>
-                        <IconRefresh size={14} /> 새로고침
-                    </button>
-                    <button type="button" className="um-btn" onClick={handleLogout}>
-                        로그아웃
+                    <button
+                        type="button"
+                        className="um-icon-btn-action"
+                        onClick={handleLogout}
+                        title="로그아웃"
+                        aria-label="로그아웃"
+                    >
+                        <IconLogout size={16} />
                     </button>
                 </div>
             </header>

@@ -238,7 +238,7 @@
     margin: 0;
 }
 
-.cfgpage-pane-monitor .cfg-section > :not(.cfg-section-header):not(.dirty-list-summary) {
+.cfgpage-pane-monitor .cfg-section > :not(.cfg-section-header):not(.dirty-list-summary):not(.cfg-grid) {
     margin-left: 24px;
     margin-right: 24px;
 }
@@ -349,17 +349,28 @@
 /* ── DB 연결 / 데이터 API grid 편집 (요구 1) ───────────────── */
 
 /* pane-body 가 grid 모드일 때는 가로 스크롤 활성화. 좁은 입력은 짧게,
-   긴 입력(JDBC URL)은 넓게 명시한 grid-template-columns 가 가독성을 유지한다. */
+   긴 입력(JDBC URL)은 넓게 명시한 grid-template-columns 가 가독성을 유지한다.
+   padding-top 을 제거해 sticky 헤더가 pane-header 바로 아래에 flush 로 붙고
+   horizontal padding 도 grid 자체가 흡수하도록 0 으로 둔다 (헤더 full-bleed). */
 .cfgpage-pane-body-grid {
     overflow-x: auto;
+    padding: 0;
 }
 
 .cfg-grid {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    /* sticky 헤더 직후 첫 row 와 시각적으로 붙여 floating 느낌을 없앤다.
+       데이터 row 사이 간격은 .cfg-grid-row + .cfg-grid-row 룰로 보강. */
+    gap: 0;
+    /* pane-body 의 horizontal padding 을 grid 가 직접 흡수해 헤더가 full-bleed 가 되도록 한다. */
+    padding: 0 24px;
     /* min-width 로 좁은 화면에서도 컬럼이 짜부라지지 않게 — 가로 스크롤 발생 */
     min-width: 0;
+}
+
+.cfg-grid > .cfg-grid-row + .cfg-grid-row {
+    margin-top: 4px;
 }
 
 .cfg-grid-row {
@@ -415,15 +426,35 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    background: rgba(11, 18, 32, 0.96);
-    backdrop-filter: blur(2px);
+    /* full-opaque + flat — backdrop-filter 와 border-radius 를 빼서 floating 느낌 제거 */
+    background: var(--bg-elevated, #1a2332);
+    border-radius: 0;
+    padding: 8px 6px;
     font-size: 11px;
     font-weight: 600;
     color: var(--text-tertiary, #64748b);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    padding: 6px 6px;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.20);
+}
+
+/* DB 연결 / 데이터 API 탭(=cfgpage-pane-body-grid) 만 헤더가 pane-body
+   horizontal padding 까지 확장해 edge-to-edge full-bleed. 모니터 탭은
+   자체 padding 구조를 가지므로 이 룰이 적용되지 않는다. */
+.cfgpage-pane-body-grid .cfg-grid > .cfg-grid-head {
+    margin: 0 -24px;
+    padding-left: 24px;
+    padding-right: 24px;
+}
+
+/* 모니터 탭(서버 리소스 / 네트워크 / API 상태) 그리드도 동일하게 헤더를
+   section 좌우 끝까지 full-bleed. .cfg-grid 는 sibling-margin 룰의
+   :not(...) 에 추가되어 가로 margin 이 0 이 되고, 그리드 자체의
+   `padding: 0 4px` 를 헤더가 negative margin 으로 흡수해 끝까지 확장. */
+.cfgpage-pane-monitor .cfg-section > .cfg-grid > .cfg-grid-head {
+    margin: 0 -4px;
+    padding-left: 24px;
+    padding-right: 24px;
 }
 
 .cfg-grid-actions {
@@ -490,20 +521,20 @@
 
 /* row state visual cues — grid version */
 .cfg-grid-row.row-state-new {
-    background: rgba(34, 197, 94, 0.06);
-    box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.25);
+    background: rgba(34, 197, 94, 0.10);
+    box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.30);
 }
 .cfg-grid-row.row-state-modified {
-    background: rgba(25, 160, 255, 0.05);
-    box-shadow: inset 0 0 0 1px rgba(25, 160, 255, 0.18);
+    background: rgba(250, 204, 21, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.35);
 }
 .cfg-grid-row.row-state-deleted {
     background: rgba(239, 68, 68, 0.05);
-    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.20);
 }
 .cfg-grid-row.row-state-invalid {
     background: rgba(239, 68, 68, 0.08);
-    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.4);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.40);
 }
 
 /* No 셀 (1, 2, 3, ...) — read-only span. 가운데 정렬 + 작은 글씨. */
@@ -540,7 +571,7 @@
 }
 
 /* server_resource: No / 활성 / ID / 이름 / 주기 / 호스트 / OS / Username
-   / Password / CPU% / Mem% / Disk% / 상태 / 액션 — 14 컬럼 */
+   / Password / CPU% / Mem% / Disk% / 수정 시각 / 편집자 / 액션 — 15 컬럼 */
 .cfg-grid-monitor-server_resource .cfg-grid-row {
     grid-template-columns:
         46px                   /* No */
@@ -555,13 +586,14 @@
         70px                   /* CPU% */
         70px                   /* Mem% */
         70px                   /* Disk% */
-        minmax(80px, 100px)    /* 상태 */
+        140px                  /* 수정 시각 */
+        110px                  /* 편집자 */
         76px;                  /* 액션 */
-    min-width: 1480px;
+    min-width: 1620px;
 }
 
 /* network: No / 활성 / ID / 이름 / 주기 / 유형 / 호스트 / Port / Timeout
-   / 상태 / 액션 — 11 컬럼 */
+   / 수정 시각 / 편집자 / 액션 — 12 컬럼 */
 .cfg-grid-monitor-network .cfg-grid-row {
     grid-template-columns:
         46px                   /* No */
@@ -573,13 +605,14 @@
         minmax(140px, 1.2fr)   /* 호스트 */
         90px                   /* Port */
         90px                   /* Timeout */
-        minmax(80px, 100px)    /* 상태 */
+        140px                  /* 수정 시각 */
+        110px                  /* 편집자 */
         76px;                  /* 액션 */
-    min-width: 1180px;
+    min-width: 1320px;
 }
 
-/* http_status: No / 활성 / ID / 이름 / 주기 / URL / Timeout / 상태 / 액션
-   — 9 컬럼. URL 이 가장 넓다. */
+/* http_status: No / 활성 / ID / 이름 / 주기 / URL / Timeout / 수정 시각
+   / 편집자 / 액션 — 10 컬럼. URL 이 가장 넓다. */
 .cfg-grid-monitor-http_status .cfg-grid-row {
     grid-template-columns:
         46px                   /* No */
@@ -589,26 +622,60 @@
         80px                   /* 주기 */
         minmax(220px, 2fr)     /* URL */
         90px                   /* Timeout */
-        minmax(80px, 100px)    /* 상태 */
+        140px                  /* 수정 시각 */
+        110px                  /* 편집자 */
         76px;                  /* 액션 */
-    min-width: 1100px;
+    min-width: 1240px;
 }
 
-/* 데이터 API grid 컬럼 폭 (총 9 컬럼):
-   No / 활성 toggle / API ID / Path / Connection / SQL ID / 주기 / 상태 / 액션
-   액션 컬럼은 SQL 편집(✏️) + 임계치 편집(⚠) + 복제 + 삭제 4개를 수용하므로
-   넉넉히 잡는다. */
+/* 데이터 API grid 컬럼 폭 (총 10 컬럼):
+   No / 활성 / API ID / REST API Path / Connection / SQL ID / 주기 / 수정 시각 / 편집자 / 액션 */
 .cfg-grid-apis .cfg-grid-row {
     grid-template-columns:
-        46px                  /* No */
-        46px                  /* enabled toggle */
-        minmax(120px, 1.2fr)  /* API ID */
-        minmax(180px, 2fr)    /* REST path — 가장 넓게 */
-        minmax(140px, 1.2fr)  /* connection */
-        minmax(120px, 1fr)    /* sql_id */
-        80px                  /* interval */
-        minmax(110px, 0.9fr)  /* flags (신규/삭제 예정/임계치 배지) */
-        140px;                /* actions (SQL + 임계치 + 복제 + 삭제) */
+        46px                 /* No */
+        46px                 /* 활성 */
+        minmax(120px, 1fr)   /* API ID */
+        minmax(180px, 1.4fr) /* REST API Path */
+        minmax(120px, 1fr)   /* Connection */
+        minmax(120px, 1fr)   /* SQL ID */
+        80px                 /* 주기 */
+        140px                /* 수정 시각 */
+        110px                /* 편집자 */
+        96px;                /* 액션 (✏ + ⚠ + 복제 + 삭제) */
+}
+
+/* Audit cells — 수정 시각 / 편집자 */
+.cfg-grid-audit-time,
+.cfg-grid-audit-user {
+    color: var(--text-secondary, #475569);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    align-self: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 임계치 N 배지 — ⚠ 버튼 우상단 absolute */
+.cfg-thresholds-btn {
+    position: relative;
+}
+.cfg-thresholds-count-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 7px;
+    background: #f59e0b;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85);
+    pointer-events: none;
 }
 
 /* ── WidgetConfigsTab (위젯별 설정 탭) ─────────────────────── */
@@ -785,7 +852,7 @@
         padding-right: 14px;
     }
 
-    .cfgpage-pane-monitor .cfg-section > :not(.cfg-section-header):not(.dirty-list-summary) {
+    .cfgpage-pane-monitor .cfg-section > :not(.cfg-section-header):not(.dirty-list-summary):not(.cfg-grid) {
         margin-left: 14px;
         margin-right: 14px;
     }

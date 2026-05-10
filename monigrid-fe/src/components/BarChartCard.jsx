@@ -123,6 +123,7 @@ const BarChartCard = ({
                                     event.stopPropagation();
                                     setShowSettings((v) => !v);
                                 }}
+                               
                                 title='설정'
                             >
                                 <IconSettings size={14} />
@@ -134,6 +135,7 @@ const BarChartCard = ({
                                     event.stopPropagation();
                                     onRemove();
                                 }}
+                               
                                 title='삭제'
                             >
                                 <IconClose size={14} />

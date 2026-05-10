@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
-from app.auth import caller_is_admin, require_admin, require_auth
+from app.auth import caller_is_admin, current_username, require_admin, require_auth
 from app.monitor_collector_manager import snapshot_to_dict
 from app.utils import get_client_ip
 
@@ -34,8 +34,9 @@ def register(app, backend, limiter) -> None:
     @require_admin
     def create_monitor_target():
         body = request.get_json(silent=True) or {}
+        username = current_username()
         try:
-            stored = backend.upsert_monitor_target(body)
+            stored = backend.upsert_monitor_target(body, actor=username)
         except ValueError as err:
             return jsonify({"message": str(err)}), 400
         except Exception as err:
@@ -55,8 +56,9 @@ def register(app, backend, limiter) -> None:
     def update_monitor_target(target_id: str):
         body = request.get_json(silent=True) or {}
         body["id"] = target_id
+        username = current_username()
         try:
-            stored = backend.upsert_monitor_target(body)
+            stored = backend.upsert_monitor_target(body, actor=username)
         except ValueError as err:
             return jsonify({"message": str(err)}), 400
         except Exception as err:
@@ -157,6 +159,7 @@ def register(app, backend, limiter) -> None:
     @require_admin
     def apply_monitor_targets_batch_route():
         body = request.get_json(silent=True) or {}
+        username = current_username()
         creates = body.get("creates") or []
         updates = body.get("updates") or []
         deletes = body.get("deletes") or []
@@ -178,7 +181,7 @@ def register(app, backend, limiter) -> None:
 
         try:
             result = backend.apply_monitor_targets_batch(
-                creates=creates, updates=updates, deletes=deletes,
+                creates=creates, updates=updates, deletes=deletes, actor=username,
             )
         except Exception as exc:
             backend.logger.exception(

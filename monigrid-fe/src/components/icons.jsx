@@ -169,6 +169,16 @@ export const IconArrowLeft = (p) => (
     </Svg>
 );
 
+/* "clock-rewind" style — 타임머신 모드 진입 토글에 사용. 시계 외형 +
+   반시계 방향 화살표 + 시침/분침 라인. */
+export const IconHistory = (p) => (
+    <Svg {...p}>
+        <path d="M3 12a9 9 0 1 0 3-7L3 8" />
+        <polyline points="3 3 3 8 8 8" />
+        <polyline points="12 7 12 12 16 14" />
+    </Svg>
+);
+
 export const IconChevronDown = (p) => (
     <Svg {...p}>
         <polyline points="6 9 12 15 18 9" />

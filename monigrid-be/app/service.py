@@ -347,12 +347,12 @@ class MonitoringBackend:
     def get_monitor_target(self, target_id: str) -> dict[str, Any] | None:
         return self.settings_store.get_monitor_target(target_id)
 
-    def upsert_monitor_target(self, item: dict[str, Any]) -> dict[str, Any]:
+    def upsert_monitor_target(self, item: dict[str, Any], *, actor: str = "") -> dict[str, Any]:
         """Phase 5B: single-item upsert routes to partial path. Existing
         FE callers receive the same shape (stored target dict).
         """
         with self._reload_lock:
-            stored = self.settings_store.upsert_monitor_target(item)
+            stored = self.settings_store.upsert_monitor_target(item, actor=actor)
             # If id was already known → update_target_in_place; else add_target.
             if stored["id"] in self._monitor_collector._targets_by_id:
                 self._monitor_collector.update_target_in_place(
@@ -392,6 +392,7 @@ class MonitoringBackend:
         creates: list[dict],
         updates: list[dict],
         deletes: list[str],
+        actor: str = "",
     ) -> dict:
         """Apply monitor target changes atomically (Phase 5B: partial reload).
 
@@ -405,7 +406,7 @@ class MonitoringBackend:
         """
         with self._reload_lock:
             store_result = self.settings_store.apply_monitor_targets_batch(
-                creates=creates, updates=updates, deletes=deletes,
+                creates=creates, updates=updates, deletes=deletes, actor=actor,
             )
             if not store_result.get("success"):
                 # settings DB transaction rolled back — nothing to apply.
@@ -458,7 +459,9 @@ class MonitoringBackend:
 
             return {**store_result, "applied": applied, "errors": errors}
 
-    def apply_partial_config_reload(self, new_config_dict: dict) -> dict:
+    def apply_partial_config_reload(
+        self, new_config_dict: dict, *, actor: str = "",
+    ) -> dict:
         """Phase 5B entry point: settings DB write + diff + per-resource apply.
 
         Returns: {applied: [...], skipped: [...], errors: [...]}.
@@ -468,7 +471,7 @@ class MonitoringBackend:
 
         with self._reload_lock:
             old_config = self.config
-            self.settings_store.save_config_dict(new_config_dict)
+            self.settings_store.save_config_dict(new_config_dict, actor=actor)
             new_config = self._config_reloader()
             diff = compute_config_diff(old_config, new_config)
             result = self._apply_config_diff(diff, new_config)

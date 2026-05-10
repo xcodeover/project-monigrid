@@ -485,6 +485,7 @@ const ApiCard = ({
                                     event.stopPropagation();
                                     setShowSettings(true);
                                 }}
+                               
                                 title='설정'
                                 aria-label='설정'
                             >
@@ -497,6 +498,7 @@ const ApiCard = ({
                                     event.stopPropagation();
                                     onRemove();
                                 }}
+                               
                                 title='제거'
                                 aria-label='제거'
                             >

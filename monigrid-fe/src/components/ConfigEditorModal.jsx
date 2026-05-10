@@ -210,7 +210,7 @@ function buildEndpointValidator(allItems) {
     return (item) => {
         const id = (item.id || "").trim();
         if (!id) return "API ID는 필수입니다.";
-        if (!/^[a-zA-Z0-9_]+$/.test(id)) return "API ID는 영문자·숫자·밑줄만 허용됩니다.";
+        if (!/^[a-zA-Z0-9_-]+$/.test(id)) return "API ID는 영문자·숫자·밑줄·하이픈만 허용됩니다.";
 
         // duplicate check (ignore the item's own entry)
         const dupCount = allItems.filter(

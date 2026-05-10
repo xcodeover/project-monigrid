@@ -24,6 +24,7 @@ import {
 // 무겁다 — ConfigEditorPage 진입 직후가 아니라 row 의 버튼을 누른 시점에만 로드.
 const SqlEditorModal = lazy(() => import("../components/SqlEditorModal"));
 const ApiThresholdsEditorModal = lazy(() => import("../components/ApiThresholdsEditorModal"));
+import AuditCells from "../components/AuditCells.jsx";
 import "../components/ConfigEditorModal.css";
 import "./ConfigEditorPage.css";
 
@@ -197,7 +198,7 @@ const ApiRow = ({
 
     return (
         <>
-            <div className={rowClasses} data-row-id={api.id}>
+            <div className={rowClasses} data-row-id={api._key || api.id}>
                 <span className="cfg-grid-no">{index + 1}</span>
                 <label className="cfg-toggle" title={api.enabled ? "활성" : "비활성"}>
                     <input
@@ -247,18 +248,7 @@ const ApiRow = ({
                     max="3600"
                     disabled={isDeleted}
                 />
-                <span className="cfg-grid-flags">
-                    {api._isNew && <span className="cfg-card-badge">신규</span>}
-                    {isDeleted && <span className="cfg-card-badge" style={{ color: "#ff6b6b" }}>삭제 예정</span>}
-                    {!api._isNew && thresholdsCount > 0 && (
-                        <span
-                            className="cfg-card-badge cfg-thresholds-badge"
-                            title={`${thresholdsCount}개의 임계치가 정의됨`}
-                        >
-                            임계치 {thresholdsCount}
-                        </span>
-                    )}
-                </span>
+                <AuditCells updatedAt={api.updated_at} updatedBy={api.updated_by} />
                 <div className="cfg-grid-actions">
                     {/* SQL 편집 (요구 ②): row 의 sqlId 로 SQL 편집기 모달 진입 */}
                     {!isDeleted && (
@@ -276,12 +266,24 @@ const ApiRow = ({
                     {!isDeleted && (
                         <button
                             type="button"
-                            className="cfg-row-action-btn"
+                            className="cfg-row-action-btn cfg-thresholds-btn"
                             onClick={() => onEditThresholds?.(api)}
                             disabled={!isPersisted}
-                            title={isPersisted ? "알람 임계치 편집" : "신규 행은 저장 후 임계치 편집 가능"}
+                            title={
+                                isPersisted
+                                    ? (thresholdsCount > 0 ? `알람 임계치 편집 (${thresholdsCount}개 정의됨)` : "알람 임계치 편집")
+                                    : "신규 행은 저장 후 임계치 편집 가능"
+                            }
                         >
                             <span aria-hidden style={{ fontSize: 12, fontWeight: 700 }}>⚠</span>
+                            {!api._isNew && thresholdsCount > 0 && (
+                                <span
+                                    className="cfg-thresholds-count-badge"
+                                    aria-label={`임계치 ${thresholdsCount}개`}
+                                >
+                                    {thresholdsCount}
+                                </span>
+                            )}
                         </button>
                     )}
                     {!isDeleted && (
@@ -343,32 +345,38 @@ const ApisGrid = ({
             <span>Connection</span>
             <span>SQL ID</span>
             <span>주기(초)</span>
-            <span>상태</span>
+            <span>수정 시각</span>
+            <span>편집자</span>
             <span></span>
         </div>
         {items.map((api, idx) => {
-            const state = apiList.rowState(api.id);
+            // useDirtyList 의 stable map key. 사용자가 API ID 필드를 편집해도
+            // _key 는 변하지 않으므로 React 가 input 을 remount 하지 않는다.
+            const stableKey = api._key;
+            const state = apiList.rowState(stableKey);
             const rowStateClass =
                 state === "new" ? "row-state-new"
                 : state === "modified" ? "row-state-modified"
                 : state === "deleted" ? "row-state-deleted"
                 : "";
-            const valError = apiList.validationError(api.id);
+            const valError = apiList.validationError(stableKey);
+            // 임계치 카운트는 저장된 row(=api.id 가 안정한 경우) 에서만 의미가
+            // 있으므로 그대로 api.id 로 lookup.
             const tCount = thresholdsCountByApiId
                 ? (thresholdsCountByApiId[api.id] || 0)
                 : 0;
             return (
                 <ApiRow
-                    key={api.id}
+                    key={stableKey}
                     api={api}
                     index={idx}
                     rowStateClass={rowStateClass}
                     validationError={valError}
                     connectionIds={connectionIds}
-                    onUpdate={(next) => onUpdate(api.id, next)}
-                    onRemove={() => onRemove(api.id)}
-                    onRestore={() => onRestore(api.id)}
-                    onDuplicate={() => onDuplicate(api.id)}
+                    onUpdate={(next) => onUpdate(stableKey, next)}
+                    onRemove={() => onRemove(stableKey)}
+                    onRestore={() => onRestore(stableKey)}
+                    onDuplicate={() => onDuplicate(stableKey)}
                     onEditSql={onEditSql}
                     onEditThresholds={onEditThresholds}
                     thresholdsCount={tCount}
@@ -384,10 +392,15 @@ function buildEndpointValidator(allItems) {
     return (item) => {
         const id = (item.id || "").trim();
         if (!id) return "API ID는 필수입니다.";
-        if (!/^[a-zA-Z0-9_]+$/.test(id)) return "API ID는 영문자·숫자·밑줄만 허용됩니다.";
+        if (!/^[a-zA-Z0-9_-]+$/.test(id)) return "API ID는 영문자·숫자·밑줄·하이픈만 허용됩니다.";
 
+        // Self-exclusion via stable map key (_key). visibleItems 와 working Map
+        // 의 객체 참조가 다르므로 `it !== item` 으로는 자기 자신이 잡혀버려
+        // 모든 row 가 자기 자신과 중복으로 판정되는 버그가 있었다.
+        // 둘 다 _key 가 보장됨 — invalidIds/validationError 가 working entry
+        // 의 map key 를 _key 로 주입해 호출하므로.
         const dupCount = allItems.filter(
-            (it) => !it._isDeleted && (it.id || "").trim() === id && it !== item,
+            (it) => !it._isDeleted && (it.id || "").trim() === id && it._key !== item._key,
         ).length;
         if (dupCount > 0) return "API ID가 중복됩니다.";
 
@@ -714,13 +727,18 @@ export default function ConfigEditorPage() {
 
     const handleSave = async () => {
         if (apiList.isDirty && !apiList.isValid) {
-            const firstInvalidId = apiList.invalidIds[0];
-            const el = document.querySelector(`[data-row-id="${firstInvalidId}"]`);
-            if (el) {
-                setActiveTab("apis");
-                el.scrollIntoView({ behavior: "smooth", block: "center" });
-            }
+            // 데이터 API 탭은 위젯별 설정 그룹의 sub-tab — 두 state 모두 전환해야 한다.
+            // 과거에는 setActiveTab("apis") 만 호출해서 top-level 탭이 알 수 없는
+            // 키로 바뀌면서 어떤 분기에도 매칭되지 않아 본문이 빈 화면으로 보였다.
+            setActiveTab("widgetGroup");
+            setActiveWidgetSubTab("apis");
             setError(`데이터 API 설정에 ${apiList.invalidIds.length}개 오류가 있습니다. 확인 후 다시 저장하세요.`);
+            const firstInvalidId = apiList.invalidIds[0];
+            // DOM 업데이트 후에 scrollIntoView 가 동작하도록 다음 틱으로 미룬다.
+            setTimeout(() => {
+                const el = document.querySelector(`[data-row-id="${firstInvalidId}"]`);
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 0);
             return;
         }
 
@@ -841,7 +859,8 @@ export default function ConfigEditorPage() {
     const handleApiRestore = useCallback((id) => apiList.restoreItem(id), [apiList]);
 
     const handleApiDuplicate = useCallback((id) => {
-        const src = apiList.visibleItems.find((a) => a.id === id);
+        // id 는 stable _key 라 lookup 도 _key 로 일치시킨다.
+        const src = apiList.visibleItems.find((a) => a._key === id);
         if (!src) return;
         const existingPaths = new Set(
             apiList.visibleItems.map((a) => a.rest_api_path).filter(Boolean),

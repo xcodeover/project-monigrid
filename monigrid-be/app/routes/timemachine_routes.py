@@ -119,6 +119,84 @@ def register(app, backend, limiter) -> None:
             hours = _DEFAULT_RETENTION_HOURS
         return jsonify({"retentionHours": hours}), 200
 
+    @app.route("/dashboard/timemachine/window", methods=["GET"])
+    @require_auth
+    def timemachine_window():
+        store = backend.get_timemachine_store()
+        if store is None:
+            return jsonify({"message": "timemachine disabled"}), 503
+
+        from_ms = _parse_at_ms(request.args.get("from"))
+        to_ms = _parse_at_ms(request.args.get("to"))
+        if from_ms is None or to_ms is None:
+            return jsonify({"message": "from/to (ISO-8601 or epoch ms) required"}), 400
+        if from_ms > to_ms:
+            return jsonify({"message": "from must be <= to"}), 400
+
+        try:
+            step_ms = int(request.args.get("stepMs", "30000"))
+        except (TypeError, ValueError):
+            return jsonify({"message": "stepMs must be int (ms)"}), 400
+        if step_ms < 1000:
+            return jsonify({"message": "stepMs must be >= 1000"}), 400
+
+        frame_count = (to_ms - from_ms) // step_ms + 1
+        if frame_count > 200:
+            return jsonify({
+                "message": f"too many frames ({frame_count}); reduce window or increase stepMs (max 200 per call)",
+            }), 400
+
+        items = []
+        cursor = from_ms
+        try:
+            while cursor <= to_ms:
+                snapshot = store.list_samples_at(at_ms=cursor)
+                items.append({"atMs": cursor, "snapshot": snapshot})
+                cursor += step_ms
+        except Exception:
+            backend.logger.exception("timemachine window failed from=%s to=%s step=%s",
+                                     from_ms, to_ms, step_ms)
+            return jsonify({"message": "window query failed"}), 500
+
+        return jsonify({"items": items, "count": len(items)}), 200
+
+    @app.route("/dashboard/timemachine/series", methods=["GET"])
+    @require_auth
+    def timemachine_series():
+        store = backend.get_timemachine_store()
+        if store is None:
+            return jsonify({"message": "timemachine disabled"}), 503
+
+        source_type = (request.args.get("sourceType") or "").strip()
+        source_id = (request.args.get("sourceId") or "").strip()
+        if not source_type or not source_id:
+            return jsonify({"message": "sourceType, sourceId required"}), 400
+
+        from_ms = _parse_at_ms(request.args.get("from"))
+        to_ms = _parse_at_ms(request.args.get("to"))
+        if from_ms is None or to_ms is None:
+            return jsonify({"message": "from/to required"}), 400
+
+        try:
+            limit = int(request.args.get("limit", "500"))
+        except (TypeError, ValueError):
+            return jsonify({"message": "limit must be int"}), 400
+        limit = max(1, min(limit, 2000))
+
+        try:
+            items = store.list_samples_range(
+                source_type=source_type, source_id=source_id,
+                from_ms=from_ms, to_ms=to_ms, limit=limit,
+            )
+        except Exception:
+            backend.logger.exception("timemachine series failed")
+            return jsonify({"message": "series query failed"}), 500
+
+        return jsonify({
+            "items": items, "count": len(items),
+            "sourceType": source_type, "sourceId": source_id,
+        }), 200
+
     @app.route("/dashboard/timemachine/retention", methods=["PUT"])
     @require_auth
     @require_admin

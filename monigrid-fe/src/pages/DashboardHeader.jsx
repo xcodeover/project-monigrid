@@ -1,6 +1,5 @@
 import AppLogo from "../components/AppLogo.jsx";
 import {
-    IconArrowLeft,
     IconCollapse,
     IconExpand,
     IconFileText,
@@ -40,7 +39,6 @@ const DashboardHeader = ({
     onOpenUserManagement,
     onRefreshAll,
     onOpenAlerts,
-    onOpenTimemachine,
     onLogout,
 }) => {
     const resolvedTitle = dashboardTitle || APP_TITLE;
@@ -95,9 +93,17 @@ const DashboardHeader = ({
 
                 <div className='header-controls-row'>
                     <button
+                        className='toolbar-btn toolbar-btn-primary'
+                        onClick={onOpenAddApi}
+                        title="위젯 추가"
+                        aria-label='위젯 추가'
+                    >
+                        <IconPlus size={16} />
+                    </button>
+                    <button
                         className='toolbar-btn toolbar-btn-secondary'
                         onClick={onOpenSettings}
-                        title='대시보드 설정'
+                        title="대시보드 설정"
                         aria-label='대시보드 설정'
                     >
                         <IconLayoutGrid size={16} />
@@ -106,20 +112,12 @@ const DashboardHeader = ({
                         <button
                             className='toolbar-btn toolbar-btn-secondary toolbar-btn-backend'
                             onClick={onOpenConfigEditor}
-                            title='백엔드 설정'
+                            title="백엔드 설정"
                             aria-label='백엔드 설정'
                         >
                             <IconSliders size={16} />
                         </button>
                     )}
-                    <button
-                        className='toolbar-btn toolbar-btn-primary'
-                        onClick={onOpenAddApi}
-                        title='위젯 추가'
-                        aria-label='위젯 추가'
-                    >
-                        <IconPlus size={16} />
-                    </button>
 
                     {/* SQL 편집기 진입은 데이터 API row 의 ✏️ 버튼으로 이동
                         (백엔드 설정 → 위젯별 설정 → 데이터 API). */}
@@ -128,7 +126,7 @@ const DashboardHeader = ({
                         <button
                             className='toolbar-btn toolbar-btn-secondary'
                             onClick={onOpenUserManagement}
-                            title='사용자 계정 관리'
+                            title="사용자 계정 관리"
                             aria-label='사용자 계정 관리'
                         >
                             <IconUsers size={16} />
@@ -138,6 +136,7 @@ const DashboardHeader = ({
                     <button
                         className='toolbar-btn toolbar-btn-secondary'
                         onClick={onRefreshAll}
+                        disabled={!onRefreshAll}
                         title='전체 새로고침'
                         aria-label='전체 새로고침'
                     >
@@ -151,15 +150,6 @@ const DashboardHeader = ({
                         aria-label='알림 이력'
                     >
                         <IconFileText size={16} />
-                    </button>
-
-                    <button
-                        className='toolbar-btn toolbar-btn-secondary'
-                        onClick={onOpenTimemachine}
-                        title='타임머신 (시점 조회)'
-                        aria-label='타임머신'
-                    >
-                        <IconArrowLeft size={16} />
                     </button>
                 </div>
             </div>

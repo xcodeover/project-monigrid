@@ -12,7 +12,7 @@ Schema (all tables prefixed `monigrid_`):
   monigrid_connections         (id PK, ...)         — JDBC connections
   monigrid_apis                (id PK, ...)         — REST API endpoints
   monigrid_sql_queries         (sql_id PK, content, updated_at)
-  monigrid_monitor_targets     (id PK, type, label, spec, interval_sec, enabled, updated_at)
+  monigrid_monitor_targets     (id PK, type, label, spec, interval_sec, enabled, updated_at, updated_by)
                                — server-resource / network probes collected by the BE in the background
   monigrid_user_preferences    (username PK, value, updated_at)
                                — per-user UI state (layouts, thresholds, column order)
@@ -146,6 +146,10 @@ def _ddl_statements(db_type: str) -> list[str]:
                 extra_json LONGTEXT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
+            # MariaDB implicitly adds ON UPDATE CURRENT_TIMESTAMP to the first
+            # `TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP` column. For monigrid_apis
+            # this is harmless (persistence is DELETE+INSERT). For monigrid_monitor_targets
+            # the bump-on-UPDATE behavior matches the audit semantics we want.
             """
             CREATE TABLE IF NOT EXISTS monigrid_apis (
                 id VARCHAR(128) PRIMARY KEY,
@@ -155,7 +159,9 @@ def _ddl_statements(db_type: str) -> list[str]:
                 sql_id VARCHAR(128) NOT NULL,
                 enabled TINYINT(1) NOT NULL DEFAULT 1,
                 refresh_interval_sec INT NOT NULL DEFAULT 5,
-                query_timeout_sec INT NOT NULL DEFAULT 30
+                query_timeout_sec INT NOT NULL DEFAULT 30,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR(128) NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
             """
@@ -173,7 +179,8 @@ def _ddl_statements(db_type: str) -> list[str]:
                 spec LONGTEXT NOT NULL,
                 interval_sec INT NOT NULL DEFAULT 30,
                 enabled TINYINT(1) NOT NULL DEFAULT 1,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR(128) NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
             """
@@ -259,7 +266,9 @@ def _ddl_statements(db_type: str) -> list[str]:
                 sql_id NVARCHAR(128) NOT NULL,
                 enabled BIT NOT NULL DEFAULT 1,
                 refresh_interval_sec INT NOT NULL DEFAULT 5,
-                query_timeout_sec INT NOT NULL DEFAULT 30
+                query_timeout_sec INT NOT NULL DEFAULT 30,
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_by NVARCHAR(128) NULL
             )
             """,
             """
@@ -279,7 +288,8 @@ def _ddl_statements(db_type: str) -> list[str]:
                 spec NVARCHAR(MAX) NOT NULL,
                 interval_sec INT NOT NULL DEFAULT 30,
                 enabled BIT NOT NULL DEFAULT 1,
-                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_by NVARCHAR(128) NULL
             )
             """,
             """
@@ -371,7 +381,9 @@ def _ddl_statements(db_type: str) -> list[str]:
             sql_id VARCHAR2(128) NOT NULL,
             enabled NUMBER(1) DEFAULT 1 NOT NULL,
             refresh_interval_sec NUMBER(10) DEFAULT 5 NOT NULL,
-            query_timeout_sec NUMBER(10) DEFAULT 30 NOT NULL
+            query_timeout_sec NUMBER(10) DEFAULT 30 NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_by VARCHAR2(128) NULL
         )
         """,
         """
@@ -389,7 +401,8 @@ def _ddl_statements(db_type: str) -> list[str]:
             spec CLOB NOT NULL,
             interval_sec NUMBER(10) DEFAULT 30 NOT NULL,
             enabled NUMBER(1) DEFAULT 1 NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_by VARCHAR2(128) NULL
         )
         """,
         """
@@ -508,7 +521,36 @@ class SettingsStore:
             self._conn.jconn.setAutoCommit(False)
         except Exception:
             pass
+        self._normalize_session_timezone()
         self._ever_connected = True
+
+    def _normalize_session_timezone(self) -> None:
+        """Pin session timezone to UTC so TIMESTAMP / DATETIME values come back
+        in UTC regardless of the DB server's local timezone.
+
+        mssql DATETIME2 has no session timezone, so this is a no-op there.
+        """
+        db = self._cfg.db_type
+        sql = None
+        if db == "mariadb":
+            sql = "SET time_zone = '+00:00'"
+        elif db == "oracle":
+            sql = "ALTER SESSION SET TIME_ZONE = '+00:00'"
+        if sql is None:
+            return
+        cur = self._conn.cursor()
+        try:
+            cur.execute(sql)
+        except Exception as exc:
+            # Non-fatal — log and proceed; subsequent reads may have non-UTC
+            # offsets but the system is still functional.
+            self._logger.warning(
+                "session timezone normalization failed (%s): %s — falling back to server default",
+                db, exc,
+            )
+        finally:
+            try: cur.close()
+            except Exception: pass
 
     @_sync
     def close(self) -> None:
@@ -619,6 +661,139 @@ class SettingsStore:
         """Create all monigrid_* tables if missing. Idempotent."""
         for stmt in _ddl_statements(self._cfg.db_type):
             self._execute_ddl(stmt)
+        self._conn.commit()
+        # Forward schema migrations for already-bootstrapped DBs whose tables
+        # predate newly-added audit columns (updated_at / updated_by).
+        # _lock is RLock, so calling another @_sync method from here is safe.
+        self.ensure_audit_columns()
+
+    @_sync
+    def ensure_audit_columns(self) -> None:
+        """Add updated_at / updated_by columns to tables that predate them.
+
+        Idempotent — checks INFORMATION_SCHEMA / catalog views before each
+        ALTER, so re-running on an already-migrated DB is a no-op.
+        """
+        db = self._cfg.db_type
+        cur = self._cursor()
+        try:
+            if db == "mariadb":
+                cur.execute("SELECT DATABASE()")
+                row = cur.fetchone()
+                schema = row[0] if row else None
+                if not schema:
+                    self._logger.warning(
+                        "audit-migration: MariaDB session has no default database (DATABASE() is NULL); "
+                        "skipping audit column check. Configure JDBC URL with a database name."
+                    )
+                    return
+
+                triples = [
+                    (
+                        "monigrid_apis",
+                        "updated_at",
+                        "ALTER TABLE monigrid_apis ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP",
+                    ),
+                    (
+                        "monigrid_apis",
+                        "updated_by",
+                        "ALTER TABLE monigrid_apis ADD COLUMN updated_by VARCHAR(128) NULL",
+                    ),
+                    (
+                        "monigrid_monitor_targets",
+                        "updated_by",
+                        "ALTER TABLE monigrid_monitor_targets ADD COLUMN updated_by VARCHAR(128) NULL",
+                    ),
+                ]
+                for table, column, alter_sql in triples:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"
+                        " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+                        [schema, table, column],
+                    )
+                    exists = int(cur.fetchone()[0]) > 0
+                    if not exists:
+                        cur.execute(alter_sql)
+                        self._conn.commit()  # commit per ALTER so partial failure leaves a coherent state
+                        self._logger.info("audit-migration: added %s.%s", table, column)
+
+            elif db == "mssql":
+                cur.execute("SELECT SCHEMA_NAME()")
+                row = cur.fetchone()
+                mssql_schema = row[0] if row else None
+                if not mssql_schema:
+                    self._logger.warning(
+                        "audit-migration: cannot resolve MSSQL default schema; skipping audit column check"
+                    )
+                    return
+                triples = [
+                    (
+                        "monigrid_apis",
+                        "updated_at",
+                        "ALTER TABLE monigrid_apis ADD updated_at DATETIME2 NOT NULL"
+                        " CONSTRAINT df_apis_updated_at DEFAULT SYSUTCDATETIME()",
+                    ),
+                    (
+                        "monigrid_apis",
+                        "updated_by",
+                        "ALTER TABLE monigrid_apis ADD updated_by NVARCHAR(128) NULL",
+                    ),
+                    (
+                        "monigrid_monitor_targets",
+                        "updated_by",
+                        "ALTER TABLE monigrid_monitor_targets ADD updated_by NVARCHAR(128) NULL",
+                    ),
+                ]
+                for table, column, alter_sql in triples:
+                    qualified = f"{mssql_schema}.{table}"
+                    cur.execute(
+                        "SELECT COUNT(*) FROM sys.columns WHERE Name = ? AND Object_ID = OBJECT_ID(?)",
+                        [column, qualified],
+                    )
+                    exists = int(cur.fetchone()[0]) > 0
+                    if not exists:
+                        cur.execute(alter_sql)
+                        self._conn.commit()  # commit per ALTER so partial failure leaves a coherent state
+                        self._logger.info("audit-migration: added %s.%s", table, column)
+
+            elif db == "oracle":
+                triples = [
+                    (
+                        "MONIGRID_APIS",
+                        "UPDATED_AT",
+                        "ALTER TABLE monigrid_apis ADD (updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)",
+                    ),
+                    (
+                        "MONIGRID_APIS",
+                        "UPDATED_BY",
+                        "ALTER TABLE monigrid_apis ADD (updated_by VARCHAR2(128) NULL)",
+                    ),
+                    (
+                        "MONIGRID_MONITOR_TARGETS",
+                        "UPDATED_BY",
+                        "ALTER TABLE monigrid_monitor_targets ADD (updated_by VARCHAR2(128) NULL)",
+                    ),
+                ]
+                for table, column, alter_sql in triples:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND COLUMN_NAME = ?",
+                        [table, column],
+                    )
+                    exists = int(cur.fetchone()[0]) > 0
+                    if not exists:
+                        cur.execute(alter_sql)
+                        self._conn.commit()  # commit per ALTER so partial failure leaves a coherent state
+                        self._logger.info(
+                            "audit-migration: added %s.%s",
+                            table.lower(),
+                            column.lower(),
+                        )
+
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
         self._conn.commit()
 
     def _execute_ddl(self, stmt: str) -> None:
@@ -820,38 +995,117 @@ class SettingsStore:
     # ── apis ──────────────────────────────────────────────────────────────
 
     @_sync
-    def replace_apis(self, apis: Iterable[dict[str, Any]]) -> None:
-        # See replace_connections — commit inside to make the method
-        # self-contained for ad-hoc callers.
+    def replace_apis(
+        self, apis: Iterable[dict[str, Any]], *, actor: str = "",
+    ) -> None:
+        """Replace all rows in monigrid_apis. Preserves audit (updated_at, updated_by)
+        for rows whose business content hasn't changed; stamps fresh audit values on
+        new or content-changed rows.
+
+        actor: caller's username. Empty string → updated_by stays NULL on changed rows.
+        """
+        new_list = list(apis)
+        prior_by_id = {a["id"]: a for a in self._load_apis_no_commit()}
         self._execute_simple("DELETE FROM monigrid_apis")
-        for item in apis:
-            self._insert_api(item)
+        actor_val = (actor or "").strip() or None
+        for item in new_list:
+            prior = prior_by_id.get(item["id"])
+            if prior and _api_business_equal(prior, item):
+                # 내용 미변경 — prior audit 보존
+                self._insert_api_with_audit(
+                    item,
+                    updated_at_iso=prior.get("updated_at"),
+                    updated_by=prior.get("updated_by"),
+                )
+            else:
+                # 신규 또는 변경 — 현재 시각 + actor 로 stamp
+                self._insert_api_with_audit(
+                    item,
+                    updated_at_iso=None,
+                    updated_by=actor_val,
+                )
         self._conn.commit()
 
-    def _insert_api(self, item: dict[str, Any]) -> None:
+    def _load_apis_no_commit(self) -> list[dict[str, Any]]:
+        """Same SELECT as load_apis but without @_sync (caller already locked)."""
         cur = self._cursor()
         try:
             cur.execute(
-                "INSERT INTO monigrid_apis "
-                "(id, title, rest_api_path, connection_id, sql_id, enabled, "
-                " refresh_interval_sec, query_timeout_sec) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    str(item["id"]),
-                    item.get("title") or str(item["id"]),
-                    str(item["rest_api_path"]),
-                    str(item["connection_id"]),
-                    str(item["sql_id"]),
-                    1 if item.get("enabled", True) else 0,
-                    int(item.get("refresh_interval_sec") or 5),
-                    int(item.get("query_timeout_sec") or 30),
-                ],
+                "SELECT id, title, rest_api_path, connection_id, sql_id, enabled, "
+                "refresh_interval_sec, query_timeout_sec, updated_at, updated_by "
+                "FROM monigrid_apis"
             )
+            rows = cur.fetchall()
         finally:
-            try:
-                cur.close()
-            except Exception:
-                pass
+            try: cur.close()
+            except Exception: pass
+        return [
+            {
+                "id": row[0], "title": row[1], "rest_api_path": row[2],
+                "connection_id": row[3], "sql_id": row[4], "enabled": bool(row[5]),
+                "refresh_interval_sec": int(row[6]), "query_timeout_sec": int(row[7]),
+                "updated_at": _to_utc_iso8601(row[8]),
+                "updated_by": row[9] if row[9] else None,
+            }
+            for row in rows
+        ]
+
+    def _insert_api_with_audit(
+        self,
+        item: dict[str, Any],
+        *,
+        updated_at_iso: str | None,
+        updated_by: str | None,
+    ) -> None:
+        cur = self._cursor()
+        try:
+            if updated_at_iso:
+                # Convert ISO8601 'Z' string to 'YYYY-MM-DD HH:MM:SS' (naive UTC)
+                # string for JayDeBeApi — MariaDB/MSSQL/Oracle all accept this literal.
+                from datetime import datetime, timezone
+                dt = datetime.fromisoformat(updated_at_iso.replace("Z", "+00:00"))
+                naive_utc = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                ts_str = naive_utc.strftime("%Y-%m-%d %H:%M:%S")
+                cur.execute(
+                    "INSERT INTO monigrid_apis "
+                    "(id, title, rest_api_path, connection_id, sql_id, enabled, "
+                    " refresh_interval_sec, query_timeout_sec, updated_at, updated_by) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        str(item["id"]),
+                        item.get("title") or str(item["id"]),
+                        str(item["rest_api_path"]),
+                        str(item["connection_id"]),
+                        str(item["sql_id"]),
+                        1 if item.get("enabled", True) else 0,
+                        int(item.get("refresh_interval_sec") or 5),
+                        int(item.get("query_timeout_sec") or 30),
+                        ts_str,
+                        updated_by,
+                    ],
+                )
+            else:
+                # DB DEFAULT CURRENT_TIMESTAMP populates updated_at; omit from INSERT.
+                cur.execute(
+                    "INSERT INTO monigrid_apis "
+                    "(id, title, rest_api_path, connection_id, sql_id, enabled, "
+                    " refresh_interval_sec, query_timeout_sec, updated_by) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        str(item["id"]),
+                        item.get("title") or str(item["id"]),
+                        str(item["rest_api_path"]),
+                        str(item["connection_id"]),
+                        str(item["sql_id"]),
+                        1 if item.get("enabled", True) else 0,
+                        int(item.get("refresh_interval_sec") or 5),
+                        int(item.get("query_timeout_sec") or 30),
+                        updated_by,
+                    ],
+                )
+        finally:
+            try: cur.close()
+            except Exception: pass
 
     @_sync
     def load_apis(self) -> list[dict[str, Any]]:
@@ -859,7 +1113,8 @@ class SettingsStore:
         try:
             cur.execute(
                 "SELECT id, title, rest_api_path, connection_id, sql_id, enabled, "
-                "refresh_interval_sec, query_timeout_sec FROM monigrid_apis"
+                "refresh_interval_sec, query_timeout_sec, updated_at, updated_by "
+                "FROM monigrid_apis"
             )
             rows = cur.fetchall()
         finally:
@@ -877,6 +1132,8 @@ class SettingsStore:
                 "enabled": bool(row[5]),
                 "refresh_interval_sec": int(row[6]),
                 "query_timeout_sec": int(row[7]),
+                "updated_at": _to_utc_iso8601(row[8]),
+                "updated_by": row[9] if row[9] else None,
             }
             for row in rows
         ]
@@ -997,7 +1254,7 @@ class SettingsStore:
         cur = self._cursor()
         try:
             cur.execute(
-                "SELECT id, type, label, spec, interval_sec, enabled "
+                "SELECT id, type, label, spec, interval_sec, enabled, updated_at, updated_by "
                 "FROM monigrid_monitor_targets"
             )
             rows = cur.fetchall()
@@ -1013,7 +1270,7 @@ class SettingsStore:
         cur = self._cursor()
         try:
             cur.execute(
-                "SELECT id, type, label, spec, interval_sec, enabled "
+                "SELECT id, type, label, spec, interval_sec, enabled, updated_at, updated_by "
                 "FROM monigrid_monitor_targets WHERE id = ?",
                 [target_id],
             )
@@ -1026,7 +1283,7 @@ class SettingsStore:
         return _row_to_monitor_target(row) if row else None
 
     @_sync
-    def upsert_monitor_target(self, item: dict[str, Any]) -> dict[str, Any]:
+    def upsert_monitor_target(self, item: dict[str, Any], *, actor: str = "") -> dict[str, Any]:
         target_id = str(item.get("id") or "").strip()
         if not target_id:
             raise ValueError("monitor target id is required")
@@ -1065,6 +1322,7 @@ class SettingsStore:
                 "enabled": enabled,
             },
             also_set_updated_at=True,
+            actor=actor,
         )
         self._conn.commit()
         stored = self.get_monitor_target(target_id)
@@ -1129,7 +1387,7 @@ class SettingsStore:
         cur = self._cursor()
         try:
             cur.execute(
-                "SELECT id, type, label, spec, interval_sec, enabled "
+                "SELECT id, type, label, spec, interval_sec, enabled, updated_at, updated_by "
                 "FROM monigrid_monitor_targets WHERE id = ?",
                 [target_id],
             )
@@ -1141,7 +1399,9 @@ class SettingsStore:
                 pass
         return _row_to_monitor_target(row) if row else None
 
-    def _insert_monitor_target_no_commit(self, item: dict[str, Any]) -> dict[str, Any]:
+    def _insert_monitor_target_no_commit(
+        self, item: dict[str, Any], *, actor: str = "",
+    ) -> dict[str, Any]:
         """INSERT a new monitor-target row; generate a fresh UUID for the id.
 
         Does NOT commit.  Returns the inserted row dict (with generated id).
@@ -1168,13 +1428,14 @@ class SettingsStore:
                 "enabled": enabled,
             },
             also_set_updated_at=True,
+            actor=actor,
         )
         stored = self._fetch_monitor_target_no_commit(new_id)
         assert stored is not None
         return stored
 
     def _update_monitor_target_no_commit(
-        self, target_id: str, item: dict[str, Any]
+        self, target_id: str, item: dict[str, Any], *, actor: str = "",
     ) -> dict[str, Any] | None:
         """UPDATE an existing monitor-target row.
 
@@ -1190,6 +1451,8 @@ class SettingsStore:
             self._prepare_monitor_target_fields(clean)
         )
 
+        actor_val = (actor or "").strip() or None
+
         # Use a plain UPDATE so we get an accurate "not found" signal via
         # rowcount, rather than silently inserting via the upsert helper.
         # updated_at uses the same dialect-aware expression as _upsert.
@@ -1199,9 +1462,9 @@ class SettingsStore:
             cur.execute(
                 "UPDATE monigrid_monitor_targets "
                 f"SET type = ?, label = ?, spec = ?, interval_sec = ?, enabled = ?, "
-                f"updated_at = {ts_expr} "
+                f"updated_at = {ts_expr}, updated_by = ? "
                 "WHERE id = ?",
-                [target_type, label, spec_json, interval_sec, enabled, target_id],
+                [target_type, label, spec_json, interval_sec, enabled, actor_val, target_id],
             )
             rowcount = cur.rowcount if cur.rowcount is not None else -1
         finally:
@@ -1237,6 +1500,7 @@ class SettingsStore:
         creates: list[dict],
         updates: list[dict],
         deletes: list[str],
+        actor: str = "",
     ) -> dict:
         """Atomic batch CRUD on monigrid_monitor_targets.
 
@@ -1278,7 +1542,7 @@ class SettingsStore:
             # ── creates ───────────────────────────────────────────────────
             for idx, item in enumerate(creates):
                 try:
-                    row = self._insert_monitor_target_no_commit(item)
+                    row = self._insert_monitor_target_no_commit(item, actor=actor)
                     created_rows.append(row)
                 except Exception as exc:
                     self._conn.rollback()
@@ -1302,7 +1566,7 @@ class SettingsStore:
             for idx, item in enumerate(updates):
                 target_id = str(item.get("id") or "").strip()
                 try:
-                    row = self._update_monitor_target_no_commit(target_id, item)
+                    row = self._update_monitor_target_no_commit(target_id, item, actor=actor)
                     if row is None:
                         raise ValueError(
                             f"monitor target id={target_id!r} not found"
@@ -1681,7 +1945,9 @@ class SettingsStore:
         return result
 
     @_sync
-    def save_config_dict(self, config_dict: dict[str, Any]) -> None:
+    def save_config_dict(
+        self, config_dict: dict[str, Any], *, actor: str = "",
+    ) -> None:
         """Persist a full config.json-shaped dict back to the DB.
 
         Semantics: replace-all for connections/apis; upsert for scalar KV.
@@ -1689,7 +1955,7 @@ class SettingsStore:
         """
         self.save_scalar_sections(config_dict)
         self.replace_connections(config_dict.get("connections") or [])
-        self.replace_apis(config_dict.get("apis") or [])
+        self.replace_apis(config_dict.get("apis") or [], actor=actor)
         self._conn.commit()
 
     # ── alert events (BE-side raise/clear transition log) ────────────────
@@ -2074,6 +2340,7 @@ class SettingsStore:
         key_value: str,
         values: dict[str, Any],
         also_set_updated_at: bool = False,
+        actor: str = "",
     ) -> None:
         """Cross-dialect single-statement upsert.
 
@@ -2085,16 +2352,20 @@ class SettingsStore:
         we use those instead — last-write-wins is the same semantic but
         without the race window or extra round-trip.
         """
+        final_values = dict(values)
+        if actor and "updated_by" not in final_values:
+            normalized = actor.strip()
+            final_values["updated_by"] = normalized if normalized else None
         db_type = self._cfg.db_type
         cur = self._cursor()
         try:
             if db_type == "mariadb":
-                self._upsert_mariadb(cur, table, key_col, key_value, values, also_set_updated_at)
+                self._upsert_mariadb(cur, table, key_col, key_value, final_values, also_set_updated_at)
             elif db_type == "mssql":
-                self._upsert_mssql(cur, table, key_col, key_value, values, also_set_updated_at)
+                self._upsert_mssql(cur, table, key_col, key_value, final_values, also_set_updated_at)
             else:
                 # Oracle (default) — MERGE with a dual-source row
-                self._upsert_oracle(cur, table, key_col, key_value, values, also_set_updated_at)
+                self._upsert_oracle(cur, table, key_col, key_value, final_values, also_set_updated_at)
         finally:
             try:
                 cur.close()
@@ -2252,7 +2523,52 @@ def _row_to_monitor_target(row: Any) -> dict[str, Any]:
         "spec":         spec,
         "interval_sec": int(row[4]),
         "enabled":      bool(row[5]),
+        "updated_at":   _to_utc_iso8601(row[6]),
+        "updated_by":   row[7] if row[7] else None,
     }
+
+
+def _to_utc_iso8601(value: Any) -> str | None:
+    """Convert any datetime-ish value to a UTC ISO8601 string with 'Z'.
+
+    Accepts: datetime, java.sql.Timestamp (via JayDeBeApi), str, None.
+    Returns None on missing/empty input.
+    """
+    if value is None or value == "":
+        return None
+    from datetime import datetime, timezone
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        if "T" in s:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        else:
+            dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except (ValueError, TypeError):
+        return s  # final defensive fallback — return raw string
+
+
+def _api_business_equal(a: dict, b: dict) -> bool:
+    """True iff the non-audit fields of two api dicts match."""
+    keys = ("id", "title", "rest_api_path", "connection_id", "sql_id",
+            "enabled", "refresh_interval_sec", "query_timeout_sec")
+    def norm(d, k):
+        v = d.get(k)
+        if k == "enabled":
+            return bool(v) if v is not None else True
+        if k == "refresh_interval_sec":
+            return int(v) if v is not None else 5
+        if k == "query_timeout_sec":
+            return int(v) if v is not None else 30
+        return None if v is None else str(v)
+    return all(norm(a, k) == norm(b, k) for k in keys)
 
 
 def _extract_table_name(ddl: str) -> str | None:

@@ -334,6 +334,7 @@ const StatusListCard = ({
                                     event.stopPropagation();
                                     setShowSettings(true);
                                 }}
+                               
                                 title='설정'
                             >
                                 <IconSettings size={14} />
@@ -347,6 +348,7 @@ const StatusListCard = ({
                                         onRemove();
                                     }
                                 }}
+                               
                                 title='제거'
                             >
                                 <IconClose size={14} />

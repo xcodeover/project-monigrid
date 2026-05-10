@@ -2,7 +2,7 @@
  * useWidgetApiData (SRP): manages per-widget polling with de-duplication and
  * auto-rescheduling. Supports table, health-check, and status-list widget types.
  */
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
     dataService,
     healthService,
@@ -11,6 +11,8 @@ import {
 import { formatErrorMessage } from "../services/http.js";
 import { getEnabledCriteriaColumns } from "../utils/helpers.js";
 import { useDocumentVisible } from "./useDocumentVisible.js";
+import { snapshotKeyForWidget } from "../utils/snapshotKey";
+import { useTimemachine } from "../contexts/TimemachineContext";
 
 // Convert monitor-snapshot rows (BE-collected) into the shape StatusListCard
 // already understands ({items, okCount, failCount}). Mirrors the wire format
@@ -123,6 +125,9 @@ const nextPollDelay = (fails, baseIntervalSec) => {
 };
 
 const useWidgetApiData = (widgets) => {
+    // Timemachine context — always called (hooks must not be conditional).
+    const tm = useTimemachine();
+
     const [results, setResults] = useState({});
     const [loadingMap, setLoadingMap] = useState({});
     const [refreshingMap, setRefreshingMap] = useState({});
@@ -431,7 +436,52 @@ const useWidgetApiData = (widgets) => {
         [fetchWidget],
     );
 
-    return { results, loadingMap, refreshingMap, refetchAll, refetchOne };
+    // Timemachine override: when TM mode is ON, replace results with snapshot data.
+    // Live polling timers still run in the background but their results are hidden.
+    // (Timers are not stopped here to avoid breaking the timer lifecycle — they are
+    //  simply masked. Per the plan, widgets show snapshot payload instead of live data.)
+    const tmResults = useMemo(() => {
+        if (!tm.enabled) return null;
+        const overridden = {};
+        for (const widget of widgets) {
+            const key = tm.resolveSnapshotKey ? tm.resolveSnapshotKey(widget) : snapshotKeyForWidget(widget);
+            const snap = key ? tm.snapshotByKey.get(key) : null;
+            // BE 가 data_api 를 {title, endpoint, data: [...]} 로 wrapping 해서
+            // 저장하지만 라이브 응답은 [...] 평탄 배열. 위젯은 평탄 형태를
+            // 기대하므로 .data 를 unwrap. 모니터 타입 payload 는 .data 가 없어
+            // ?? 로 자기 자신 fallback.
+            const payload = snap?.payload ?? null;
+            const unwrapped = payload && typeof payload === "object" && "data" in payload
+                ? payload.data
+                : payload;
+            overridden[widget.id] = {
+                id: widget.id,
+                data: unwrapped,
+                status: snap ? "live" : "dead",
+                error: tm.error || (snap ? null : "이 시점에 데이터 없음"),
+                lastUpdatedAt: snap?.tsMs ?? null,
+            };
+        }
+        return overridden;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tm.enabled, tm.snapshotByKey, tm.error, widgets]);
+
+    const activeResults = tm.enabled ? (tmResults ?? {}) : results;
+    const activeLoadingMap = tm.enabled
+        ? Object.fromEntries(widgets.map((w) => {
+            const k = tm.resolveSnapshotKey ? tm.resolveSnapshotKey(w) : snapshotKeyForWidget(w);
+            return [w.id, tm.loading && !tm.snapshotByKey.get(k)];
+        }))
+        : loadingMap;
+    const activeRefreshingMap = tm.enabled ? {} : refreshingMap;
+
+    return {
+        results: activeResults,
+        loadingMap: activeLoadingMap,
+        refreshingMap: activeRefreshingMap,
+        refetchAll: tm.enabled ? () => {} : refetchAll,
+        refetchOne: tm.enabled ? () => {} : refetchOne,
+    };
 };
 
 export default useWidgetApiData;

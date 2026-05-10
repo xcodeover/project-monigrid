@@ -1,26 +1,32 @@
 /* ── Alarm banner ────────────────────────────────────────────────────────── */
 
+/* Floating popup — footer / 타임머신 컨트롤 바와 겹치지 않도록 bottom 60px,
+   가로 중앙 정렬, 카드 형태(둥근 모서리 + 그림자). 너비는 콘텐츠 폭 +
+   max-width 로 클램프. */
 .alarm-banner {
     position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    bottom: 60px;
+    left: 50%;
+    transform: translate(-50%, 0);
     z-index: 9999;
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 10px 20px;
+    padding: 10px 18px;
     background: linear-gradient(90deg, #b91c1c, #dc2626);
     color: #fff;
     font-size: 13px;
     font-weight: 600;
-    box-shadow: 0 -2px 12px rgba(185, 28, 28, 0.5);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(185, 28, 28, 0.55);
+    width: max-content;
+    max-width: min(720px, calc(100vw - 32px));
     animation: alarm-slide-in 0.25s ease-out;
 }
 
 @keyframes alarm-slide-in {
-    from { transform: translateY(100%); opacity: 0; }
-    to   { transform: translateY(0);    opacity: 1; }
+    from { transform: translate(-50%, 60%); opacity: 0; }
+    to   { transform: translate(-50%, 0);    opacity: 1; }
 }
 
 .alarm-banner.muted {

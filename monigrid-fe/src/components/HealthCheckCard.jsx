@@ -311,6 +311,7 @@ const HealthCheckCard = ({
                                     event.stopPropagation();
                                     setShowSettings(true);
                                 }}
+                               
                                 title='설정'
                             >
                                 <IconSettings size={14} />
@@ -322,6 +323,7 @@ const HealthCheckCard = ({
                                     event.stopPropagation();
                                     onRemove();
                                 }}
+                               
                                 title='제거'
                             >
                                 <IconClose size={14} />

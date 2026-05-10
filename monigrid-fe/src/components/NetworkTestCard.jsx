@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import apiClient from "../services/http.js";
 import { monitorService } from "../services/dashboardService.js";
+import { useTimemachine } from "../contexts/TimemachineContext";
 import { useDocumentVisible } from "../hooks/useDocumentVisible.js";
 import {
     MAX_REFRESH_INTERVAL_SEC,
@@ -232,6 +233,10 @@ const NetworkTestCard = ({
     onWidgetConfigChange,
     onAlarmChange,
 }) => {
+    /* ── timemachine mode check ────────────────────────────────────── */
+    const tm = useTimemachine();
+    const tmActive = tm.enabled;
+
     /* ── mode: snapshot (BE-centralized) vs legacy (probe-from-browser) */
     const targetIds = useMemo(
         () => (Array.isArray(networkConfig?.targetIds) ? networkConfig.targetIds : []),
@@ -428,14 +433,73 @@ const NetworkTestCard = ({
     }, [checkAllTargets]);
 
     useEffect(() => {
-        if (hasItems) checkAllTargets();
-    }, [pollKey, hasItems, checkAllTargets]);
+        if (tmActive || !hasItems) return;
+        checkAllTargets();
+    }, [pollKey, hasItems, checkAllTargets, tmActive]);
+
+    // 타임머신 모드: tm.snapshotByKey 의 monitor:network|<targetId> 에서
+    // payload = {label, data, errorMessage, spec, ...} 를 읽어 targetStates 채움.
+    useEffect(() => {
+        if (!tmActive || !hasItems || !useSnapshot) return;
+        const items = [];
+        for (const tid of targetIds) {
+            const snap = tm.snapshotByKey.get(`monitor:network|${tid}`);
+            if (!snap) {
+                items.push({ targetId: tid, data: null, errorMessage: "이 시점에 데이터 없음" });
+                continue;
+            }
+            const p = snap.payload || {};
+            items.push({
+                targetId: tid,
+                label: p.label,
+                spec: p.spec,
+                data: p.data,
+                errorMessage: p.errorMessage,
+                updatedAt: snap.tsMs ? new Date(snap.tsMs).toISOString() : null,
+            });
+        }
+        const derived = items.map((it) => {
+            const spec = it.spec || {};
+            return {
+                id: it.targetId,
+                label: it.label || spec.host || it.targetId,
+                type: spec.type || "ping",
+                host: spec.host || "",
+                port: spec.port != null ? String(spec.port) : "",
+                timeout: spec.timeout != null ? String(spec.timeout) : "5",
+            };
+        });
+        setSnapshotTargets(derived);
+        setTargetStates(() => {
+            const next = {};
+            items.forEach((it) => {
+                const d = it.data || {};
+                const hasError = !!it.errorMessage;
+                const success = !hasError && (d.success === true);
+                // lastChecked: TargetRow 가 "체크된 적 있음" 의 단일 plagueof-truth
+                // 로 사용 — 누락하면 dot/status/응답시간 모두 "—" 회색으로 보인다.
+                // snap 이 있으면 그 시각을, 없으면 null (= 미확인) 로.
+                const checkedAt = it.updatedAt ? new Date(it.updatedAt) : null;
+                next[it.targetId] = {
+                    success,
+                    responseTimeMs: d.responseTimeMs ?? null,
+                    error: hasError ? it.errorMessage : (success ? null : (d.message || "Fail")),
+                    loading: false,
+                    lastChecked: checkedAt,
+                    lastUpdated: checkedAt,
+                    lastAttempted: new Date(),
+                };
+            });
+            return next;
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tmActive, tm.snapshotByKey, useSnapshot, hasItems, targetIds]);
 
     // Exponential-backoff polling via recursive setTimeout.
     // On consecutive failures: 5s → 10s → 20s → 40s → 80s → 160s (cap at 5 min).
     // Returns to base interval on first successful response.
     useEffect(() => {
-        if (!hasItems) return undefined;
+        if (tmActive || !hasItems) return undefined;
         const baseSec = Math.max(MIN_REFRESH_INTERVAL_SEC, Number(refreshIntervalSec) || 10);
         // Reset failure count when poll key or interval changes so stale backoff
         // state from a previous configuration does not carry over.
@@ -454,7 +518,7 @@ const NetworkTestCard = ({
         };
         schedule(baseSec * 1000);
         return () => clearTimeout(timerId);
-    }, [pollKey, hasItems, refreshIntervalSec, checkAllTargetsWithTracking]);
+    }, [pollKey, hasItems, refreshIntervalSec, checkAllTargetsWithTracking, tmActive]);
 
     // Visibility-flip: immediately refetch when the user returns to the tab so
     // the widget shows fresh data rather than stale results from before hiding.
@@ -496,8 +560,13 @@ const NetworkTestCard = ({
 
     useEffect(() => {
         if (!onAlarmChange || !statusSummary) return;
+        // 타임머신 모드에선 라이브 알람 발화 안 함.
+        if (tmActive) {
+            onAlarmChange("live");
+            return;
+        }
         onAlarmChange(statusSummary.fail > 0 ? "dead" : "live");
-    }, [statusSummary, onAlarmChange]);
+    }, [statusSummary, onAlarmChange, tmActive]);
 
     /* ── NG(실패/에러) 대상을 목록 상단으로 끌어올림 ──────────────── */
     // statusSummary 의 fail 판정과 동일한 기준: 체크 완료 & success=false.
@@ -558,8 +627,8 @@ const NetworkTestCard = ({
                         )}
                         <div className="title-actions">
                             <button type="button" className="compact-icon-btn" onClick={checkAllTargets} title="새로고침" aria-label="새로고침"><IconRefresh size={14} /></button>
-                            <button type="button" className="compact-icon-btn" onClick={openSettings} title="설정" aria-label="설정"><IconSettings size={14} /></button>
-                            <button type="button" className="compact-icon-btn remove" onClick={onRemove} title="제거" aria-label="제거"><IconClose size={14} /></button>
+                            <button type="button" className="compact-icon-btn" onClick={openSettings} title='설정' aria-label="설정"><IconSettings size={14} /></button>
+                            <button type="button" className="compact-icon-btn remove" onClick={onRemove} title='제거' aria-label="제거"><IconClose size={14} /></button>
                         </div>
                     </div>
                     <div className="api-endpoint-row">

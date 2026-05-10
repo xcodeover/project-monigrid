@@ -1,0 +1,38 @@
+.tm-banner {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    background: rgba(168, 85, 247, 0.12);
+    border-bottom: 1px solid rgba(168, 85, 247, 0.4);
+    color: #c4b5fd;
+    font-size: 12px;
+}
+.tm-banner-icon { font-size: 14px; }
+.tm-banner-label { font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.tm-banner-sep { color: rgba(196, 181, 253, 0.5); }
+.tm-banner-ts { font-variant-numeric: tabular-nums; color: #e9d5ff; }
+.tm-banner-loading { color: rgba(196, 181, 253, 0.7); font-style: italic; }
+.tm-banner-error { color: #fca5a5; margin-left: auto; }
+.tm-banner-live-btn {
+    margin-left: auto;
+    padding: 3px 10px;
+    background: rgba(168, 85, 247, 0.18);
+    border: 1px solid rgba(168, 85, 247, 0.5);
+    color: #ddd6fe;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+}
+.tm-banner-live-btn:hover {
+    background: rgba(168, 85, 247, 0.28);
+    color: #fff;
+}
+.tm-banner-error + .tm-banner-live-btn {
+    margin-left: 0;
+}

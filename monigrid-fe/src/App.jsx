@@ -16,7 +16,6 @@ const AlertHistoryPage = lazy(() => import("./pages/AlertHistoryPage"));
 const UserManagementPage = lazy(() => import("./pages/UserManagementPage"));
 // prismjs + react-simple-code-editor 등을 포함하는 무거운 페이지 — 진입 시점에만 로드
 const ConfigEditorPage = lazy(() => import("./pages/ConfigEditorPage"));
-const TimemachinePage = lazy(() => import("./pages/TimemachinePage"));
 
 /** Full-screen blank fallback — matches the dark background so there is no
  *  flash of white during the very first route chunk load. */
@@ -120,14 +119,6 @@ function AppRoutes() {
                     element={
                         <ProtectedRoute>
                             <ConfigEditorPage />
-                        </ProtectedRoute>
-                    }
-                />
-                <Route
-                    path="/timemachine"
-                    element={
-                        <ProtectedRoute>
-                            <TimemachinePage />
                         </ProtectedRoute>
                     }
                 />
