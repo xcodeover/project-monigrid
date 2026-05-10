@@ -614,11 +614,16 @@ const ServerResourceCard = ({
         });
     }, [servers, serverStates, isDead, refreshIntervalSec]);
 
-    // Report alarm status to parent
+    // Report alarm status to parent. 타임머신 모드에서는 과거 시점 데이터에
+    // 대해 라이브 알람을 발화하지 않는다 (알람 이력은 별도 페이지에서 확인).
     useEffect(() => {
         if (!onAlarmChange) return;
+        if (tmActive) {
+            onAlarmChange("live");
+            return;
+        }
         onAlarmChange(totalViolations > 0 || isDead ? "dead" : "live");
-    }, [totalViolations, isDead, onAlarmChange]);
+    }, [totalViolations, isDead, onAlarmChange, tmActive]);
 
     /* ── 갱신 주기마다 목록 스크롤 최상단으로 ─────────────────────── */
     const scrollRef = useRef(null);

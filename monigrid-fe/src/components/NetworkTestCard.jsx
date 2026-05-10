@@ -476,12 +476,17 @@ const NetworkTestCard = ({
                 const d = it.data || {};
                 const hasError = !!it.errorMessage;
                 const success = !hasError && (d.success === true);
+                // lastChecked: TargetRow 가 "체크된 적 있음" 의 단일 plagueof-truth
+                // 로 사용 — 누락하면 dot/status/응답시간 모두 "—" 회색으로 보인다.
+                // snap 이 있으면 그 시각을, 없으면 null (= 미확인) 로.
+                const checkedAt = it.updatedAt ? new Date(it.updatedAt) : null;
                 next[it.targetId] = {
                     success,
                     responseTimeMs: d.responseTimeMs ?? null,
                     error: hasError ? it.errorMessage : (success ? null : (d.message || "Fail")),
                     loading: false,
-                    lastUpdated: it.updatedAt ? new Date(it.updatedAt) : null,
+                    lastChecked: checkedAt,
+                    lastUpdated: checkedAt,
                     lastAttempted: new Date(),
                 };
             });
@@ -555,8 +560,13 @@ const NetworkTestCard = ({
 
     useEffect(() => {
         if (!onAlarmChange || !statusSummary) return;
+        // 타임머신 모드에선 라이브 알람 발화 안 함.
+        if (tmActive) {
+            onAlarmChange("live");
+            return;
+        }
         onAlarmChange(statusSummary.fail > 0 ? "dead" : "live");
-    }, [statusSummary, onAlarmChange]);
+    }, [statusSummary, onAlarmChange, tmActive]);
 
     /* ── NG(실패/에러) 대상을 목록 상단으로 끌어올림 ──────────────── */
     // statusSummary 의 fail 판정과 동일한 기준: 체크 완료 & success=false.
