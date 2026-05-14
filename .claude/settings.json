@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dir monigrid-be\\\\.env*)"
+      "Bash(dir monigrid-be\\\\.env*)",
+      "Bash(xargs grep -l \"criteria\")",
+      "Bash(where mysqldump *)",
+      "Bash(where mysql *)"
     ]
   }
 }
