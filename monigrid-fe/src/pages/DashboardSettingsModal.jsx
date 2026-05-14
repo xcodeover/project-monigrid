@@ -1,5 +1,9 @@
 import { SOUND_TYPES } from "../store/alarmStore";
 import { IconClose } from "../components/icons";
+import {
+    MAX_WIDGET_FONT_SIZE,
+    MIN_WIDGET_FONT_SIZE,
+} from "./dashboardConstants";
 
 /**
  * "대시보드 설정" modal extracted from DashboardPage (SRP).
@@ -26,10 +30,6 @@ const DashboardSettingsModal = ({
     configErrorMessage,
     onExportConfig,
     onImportConfigFromText,
-    isAdmin,
-    dashboardTitleDraft,
-    onDashboardTitleDraftChange,
-    onApplyDashboardTitle,
 }) => {
     return (
         <div className='modal-overlay'>
@@ -72,13 +72,23 @@ const DashboardSettingsModal = ({
                         <div className='form-group'>
                             <label htmlFor='widget-font-size'>
                                 폰트 크기 (px)
+                                <span
+                                    style={{
+                                        fontWeight: 400,
+                                        color: "var(--text-tertiary, #7a96a8)",
+                                        fontSize: "0.78rem",
+                                        marginLeft: 6,
+                                    }}
+                                >
+                                    차트 제외 일괄 적용
+                                </span>
                             </label>
                             <div className='inline-input-group'>
                                 <input
                                     id='widget-font-size'
                                     type='number'
-                                    min='10'
-                                    max='18'
+                                    min={MIN_WIDGET_FONT_SIZE}
+                                    max={MAX_WIDGET_FONT_SIZE}
                                     value={fontSizeDraft}
                                     onChange={(event) =>
                                         onFontSizeDraftChange(event.target.value)
@@ -122,35 +132,6 @@ const DashboardSettingsModal = ({
                             </button>
                         </div>
                     </div>
-
-                    {isAdmin && (
-                        <div className='form-group'>
-                            <label htmlFor='dashboard-title-input'>
-                                대시보드 타이틀
-                            </label>
-                            <div className='inline-input-group'>
-                                <input
-                                    id='dashboard-title-input'
-                                    type='text'
-                                    value={dashboardTitleDraft ?? ""}
-                                    onChange={(e) =>
-                                        onDashboardTitleDraftChange(e.target.value)
-                                    }
-                                    placeholder='Monitoring Dashboard'
-                                    maxLength={200}
-                                    style={{ flex: 1 }}
-                                />
-                                <button
-                                    className='secondary-btn'
-                                    onClick={() =>
-                                        onApplyDashboardTitle(dashboardTitleDraft)
-                                    }
-                                >
-                                    저장
-                                </button>
-                            </div>
-                        </div>
-                    )}
 
                     <div className='form-group'>
                         <label htmlFor='config-file-upload'>

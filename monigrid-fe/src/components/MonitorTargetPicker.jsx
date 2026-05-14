@@ -67,6 +67,23 @@ const MonitorTargetPicker = ({
         onChange(next);
     };
 
+    // 전체 선택은 현재 필터 결과 (= 보이는 목록) 의 id 합집합. 비활성(enabled=false)
+    // 대상도 라벨에서 선택 가능하니 전체 선택에도 포함시킨다 — 사용자는 토글로
+    // 개별 제외 가능. 전체 해제는 현재 보이는 id 만 selection 에서 빼고 그 외
+    // (다른 타입에서 선택된 id) 는 보존 — picker 는 단일 타입을 다루지만
+    // selectedIds 자체는 부모가 다른 타입과 공유할 수 있다.
+    const filteredIds = filtered.map((t) => t.id);
+    const allChecked = filtered.length > 0 && filteredIds.every((id) => selectedSet.has(id));
+    const toggleAll = () => {
+        if (allChecked) {
+            onChange(selectedIds.filter((id) => !filteredIds.includes(id)));
+        } else {
+            const merged = new Set(selectedIds);
+            filteredIds.forEach((id) => merged.add(id));
+            onChange(Array.from(merged));
+        }
+    };
+
     if (loading) {
         return <div className="target-pick-hint">불러오는 중...</div>;
     }
@@ -93,8 +110,27 @@ const MonitorTargetPicker = ({
         );
     }
 
+    const someChecked = filteredIds.some((id) => selectedSet.has(id)) && !allChecked;
+
     return (
         <div className="target-pick-list">
+            <label className="target-pick-row target-pick-row-all">
+                <input
+                    type="checkbox"
+                    checked={allChecked}
+                    ref={(el) => {
+                        // indeterminate 는 DOM property only — JSX prop 으로 지정 불가
+                        if (el) el.indeterminate = someChecked;
+                    }}
+                    onChange={toggleAll}
+                />
+                <div className="target-pick-title">
+                    전체 선택 ({filtered.length}개)
+                </div>
+                <div className="target-pick-sub">
+                    {selectedIds.filter((id) => filteredIds.includes(id)).length}개 선택됨
+                </div>
+            </label>
             {filtered.map((t) => {
                 const checked = selectedSet.has(t.id);
                 const sub =
@@ -117,16 +153,14 @@ const MonitorTargetPicker = ({
                             checked={checked}
                             onChange={() => toggle(t.id)}
                         />
-                        <div className="target-pick-meta">
-                            <div className="target-pick-title">
-                                {t.label || t.id}
-                                {!t.enabled && (
-                                    <span className="target-pick-badge">꺼짐</span>
-                                )}
-                            </div>
-                            <div className="target-pick-sub">
-                                {t.id} · {sub}
-                            </div>
+                        <div className="target-pick-title">
+                            {t.label || t.id}
+                            {!t.enabled && (
+                                <span className="target-pick-badge">꺼짐</span>
+                            )}
+                        </div>
+                        <div className="target-pick-sub">
+                            {t.id} · {sub}
                         </div>
                     </label>
                 );

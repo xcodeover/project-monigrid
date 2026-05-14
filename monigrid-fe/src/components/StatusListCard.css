@@ -149,7 +149,7 @@
 }
 
 .status-list-label {
-    font-size: 0.75rem;
+    font-size: inherit;
     font-weight: 600;
     color: #f1f7fb;
     white-space: nowrap;
@@ -160,12 +160,10 @@
 }
 
 .mode-compact .status-list-label {
-    font-size: 0.68rem;
     flex: 1;
 }
 
 .mode-wide .status-list-label {
-    font-size: 0.82rem;
     max-width: 32%;
     flex-shrink: 0;
 }
@@ -174,19 +172,15 @@
     flex: 1;
     min-width: 0;
     color: #7a96a8;
-    font-size: 0.71rem;
+    font-size: inherit;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     text-align: right;
 }
 
-.mode-wide .status-list-url {
-    font-size: 0.74rem;
-}
-
 .status-list-latency {
-    font-size: 0.72rem;
+    font-size: inherit;
     font-weight: 600;
     color: #9ab0bf;
     white-space: nowrap;
@@ -196,12 +190,10 @@
 }
 
 .mode-compact .status-list-latency {
-    font-size: 0.62rem;
     min-width: 32px;
 }
 
 .mode-wide .status-list-latency {
-    font-size: 0.78rem;
     min-width: 56px;
 }
 

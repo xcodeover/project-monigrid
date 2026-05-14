@@ -200,6 +200,10 @@ const WidgetRendererInner = ({
         sizeBounds,
         refreshIntervalSec:
             widget.refreshIntervalSec ?? DEFAULT_REFRESH_INTERVAL_SEC,
+        // DashboardPage 가 이미 widget.dataFontSize ?? global 로 resolve 한 값을
+        // 넘겨준다. 각 카드는 settings 모달에서 fontSize 편집 시 widget.dataFontSize
+        // 만 patch 하면 user_preferences DB 에 자동 persist.
+        widgetFontSize: widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE,
         onRefreshIntervalChange: handleRefreshIntervalChange,
         onWidgetMetaChange: handleWidgetMetaChange,
         onSizeChange: handleSizeChange,
@@ -227,6 +231,12 @@ const WidgetRendererInner = ({
         );
     }
 
+    // 4 카드(StatusList/ServerResource/NetworkTest/HealthCheck)는 데이터 카드와
+    // 시그니처가 달라 commonCardProps 를 그대로 spread 하지 않는다. 다만
+    // widgetFontSize 는 모든 카드의 settings 모달 draft 초기값으로 필요하므로
+    // 공통으로 추출해 명시 전달한다. 누락 시 모달이 항상 default 13 으로 reset 됨.
+    const resolvedFontSize = widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE;
+
     if (widget.type === WIDGET_TYPE_STATUS_LIST) {
         return (
             <StatusListCard
@@ -243,6 +253,7 @@ const WidgetRendererInner = ({
                 refreshIntervalSec={
                     widget.refreshIntervalSec ?? DEFAULT_REFRESH_INTERVAL_SEC
                 }
+                widgetFontSize={resolvedFontSize}
                 onRefreshIntervalChange={handleRefreshIntervalChange}
                 onWidgetMetaChange={handleWidgetMetaChange}
                 onTargetIdsChange={handleStatusListTargetIdsChange}
@@ -261,6 +272,7 @@ const WidgetRendererInner = ({
                 currentSize={currentLayout}
                 sizeBounds={sizeBounds}
                 refreshIntervalSec={widget.refreshIntervalSec ?? 30}
+                widgetFontSize={resolvedFontSize}
                 onRefreshIntervalChange={handleRefreshIntervalChange}
                 onWidgetMetaChange={handleWidgetMetaChange}
                 onWidgetConfigChange={handleServerConfigChange}
@@ -279,6 +291,7 @@ const WidgetRendererInner = ({
                 currentSize={currentLayout}
                 sizeBounds={sizeBounds}
                 refreshIntervalSec={widget.refreshIntervalSec ?? 10}
+                widgetFontSize={resolvedFontSize}
                 onRefreshIntervalChange={handleRefreshIntervalChange}
                 onWidgetMetaChange={handleWidgetMetaChange}
                 onWidgetConfigChange={handleNetworkConfigChange}
@@ -306,6 +319,7 @@ const WidgetRendererInner = ({
                 refreshIntervalSec={
                     widget.refreshIntervalSec ?? DEFAULT_REFRESH_INTERVAL_SEC
                 }
+                widgetFontSize={resolvedFontSize}
                 onRefreshIntervalChange={handleRefreshIntervalChange}
                 onWidgetMetaChange={handleWidgetMetaChange}
                 onSizeChange={handleSizeChange}

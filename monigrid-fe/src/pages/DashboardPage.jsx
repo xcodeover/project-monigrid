@@ -12,7 +12,6 @@ import {
 import {
     alertService,
     monitorService,
-    titleService,
     widgetConfigService,
 } from "../services/dashboardService";
 import { IconHistory } from "../components/icons.jsx";
@@ -34,10 +33,14 @@ import {
     DEFAULT_WIDGET_FONT_SIZE,
     DEFAULT_WIDGET_LAYOUT,
     GRID_COLUMNS,
+    MAX_WIDGET_FONT_SIZE,
     MAX_WIDGET_H,
     MAX_WIDGET_W,
+    MIN_WIDGET_FONT_SIZE,
     MIN_WIDGET_H,
     MIN_WIDGET_W,
+    WIDGET_TYPE_BAR_CHART,
+    WIDGET_TYPE_LINE_CHART,
     WIDGET_TYPE_NETWORK_TEST,
     WIDGET_TYPE_SERVER_RESOURCE,
     WIDGET_TYPE_STATUS_LIST,
@@ -130,7 +133,9 @@ const DashboardPageInner = () => {
     const [apiBaseUrlSaved, setApiBaseUrlSaved] = useState(false);
     const [backendVersion, setBackendVersion] = useState(null);
     const [dashboardTitle, setDashboardTitle] = useState("");
-    const [dashboardTitleDraft, setDashboardTitleDraft] = useState("");
+    // Footer Copyright 의 회사명 — admin 이 ConfigEditorPage 기본 탭에서 편집한
+    // KV 값. 빈 문자열이면 build-time COMPANY_NAME 으로 fallback.
+    const [companyName, setCompanyName] = useState("");
     const [isFullscreen, setIsFullscreen] = useState(
         () => typeof document !== "undefined" && !!document.fullscreenElement,
     );
@@ -192,10 +197,10 @@ const DashboardPageInner = () => {
                 const res = await dashboardService.getApiData(null, "/dashboard/health");
                 if (cancelled) return;
                 if (res?.version) setBackendVersion(res.version);
-                // dashboardTitle: empty string → FE falls back to APP_TITLE
-                const kvTitle = res?.dashboardTitle ?? "";
-                setDashboardTitle(kvTitle);
-                setDashboardTitleDraft(kvTitle);
+                // dashboardTitle / companyName: empty string → FE falls back to
+                // build-time APP_TITLE / COMPANY_NAME.
+                setDashboardTitle(res?.dashboardTitle ?? "");
+                setCompanyName(res?.companyName ?? "");
             } catch {
                 /* ignore */
             }
@@ -475,41 +480,41 @@ const DashboardPageInner = () => {
         const targetWidget = dashboardWidgets.find(
             (widget) => widget.id === apiId,
         );
-        if (!targetWidget) {
+        if (!targetWidget || !updates) {
             return;
         }
 
-        const nextTitle = String(
-            updates?.title ?? targetWidget.title ?? "",
-        ).trim();
-        if (!nextTitle) {
-            return;
+        // 임의 필드(dataFontSize 등)는 그대로 통과시키되, title/endpoint 는
+        // 명시적으로 변경 요청된 경우에만 검증/정규화. 이전 코드는 항상 title
+        // 만 뽑아 forward 해 dataFontSize 같은 patch 가 store 에 도달하지 못했다.
+        const patch = { ...updates };
+
+        if (Object.prototype.hasOwnProperty.call(updates, "title")) {
+            const nextTitle = String(updates.title ?? "").trim();
+            if (!nextTitle) return;
+            patch.title = nextTitle;
         }
 
-        // Types that don't have an endpoint field — just update title
-        if (
-            targetWidget.type === WIDGET_TYPE_STATUS_LIST ||
-            targetWidget.type === WIDGET_TYPE_NETWORK_TEST ||
-            targetWidget.type === WIDGET_TYPE_SERVER_RESOURCE
-        ) {
-            updateWidget(apiId, { title: nextTitle });
-            return;
+        if (Object.prototype.hasOwnProperty.call(updates, "endpoint")) {
+            // endpoint 가 없는 위젯 타입은 무시
+            if (
+                targetWidget.type === WIDGET_TYPE_STATUS_LIST ||
+                targetWidget.type === WIDGET_TYPE_NETWORK_TEST ||
+                targetWidget.type === WIDGET_TYPE_SERVER_RESOURCE
+            ) {
+                delete patch.endpoint;
+            } else {
+                const nextEndpoint = String(updates.endpoint ?? "").trim();
+                if (!nextEndpoint) return;
+                patch.endpoint = normalizeUserEndpoint(
+                    nextEndpoint,
+                    rememberedApiBaseUrl,
+                );
+            }
         }
 
-        const nextEndpoint = String(
-            updates?.endpoint ?? targetWidget.endpoint ?? "",
-        ).trim();
-        if (!nextEndpoint) {
-            return;
-        }
-
-        updateWidget(apiId, {
-            title: nextTitle,
-            endpoint: normalizeUserEndpoint(
-                nextEndpoint,
-                rememberedApiBaseUrl,
-            ),
-        });
+        if (Object.keys(patch).length === 0) return;
+        updateWidget(apiId, patch);
     };
 
     const handleStatusListTargetIdsChange = (apiId, targetIds) => {
@@ -618,14 +623,34 @@ const DashboardPageInner = () => {
     const handleApplyDashboardSettings = () => {
         const normalizedFontSize = clampValue(
             fontSizeDraft,
-            10,
-            18,
+            MIN_WIDGET_FONT_SIZE,
+            MAX_WIDGET_FONT_SIZE,
             DEFAULT_WIDGET_FONT_SIZE,
         );
         setFontSizeDraft(normalizedFontSize);
         setDashboardSettings({
             widgetFontSize: normalizedFontSize,
         });
+
+        // 일괄 적용: 차트(LineChart/BarChart)는 recharts 축/범례 영역이라
+        // 데이터 폰트 개념이 없으니 제외하고, 나머지 위젯의 dataFontSize 를
+        // 일괄 override. user_preferences 의 widgets 배열로 자동 persist.
+        const currentWidgets = widgets ?? [];
+        if (currentWidgets.length === 0) return;
+        const nextWidgets = currentWidgets.map((widget) => {
+            if (
+                widget.type === WIDGET_TYPE_LINE_CHART ||
+                widget.type === WIDGET_TYPE_BAR_CHART
+            ) {
+                return widget;
+            }
+            if (widget.dataFontSize === normalizedFontSize) return widget;
+            return { ...widget, dataFontSize: normalizedFontSize };
+        });
+        const changed = nextWidgets.some((w, i) => w !== currentWidgets[i]);
+        if (changed) {
+            setWidgets(nextWidgets);
+        }
     };
 
     const handleApplyApiBaseUrl = async () => {
@@ -696,17 +721,6 @@ const DashboardPageInner = () => {
         setApiBaseUrlSaved(false);
     };
 
-    const handleApplyDashboardTitle = async (newTitle) => {
-        const trimmed = String(newTitle ?? "").trim();
-        try {
-            await titleService.setDashboardTitle(trimmed);
-            setDashboardTitle(trimmed);
-            setDashboardTitleDraft(trimmed);
-        } catch (err) {
-            console.error("대시보드 타이틀 저장 실패", err);
-        }
-    };
-
     const widgetFontSize =
         dashboardSettings?.widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE;
 
@@ -759,10 +773,6 @@ const DashboardPageInner = () => {
                     configErrorMessage={configErrorMessage}
                     onExportConfig={handleExportConfig}
                     onImportConfigFromText={handleImportConfigFromText}
-                    isAdmin={isAdmin}
-                    dashboardTitleDraft={dashboardTitleDraft}
-                    onDashboardTitleDraftChange={setDashboardTitleDraft}
-                    onApplyDashboardTitle={handleApplyDashboardTitle}
                 />
             )}
 
@@ -846,7 +856,9 @@ const DashboardPageInner = () => {
                                             apiStatus={apiStatus}
                                             isLoading={isLoading}
                                             isRefreshing={isRefreshing}
-                                            widgetFontSize={widgetFontSize}
+                                            // 위젯별 override 가 있으면 그 값을, 없으면 dashboardSettings 의 글로벌
+                                            // 값을 사용. 두 설정 다 user_preferences DB 에 저장됨.
+                                            widgetFontSize={widget.dataFontSize ?? widgetFontSize}
                                             onRemoveApi={handleRemoveApi}
                                             onManualRefresh={handleManualRefresh}
                                             onRefetchOne={refetchOne}
@@ -898,7 +910,7 @@ const DashboardPageInner = () => {
                     </button>
                 )}
                 <span className='footer-copyright'>
-                    Copyright © {CURRENT_YEAR} {COMPANY_NAME}. All rights
+                    Copyright © {CURRENT_YEAR} {companyName || COMPANY_NAME}. All rights
                     reserved.
                 </span>
                 {/* monigrid_settings_kv.version 을 application 버전으로 표시.

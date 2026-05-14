@@ -252,15 +252,15 @@ export const useBarChartSettings = ({
             thresholds: cleanThresholds,
         });
 
-        if (
-            titleDraft.trim() &&
-            endpointDraft.trim() &&
-            (titleDraft.trim() !== title || endpointDraft.trim() !== endpoint)
-        ) {
-            onWidgetMetaChange?.({
-                title: titleDraft.trim(),
-                endpoint: endpointDraft.trim(),
-            });
+        const metaPatch = {};
+        if (titleDraft.trim() && titleDraft.trim() !== title) {
+            metaPatch.title = titleDraft.trim();
+        }
+        if (endpointDraft.trim() && endpointDraft.trim() !== endpoint) {
+            metaPatch.endpoint = endpointDraft.trim();
+        }
+        if (Object.keys(metaPatch).length > 0) {
+            onWidgetMetaChange?.(metaPatch);
         }
 
         const nextInterval = Math.min(

@@ -20,9 +20,10 @@ const APP_TITLE = import.meta.env.VITE_APP_TITLE || "Monitoring Dashboard";
  * Pure presentational — receives the widget count, the resolved user,
  * and a set of toolbar callbacks. Owns no state.
  *
- * `dashboardTitle` is the KV-persisted override set by admin via the settings
- * modal. Falls back to the build-time `APP_TITLE` (VITE_APP_TITLE env var →
- * "Monitoring Dashboard") when empty or not yet loaded.
+ * `dashboardTitle` is the KV-persisted override set by admin via the backend
+ * settings page (기본 탭 > 서버 항목 > 앱 타이틀). Falls back to the build-time
+ * `APP_TITLE` (VITE_APP_TITLE env var → "Monitoring Dashboard") when empty or
+ * not yet loaded.
  * Note: LoginPage intentionally keeps its own build-time title — unauthenticated
  * users cannot access the authenticated /dashboard/health endpoint.
  */

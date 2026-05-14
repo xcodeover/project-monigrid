@@ -15,10 +15,13 @@ import {
     reorderItems,
 } from "./apiCardHelpers";
 import {
+    DEFAULT_WIDGET_FONT_SIZE,
     MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_FONT_SIZE,
     MAX_WIDGET_H,
     MAX_WIDGET_W,
     MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_FONT_SIZE,
     MIN_WIDGET_H,
     MIN_WIDGET_W,
 } from "../pages/dashboardConstants";
@@ -43,6 +46,7 @@ const ApiCardSettingsContainer = ({
     currentSize,
     sizeBounds,
     refreshIntervalSec,
+    widgetFontSize,
     onSizeChange,
     onRefreshIntervalChange,
     onWidgetMetaChange,
@@ -70,6 +74,9 @@ const ApiCardSettingsContainer = ({
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 5);
     const [titleDraft, setTitleDraft] = useState(title);
     const [endpointDraft, setEndpointDraft] = useState(endpoint);
+    const [fontSizeDraft, setFontSizeDraft] = useState(
+        widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE,
+    );
 
     useEffect(() => {
         setSizeDraft({ w: currentSize?.w ?? 4, h: currentSize?.h ?? 4 });
@@ -77,6 +84,9 @@ const ApiCardSettingsContainer = ({
     useEffect(() => { setIntervalDraft(refreshIntervalSec ?? 5); }, [refreshIntervalSec]);
     useEffect(() => { setTitleDraft(title); }, [title]);
     useEffect(() => { setEndpointDraft(endpoint); }, [endpoint]);
+    useEffect(() => {
+        setFontSizeDraft(widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE);
+    }, [widgetFontSize]);
 
     const handleSizeApply = () => {
         const minW = sizeBounds?.minW ?? MIN_WIDGET_W;
@@ -108,6 +118,19 @@ const ApiCardSettingsContainer = ({
         onWidgetMetaChange?.({ title: nextTitle, endpoint: nextEndpoint });
     };
 
+    const handleFontSizeApply = () => {
+        const nextSize = clamp(
+            fontSizeDraft,
+            MIN_WIDGET_FONT_SIZE,
+            MAX_WIDGET_FONT_SIZE,
+            DEFAULT_WIDGET_FONT_SIZE,
+        );
+        setFontSizeDraft(nextSize);
+        // dataFontSize 는 widget 객체에 직접 저장 → user_preferences DB 의
+        // widgets 배열로 자동 persist (handleWidgetMetaChange → updateWidget).
+        onWidgetMetaChange?.({ dataFontSize: nextSize });
+    };
+
     return (
         <ApiCardSettingsModal
             open={open}
@@ -125,6 +148,9 @@ const ApiCardSettingsContainer = ({
             intervalDraft={intervalDraft}
             onIntervalDraftChange={setIntervalDraft}
             onIntervalApply={handleIntervalApply}
+            fontSizeDraft={fontSizeDraft}
+            onFontSizeDraftChange={setFontSizeDraft}
+            onFontSizeApply={handleFontSizeApply}
             orderedColumns={orderedColumns}
             visibleColumns={visibleColumns}
             localColumnWidths={localColumnWidths}
@@ -547,6 +573,7 @@ const ApiCard = ({
                     currentSize={currentSize}
                     sizeBounds={sizeBounds}
                     refreshIntervalSec={refreshIntervalSec}
+                    widgetFontSize={widgetFontSize}
                     onSizeChange={onSizeChange}
                     onRefreshIntervalChange={onRefreshIntervalChange}
                     onWidgetMetaChange={onWidgetMetaChange}

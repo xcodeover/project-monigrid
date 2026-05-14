@@ -8,6 +8,7 @@ import {
     WIDGET_TYPE_TABLE,
 } from "./dashboardConstants";
 import MonitorTargetPicker from "../components/MonitorTargetPicker";
+import EndpointSelect from "../components/EndpointSelect";
 import { IconClose, IconPlus } from "../components/icons";
 
 /**
@@ -31,6 +32,13 @@ const AddApiModal = ({
     const isNetwork = form.type === WIDGET_TYPE_NETWORK_TEST;
     const isStatusList = form.type === WIDGET_TYPE_STATUS_LIST;
     const usesMonitorTargets = isServer || isNetwork || isStatusList;
+    // generic 데이터 API 위젯 (table / line-chart / bar-chart) 은 BE 등록 API
+    // 드롭다운에서 선택. health-check 는 임의 외부 URL 도 핑할 수 있어야 해서
+    // text input 유지.
+    const usesEndpointSelect =
+        form.type === WIDGET_TYPE_TABLE ||
+        form.type === WIDGET_TYPE_LINE_CHART ||
+        form.type === WIDGET_TYPE_BAR_CHART;
     const selectedIds = Array.isArray(form.targetIds) ? form.targetIds : [];
 
     const monitorPickerTargetType = isServer
@@ -47,7 +55,7 @@ const AddApiModal = ({
     return (
         <div className='modal-overlay'>
             <div
-                className='modal-content'
+                className={`modal-content${usesMonitorTargets ? " modal-content-wide" : ""}`}
                 onClick={(event) => event.stopPropagation()}
             >
                 <div className='modal-header'>
@@ -86,6 +94,17 @@ const AddApiModal = ({
                             <span className='form-hint'>
                                 선택 {selectedIds.length}개 — 수집 주기/접속 정보는 백엔드 설정에서 관리됩니다.
                             </span>
+                        </div>
+                    ) : usesEndpointSelect ? (
+                        <div className='form-group'>
+                            <label htmlFor='api-endpoint'>엔드포인트 (데이터 API)</label>
+                            <EndpointSelect
+                                id='api-endpoint'
+                                value={form.endpoint}
+                                onChange={(next) =>
+                                    onChange({ ...form, endpoint: next })
+                                }
+                            />
                         </div>
                     ) : (
                         <div className='form-group'>

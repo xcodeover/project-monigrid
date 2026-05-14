@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
     CartesianGrid,
     Legend,
@@ -24,27 +25,10 @@ const CHART_COLORS = [
     "#e17055",
 ];
 
-const ChartTooltip = ({ active, payload, label }) => {
-    if (!active || !payload?.length) return null;
-    return (
-        <div className='lc-tooltip'>
-            <p className='lc-tooltip-label'>{String(label)}</p>
-            {payload.map((entry) => (
-                <div
-                    key={entry.dataKey}
-                    className='lc-tooltip-row'
-                    style={{ color: entry.color }}
-                >
-                    <span className='lc-tooltip-name'>{entry.name}</span>
-                    <span className='lc-tooltip-value'>
-                        {typeof entry.value === "number"
-                            ? entry.value.toLocaleString()
-                            : String(entry.value ?? "—")}
-                    </span>
-                </div>
-            ))}
-        </div>
-    );
+const formatTooltipValue = (raw) => {
+    if (typeof raw === "number") return raw.toLocaleString();
+    if (raw == null || raw === "") return "—";
+    return String(raw);
 };
 
 /**
@@ -63,6 +47,11 @@ const LineChartBody = ({ error, loading, settings, chartSettings }) => {
         yAxisKeys,
         activeThresholds,
     } = settings;
+
+    // recharts 3.x 의 LineChart Tooltip 은 payload entry.value 가 0/stale 로
+    // 들어오는 케이스가 있다. BarChartBody 와 동일하게 마우스 위치를 직접
+    // 추적해 chartRows[idx] 에서 row 를 가져와 row[key] 를 그대로 표시한다.
+    const [activeIdx, setActiveIdx] = useState(null);
 
     if (error) {
         return <div className='lc-state lc-error'>⚠️ 오류: {error}</div>;
@@ -95,6 +84,23 @@ const LineChartBody = ({ error, loading, settings, chartSettings }) => {
                         left: 0,
                         bottom: 4,
                     }}
+                    onMouseMove={(state) => {
+                        const raw = state?.activeTooltipIndex;
+                        const idx =
+                            raw == null || raw === ""
+                                ? NaN
+                                : Number(raw);
+                        if (
+                            state?.isTooltipActive &&
+                            Number.isInteger(idx) &&
+                            idx >= 0
+                        ) {
+                            setActiveIdx(idx);
+                        } else {
+                            setActiveIdx(null);
+                        }
+                    }}
+                    onMouseLeave={() => setActiveIdx(null)}
                 >
                     <CartesianGrid
                         strokeDasharray='3 3'
@@ -115,7 +121,44 @@ const LineChartBody = ({ error, loading, settings, chartSettings }) => {
                         axisLine={false}
                         width={44}
                     />
-                    <Tooltip content={<ChartTooltip />} />
+                    <Tooltip
+                        content={(tooltipProps) => {
+                            if (!tooltipProps?.active) return null;
+                            const idx = activeIdx;
+                            if (idx == null || !chartRows[idx]) return null;
+                            const row = chartRows[idx];
+                            const labelValue = xAxisKey
+                                ? row?.[xAxisKey]
+                                : tooltipProps.label;
+                            return (
+                                <div className='lc-tooltip'>
+                                    {labelValue != null && labelValue !== "" && (
+                                        <p className='lc-tooltip-label'>
+                                            {String(labelValue)}
+                                        </p>
+                                    )}
+                                    {yAxisKeys.map((key, i) => {
+                                        const color =
+                                            CHART_COLORS[i % CHART_COLORS.length];
+                                        return (
+                                            <div
+                                                key={key}
+                                                className='lc-tooltip-row'
+                                                style={{ color }}
+                                            >
+                                                <span className='lc-tooltip-name'>
+                                                    {key}
+                                                </span>
+                                                <span className='lc-tooltip-value'>
+                                                    {formatTooltipValue(row?.[key])}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        }}
+                    />
                     {activeThresholds.map((t, idx) => {
                         const numericValue = Number(t.value);
                         if (!Number.isFinite(numericValue)) return null;

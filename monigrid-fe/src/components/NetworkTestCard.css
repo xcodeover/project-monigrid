@@ -63,32 +63,24 @@
     max-height: 24px;
 }
 
-.mode-compact .net-row-label {
-    font-size: 10px;
-}
-
 .mode-compact .net-row-right {
     gap: 4px;
 }
 
 .mode-compact .net-row-type {
-    font-size: 8px;
     padding: 0 4px;
     min-width: 28px;
 }
 
 .mode-compact .net-row-status {
-    font-size: 9px;
     min-width: 24px;
 }
 
 .mode-compact .net-row-latency {
-    font-size: 9px;
     min-width: 32px;
 }
 
 .mode-compact .net-row-host {
-    font-size: 9px;
     max-width: 100px;
 }
 
@@ -102,32 +94,24 @@
     max-height: 32px;
 }
 
-.mode-wide .net-row-label {
-    font-size: 13px;
-}
-
 .mode-wide .net-row-right {
     gap: 12px;
 }
 
 .mode-wide .net-row-host {
-    font-size: 11px;
     max-width: 240px;
 }
 
 .mode-wide .net-row-type {
-    font-size: 10px;
     padding: 2px 8px;
     min-width: 44px;
 }
 
 .mode-wide .net-row-status {
-    font-size: 12px;
     min-width: 40px;
 }
 
 .mode-wide .net-row-latency {
-    font-size: 11px;
     min-width: 54px;
 }
 
@@ -158,7 +142,7 @@
 /* ── target name (left-aligned) ─────────────────────────────────── */
 
 .net-row-label {
-    font-size: 12px;
+    font-size: inherit;
     font-weight: 700;
     color: var(--text-primary, #e2e8f0);
     white-space: nowrap;
@@ -181,7 +165,7 @@
 /* ── host address ───────────────────────────────────────────────── */
 
 .net-row-host {
-    font-size: 10px;
+    font-size: inherit;
     color: var(--text-tertiary, #64748b);
     white-space: nowrap;
     overflow: hidden;
@@ -209,7 +193,7 @@
 /* ── status text ────────────────────────────────────────────────── */
 
 .net-row-status {
-    font-size: 11px;
+    font-size: inherit;
     font-weight: 700;
     color: #94a3b8;
     flex-shrink: 0;
@@ -228,7 +212,7 @@
 /* ── latency ────────────────────────────────────────────────────── */
 
 .net-row-latency {
-    font-size: 10px;
+    font-size: inherit;
     font-weight: 600;
     color: rgba(25, 160, 255, 0.85);
     white-space: nowrap;

@@ -1,8 +1,10 @@
 import {
     MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_FONT_SIZE,
     MAX_WIDGET_H,
     MAX_WIDGET_W,
     MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_FONT_SIZE,
     MIN_WIDGET_H,
     MIN_WIDGET_W,
     SIZE_STEP,
@@ -39,6 +41,10 @@ const ServerResourceSettingsModal = ({
     intervalDraft,
     onIntervalDraftChange,
     onIntervalApply,
+    // Data area font size editor
+    fontSizeDraft,
+    onFontSizeDraftChange,
+    onFontSizeApply,
     // Target selection
     selectedTargetIds,
     onSelectedTargetIdsChange,
@@ -74,12 +80,12 @@ const ServerResourceSettingsModal = ({
                             </button>
                         </div>
                     </div>
-                    <div className='settings-inline-row'>
-                        <div className='settings-section'>
-                            <h6>위젯 크기</h6>
-                            <div className='size-editor widget-size-editor'>
-                                <label>
-                                    Width
+                    <div className='settings-section'>
+                        <h6>위젯 동작</h6>
+                        <div className='widget-action-row'>
+                            <div className='widget-action-cell'>
+                                <label>크기 (W × H)</label>
+                                <div className='widget-action-size'>
                                     <input
                                         type='number'
                                         min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)}
@@ -93,9 +99,7 @@ const ServerResourceSettingsModal = ({
                                             }))
                                         }
                                     />
-                                </label>
-                                <label>
-                                    Height
+                                    <span className='widget-action-size-sep'>×</span>
                                     <input
                                         type='number'
                                         min={sizeBounds?.minH ?? MIN_WIDGET_H}
@@ -108,39 +112,43 @@ const ServerResourceSettingsModal = ({
                                             }))
                                         }
                                     />
-                                </label>
-                                <button
-                                    type='button'
-                                    className='size-preset-btn'
-                                    onClick={onSizeApply}
-                                >
-                                    적용
-                                </button>
+                                </div>
                             </div>
-                        </div>
-                        <div className='settings-section refresh-interval-section'>
-                            <h6>갱신 주기 (초)</h6>
-                            <div className='refresh-interval-editor'>
-                                <label className='refresh-interval-input-label'>
-                                    <span>Interval</span>
-                                    <input
-                                        type='number'
-                                        min={MIN_REFRESH_INTERVAL_SEC}
-                                        max={MAX_REFRESH_INTERVAL_SEC}
-                                        value={intervalDraft}
-                                        onChange={(e) =>
-                                            onIntervalDraftChange(e.target.value)
-                                        }
-                                    />
-                                </label>
-                                <button
-                                    type='button'
-                                    className='size-preset-btn'
-                                    onClick={onIntervalApply}
-                                >
-                                    적용
-                                </button>
+                            <div className='widget-action-cell'>
+                                <label>갱신 주기 (초)</label>
+                                <input
+                                    type='number'
+                                    min={MIN_REFRESH_INTERVAL_SEC}
+                                    max={MAX_REFRESH_INTERVAL_SEC}
+                                    value={intervalDraft}
+                                    onChange={(e) =>
+                                        onIntervalDraftChange(e.target.value)
+                                    }
+                                />
                             </div>
+                            <div className='widget-action-cell'>
+                                <label>폰트 크기 (px)</label>
+                                <input
+                                    type='number'
+                                    min={MIN_WIDGET_FONT_SIZE}
+                                    max={MAX_WIDGET_FONT_SIZE}
+                                    value={fontSizeDraft}
+                                    onChange={(e) =>
+                                        onFontSizeDraftChange(e.target.value)
+                                    }
+                                />
+                            </div>
+                            <button
+                                type='button'
+                                className='size-preset-btn'
+                                onClick={() => {
+                                    onSizeApply();
+                                    onIntervalApply();
+                                    onFontSizeApply();
+                                }}
+                            >
+                                적용
+                            </button>
                         </div>
                     </div>
                     <div className='settings-section srv-list-section'>

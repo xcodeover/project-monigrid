@@ -4,10 +4,13 @@ import { monitorService } from "../services/dashboardService.js";
 import { useTimemachine } from "../contexts/TimemachineContext";
 import { useDocumentVisible } from "../hooks/useDocumentVisible.js";
 import {
+    DEFAULT_WIDGET_FONT_SIZE,
     MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_FONT_SIZE,
     MAX_WIDGET_H,
     MAX_WIDGET_W,
     MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_FONT_SIZE,
     MIN_WIDGET_H,
     MIN_WIDGET_W,
     SIZE_STEP,
@@ -117,6 +120,7 @@ const NetworkTestSettingsModal = ({
     currentSize,
     sizeBounds,
     refreshIntervalSec,
+    widgetFontSize,
     onSizeChange,
     onRefreshIntervalChange,
     onWidgetMetaChange,
@@ -128,6 +132,9 @@ const NetworkTestSettingsModal = ({
     });
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 10);
     const [titleDraft, setTitleDraft] = useState(title);
+    const [fontSizeDraft, setFontSizeDraft] = useState(
+        widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE,
+    );
     const [selectedTargetIdsDraft, setSelectedTargetIdsDraft] = useState(
         () => [...targetIds],
     );
@@ -139,6 +146,9 @@ const NetworkTestSettingsModal = ({
         setIntervalDraft(refreshIntervalSec ?? 10);
     }, [refreshIntervalSec]);
     useEffect(() => { setTitleDraft(title); }, [title]);
+    useEffect(() => {
+        setFontSizeDraft(widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE);
+    }, [widgetFontSize]);
 
     const handleSizeApply = () => {
         const w = clamp(sizeDraft.w, sizeBounds?.minW ?? MIN_WIDGET_W, sizeBounds?.maxW ?? MAX_WIDGET_W, currentSize?.w ?? 8);
@@ -156,6 +166,17 @@ const NetworkTestSettingsModal = ({
     const handleTitleApply = () => {
         const t = titleDraft.trim();
         if (t && t !== title) onWidgetMetaChange?.({ title: t });
+    };
+
+    const handleFontSizeApply = () => {
+        const v = clamp(
+            fontSizeDraft,
+            MIN_WIDGET_FONT_SIZE,
+            MAX_WIDGET_FONT_SIZE,
+            DEFAULT_WIDGET_FONT_SIZE,
+        );
+        setFontSizeDraft(v);
+        onWidgetMetaChange?.({ dataFontSize: v });
     };
 
     const handleSaveTargets = () => {
@@ -181,21 +202,61 @@ const NetworkTestSettingsModal = ({
                     <button type="button" className="size-preset-btn" onClick={handleTitleApply}>적용</button>
                 </div>
             </div>
-            <div className="settings-inline-row">
-                <div className="settings-section">
-                    <h6>위젯 크기</h6>
-                    <div className="size-editor widget-size-editor">
-                        <label>Width<input type="number" min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)} max={toUserSize(sizeBounds?.maxW ?? MAX_WIDGET_W)} step={SIZE_STEP} value={toUserSize(sizeDraft.w)} onChange={(e) => setSizeDraft((p) => ({ ...p, w: toGridSize(e.target.value) }))} /></label>
-                        <label>Height<input type="number" min={sizeBounds?.minH ?? MIN_WIDGET_H} max={sizeBounds?.maxH ?? MAX_WIDGET_H} value={sizeDraft.h} onChange={(e) => setSizeDraft((p) => ({ ...p, h: e.target.value }))} /></label>
-                        <button type="button" className="size-preset-btn" onClick={handleSizeApply}>적용</button>
+            <div className="settings-section">
+                <h6>위젯 동작</h6>
+                <div className="widget-action-row">
+                    <div className="widget-action-cell">
+                        <label>크기 (W × H)</label>
+                        <div className="widget-action-size">
+                            <input
+                                type="number"
+                                min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)}
+                                max={toUserSize(sizeBounds?.maxW ?? MAX_WIDGET_W)}
+                                step={SIZE_STEP}
+                                value={toUserSize(sizeDraft.w)}
+                                onChange={(e) => setSizeDraft((p) => ({ ...p, w: toGridSize(e.target.value) }))}
+                            />
+                            <span className="widget-action-size-sep">×</span>
+                            <input
+                                type="number"
+                                min={sizeBounds?.minH ?? MIN_WIDGET_H}
+                                max={sizeBounds?.maxH ?? MAX_WIDGET_H}
+                                value={sizeDraft.h}
+                                onChange={(e) => setSizeDraft((p) => ({ ...p, h: e.target.value }))}
+                            />
+                        </div>
                     </div>
-                </div>
-                <div className="settings-section refresh-interval-section">
-                    <h6>갱신 주기 (초)</h6>
-                    <div className="refresh-interval-editor">
-                        <label className="refresh-interval-input-label"><span>Interval</span><input type="number" min={MIN_REFRESH_INTERVAL_SEC} max={MAX_REFRESH_INTERVAL_SEC} value={intervalDraft} onChange={(e) => setIntervalDraft(e.target.value)} /></label>
-                        <button type="button" className="size-preset-btn" onClick={handleIntervalApply}>적용</button>
+                    <div className="widget-action-cell">
+                        <label>갱신 주기 (초)</label>
+                        <input
+                            type="number"
+                            min={MIN_REFRESH_INTERVAL_SEC}
+                            max={MAX_REFRESH_INTERVAL_SEC}
+                            value={intervalDraft}
+                            onChange={(e) => setIntervalDraft(e.target.value)}
+                        />
                     </div>
+                    <div className="widget-action-cell">
+                        <label>폰트 크기 (px)</label>
+                        <input
+                            type="number"
+                            min={MIN_WIDGET_FONT_SIZE}
+                            max={MAX_WIDGET_FONT_SIZE}
+                            value={fontSizeDraft}
+                            onChange={(e) => setFontSizeDraft(e.target.value)}
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        className="size-preset-btn"
+                        onClick={() => {
+                            handleSizeApply();
+                            handleIntervalApply();
+                            handleFontSizeApply();
+                        }}
+                    >
+                        적용
+                    </button>
                 </div>
             </div>
             <div className="settings-section srv-list-section">
@@ -228,6 +289,7 @@ const NetworkTestCard = ({
     sizeBounds,
     onSizeChange,
     refreshIntervalSec,
+    widgetFontSize,
     onRefreshIntervalChange,
     onWidgetMetaChange,
     onWidgetConfigChange,
@@ -660,6 +722,7 @@ const NetworkTestCard = ({
                     currentSize={currentSize}
                     sizeBounds={sizeBounds}
                     refreshIntervalSec={refreshIntervalSec}
+                    widgetFontSize={widgetFontSize}
                     onSizeChange={onSizeChange}
                     onRefreshIntervalChange={onRefreshIntervalChange}
                     onWidgetMetaChange={onWidgetMetaChange}
@@ -677,6 +740,7 @@ const NetworkTestCard = ({
                     <div
                         className={`net-list net-list-${displayMode}`}
                         ref={scrollRef}
+                        style={{ fontSize: `${widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE}px` }}
                     >
                         {displayTargets.map((t) => (
                             <TargetRow

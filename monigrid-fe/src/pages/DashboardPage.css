@@ -403,6 +403,13 @@
     max-width: 720px;
 }
 
+/* 위젯 추가 모달 중 MonitorTargetPicker 가 들어가는 위젯 타입 (server-resource,
+   network-test, status-list) 일 때 폭을 위젯 설정 모달 (.settings-popup) 과
+   동일한 780px 로 맞춰 picker 항목 표시가 같은 비율로 렌더되도록 한다. */
+.modal-content-wide {
+    max-width: 780px;
+}
+
 @keyframes slideIn {
     from {
         opacity: 0;

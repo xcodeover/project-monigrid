@@ -11,7 +11,7 @@
     justify-content: center;
     padding: 9px 12px;
     border-radius: 10px;
-    font-size: 13px;
+    font-size: inherit;
     font-weight: 700;
     border: 1px solid var(--border-subtle);
     background-color: var(--bg-surface);
@@ -44,14 +44,14 @@
 }
 
 .health-meta-label {
-    font-size: 11px;
+    font-size: inherit;
     color: var(--text-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.03em;
 }
 
 .health-meta-value {
-    font-size: 14px;
+    font-size: inherit;
     color: var(--text-primary);
     font-weight: 700;
 }

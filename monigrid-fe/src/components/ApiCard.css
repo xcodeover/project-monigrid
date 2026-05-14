@@ -412,7 +412,9 @@
 }
 
 .size-editor input,
-.refresh-interval-editor input {
+.size-editor select,
+.refresh-interval-editor input,
+.refresh-interval-editor select {
     width: 100%;
     padding: 8px 10px;
     background-color: rgba(255, 255, 255, 0.03);
@@ -423,10 +425,21 @@
 }
 
 .size-editor input:focus,
-.refresh-interval-editor input:focus {
+.size-editor select:focus,
+.refresh-interval-editor input:focus,
+.refresh-interval-editor select:focus {
     outline: none;
     border-color: rgba(25, 160, 255, 0.34);
     box-shadow: 0 0 0 3px rgba(25, 160, 255, 0.1);
+}
+
+/* <option> 은 OS/브라우저 네이티브 위젯이라 부모 select 의 dark text-color 가
+   inherit 돼 흰 배경 + 흰 글자로 안 보이는 케이스가 있다 — 다른 페이지들과
+   동일하게 option 의 배경/글자색을 명시. */
+.size-editor select option,
+.refresh-interval-editor select option {
+    color: var(--text-primary);
+    background-color: var(--bg-elevated);
 }
 
 .refresh-interval-editor {
@@ -1006,5 +1019,80 @@
 
     .status-list-latency {
         font-size: 0.58rem;
+    }
+}
+
+/* ── 공용 위젯 동작 row (크기/주기/폰트 통합) ─────────────────────────
+   위젯 settings 모달에서 위젯 크기 / 갱신 주기 / 데이터 폰트 크기를
+   한 줄로 컴팩트하게 배치하는 grid. 5개 카드(Api, ServerResource,
+   NetworkTest, HealthCheck, StatusList) 가 동일 디자인을 공유한다. */
+.widget-action-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: end;
+}
+
+/* 차트 모달 변형 — footer 의 통합 "적용" 버튼이 size/interval 등 모든
+   chart 설정을 한꺼번에 처리하므로 row 내부에 적용 버튼이 없다.
+   recharts 축/범례 폰트는 별도 영역이라 차트 모달에는 폰트 cell 도 없다. */
+.widget-action-row.widget-action-row-no-apply {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+}
+
+.widget-action-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.widget-action-cell > label,
+.widget-action-cell > .widget-action-label {
+    font-size: 0.78rem;
+    color: #9ab0bf;
+}
+
+.widget-action-cell input[type="number"] {
+    width: 100%;
+    border: 1px solid rgba(124, 151, 171, 0.35);
+    border-radius: 8px;
+    background: rgba(11, 22, 33, 0.9);
+    color: #f2f7fa;
+    padding: 7px 10px;
+    font-size: 0.85rem;
+    min-width: 0;
+}
+
+.widget-action-size {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.widget-action-size input {
+    flex: 1;
+    min-width: 0;
+}
+
+.widget-action-size-sep {
+    color: #7a96a8;
+    font-size: 0.78rem;
+}
+
+.widget-action-row .size-preset-btn {
+    align-self: end;
+    height: 36px;
+    padding: 0 14px;
+    white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+    .widget-action-row,
+    .widget-action-row.widget-action-row-no-apply {
+        grid-template-columns: 1fr 1fr;
+    }
+    .widget-action-row .size-preset-btn {
+        grid-column: 1 / -1;
     }
 }

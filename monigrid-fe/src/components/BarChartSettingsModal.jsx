@@ -9,6 +9,7 @@ import {
 } from "../pages/dashboardConstants";
 import { toGridSize, toUserSize } from "./widgetUtils.js";
 import WidgetSettingsModal from "./WidgetSettingsModal.jsx";
+import EndpointSelect from "./EndpointSelect.jsx";
 
 /**
  * Settings modal extracted from BarChartCard (SRP).
@@ -74,13 +75,9 @@ const BarChartSettingsModal = ({ title, sizeBounds, settings }) => {
                             </div>
                             <div className='bc-setting-group'>
                                 <label>엔드포인트</label>
-                                <input
-                                    type='text'
+                                <EndpointSelect
                                     value={endpointDraft}
-                                    onChange={(e) =>
-                                        setEndpointDraft(e.target.value)
-                                    }
-                                    placeholder='/api/...'
+                                    onChange={setEndpointDraft}
                                 />
                             </div>
                         </div>
@@ -203,13 +200,13 @@ const BarChartSettingsModal = ({ title, sizeBounds, settings }) => {
                         </div>
                     </div>
 
-                    {/* 5. 위젯 동작 */}
+                    {/* 5. 위젯 동작 — footer 의 통합 "적용" 이 size/interval/font 까지 일괄 처리 */}
                     <div className='settings-section'>
                         <h6>위젯 동작</h6>
-                        <div className='bc-settings-grid'>
-                            <div className='bc-setting-group'>
-                                <label>위젯 크기 (W × H)</label>
-                                <div className='bc-size-row'>
+                        <div className='widget-action-row widget-action-row-no-apply'>
+                            <div className='widget-action-cell'>
+                                <label>크기 (W × H)</label>
+                                <div className='widget-action-size'>
                                     <input
                                         type='number'
                                         min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)}
@@ -224,7 +221,7 @@ const BarChartSettingsModal = ({ title, sizeBounds, settings }) => {
                                         }
                                         placeholder='W'
                                     />
-                                    <span className='bc-size-sep'>×</span>
+                                    <span className='widget-action-size-sep'>×</span>
                                     <input
                                         type='number'
                                         min={sizeBounds?.minH ?? MIN_WIDGET_H}
@@ -240,7 +237,7 @@ const BarChartSettingsModal = ({ title, sizeBounds, settings }) => {
                                     />
                                 </div>
                             </div>
-                            <div className='bc-setting-group'>
+                            <div className='widget-action-cell'>
                                 <label>체크 주기 (초)</label>
                                 <input
                                     type='number'

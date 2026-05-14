@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+    DEFAULT_WIDGET_FONT_SIZE,
     MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_FONT_SIZE,
     MAX_WIDGET_H,
     MAX_WIDGET_W,
     MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_FONT_SIZE,
     MIN_WIDGET_H,
     MIN_WIDGET_W,
     SIZE_STEP,
@@ -40,6 +43,7 @@ const StatusListCard = ({
     sizeBounds,
     onSizeChange,
     refreshIntervalSec,
+    widgetFontSize,
     onRefreshIntervalChange,
     onWidgetMetaChange,
     onTargetIdsChange,
@@ -48,6 +52,9 @@ const StatusListCard = ({
     const [sizeDraft, setSizeDraft] = useState({ w: 4, h: 5 });
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 5);
     const [titleDraft, setTitleDraft] = useState(title);
+    const [fontSizeDraft, setFontSizeDraft] = useState(
+        widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE,
+    );
     const safeTargetIds = useMemo(
         () => (Array.isArray(targetIds) ? targetIds.filter(Boolean) : []),
         [targetIds],
@@ -106,6 +113,10 @@ const StatusListCard = ({
         setTargetIdsDraft(safeTargetIds);
     }, [safeTargetIds]);
 
+    useEffect(() => {
+        setFontSizeDraft(widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE);
+    }, [widgetFontSize]);
+
     const handleSizeApply = () => {
         const minW = sizeBounds?.minW ?? MIN_WIDGET_W;
         const maxW = sizeBounds?.maxW ?? MAX_WIDGET_W;
@@ -142,6 +153,17 @@ const StatusListCard = ({
         }
 
         onWidgetMetaChange?.({ title: nextTitle });
+    };
+
+    const handleFontSizeApply = () => {
+        const v = clamp(
+            fontSizeDraft,
+            MIN_WIDGET_FONT_SIZE,
+            MAX_WIDGET_FONT_SIZE,
+            DEFAULT_WIDGET_FONT_SIZE,
+        );
+        setFontSizeDraft(v);
+        onWidgetMetaChange?.({ dataFontSize: v });
     };
 
     const handleTargetIdsApply = () => {
@@ -215,12 +237,12 @@ const StatusListCard = ({
                         </button>
                     </div>
 
-                    <div className='settings-inline-row'>
-                        <div className='settings-section'>
-                            <h6>위젯 크기</h6>
-                            <div className='size-editor widget-size-editor'>
-                                <label>
-                                    Width
+                    <div className='settings-section'>
+                        <h6>위젯 동작</h6>
+                        <div className='widget-action-row'>
+                            <div className='widget-action-cell'>
+                                <label>크기 (W × H)</label>
+                                <div className='widget-action-size'>
                                     <input
                                         type='number'
                                         min={toUserSize(sizeBounds?.minW ?? MIN_WIDGET_W)}
@@ -234,9 +256,7 @@ const StatusListCard = ({
                                             }))
                                         }
                                     />
-                                </label>
-                                <label>
-                                    Height
+                                    <span className='widget-action-size-sep'>×</span>
                                     <input
                                         type='number'
                                         min={sizeBounds?.minH ?? MIN_WIDGET_H}
@@ -249,44 +269,47 @@ const StatusListCard = ({
                                             }))
                                         }
                                     />
-                                </label>
-                                <button
-                                    type='button'
-                                    className='size-preset-btn'
-                                    onClick={handleSizeApply}
-                                >
-                                    적용
-                                </button>
+                                </div>
                             </div>
-                        </div>
-
-                        <div className='settings-section refresh-interval-section'>
-                            <h6>화면 갱신 주기 (초)</h6>
-                            <div className='refresh-interval-editor'>
-                                <label className='refresh-interval-input-label'>
-                                    <span>Interval</span>
-                                    <input
-                                        type='number'
-                                        min={MIN_REFRESH_INTERVAL_SEC}
-                                        max={MAX_REFRESH_INTERVAL_SEC}
-                                        value={intervalDraft}
-                                        onChange={(event) =>
-                                            setIntervalDraft(event.target.value)
-                                        }
-                                    />
-                                </label>
-                                <button
-                                    type='button'
-                                    className='size-preset-btn'
-                                    onClick={handleIntervalApply}
-                                >
-                                    적용
-                                </button>
+                            <div className='widget-action-cell'>
+                                <label>화면 갱신 주기 (초)</label>
+                                <input
+                                    type='number'
+                                    min={MIN_REFRESH_INTERVAL_SEC}
+                                    max={MAX_REFRESH_INTERVAL_SEC}
+                                    value={intervalDraft}
+                                    onChange={(event) =>
+                                        setIntervalDraft(event.target.value)
+                                    }
+                                />
                             </div>
-                            <p className='status-list-picker-hint'>
-                                실제 HTTP 점검 주기는 백엔드 설정에서 대상별로 관리됩니다.
-                            </p>
+                            <div className='widget-action-cell'>
+                                <label>폰트 크기 (px)</label>
+                                <input
+                                    type='number'
+                                    min={MIN_WIDGET_FONT_SIZE}
+                                    max={MAX_WIDGET_FONT_SIZE}
+                                    value={fontSizeDraft}
+                                    onChange={(event) =>
+                                        setFontSizeDraft(event.target.value)
+                                    }
+                                />
+                            </div>
+                            <button
+                                type='button'
+                                className='size-preset-btn'
+                                onClick={() => {
+                                    handleSizeApply();
+                                    handleIntervalApply();
+                                    handleFontSizeApply();
+                                }}
+                            >
+                                적용
+                            </button>
                         </div>
+                        <p className='status-list-picker-hint'>
+                            실제 HTTP 점검 주기는 백엔드 설정에서 대상별로 관리됩니다.
+                        </p>
                     </div>
 
                     <button
@@ -391,6 +414,7 @@ const StatusListCard = ({
                     <div
                         className={`status-list-items status-list-${displayMode}`}
                         ref={scrollRef}
+                        style={{ fontSize: `${widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE}px` }}
                     >
                         {items.map((item) => (
                             <div

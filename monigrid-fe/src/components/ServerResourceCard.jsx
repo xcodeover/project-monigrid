@@ -10,10 +10,13 @@ import { monitorService } from "../services/dashboardService.js";
 import { useTimemachine } from "../contexts/TimemachineContext";
 import { useDocumentVisible } from "../hooks/useDocumentVisible.js";
 import {
+    DEFAULT_WIDGET_FONT_SIZE,
     MAX_REFRESH_INTERVAL_SEC,
+    MAX_WIDGET_FONT_SIZE,
     MAX_WIDGET_H,
     MAX_WIDGET_W,
     MIN_REFRESH_INTERVAL_SEC,
+    MIN_WIDGET_FONT_SIZE,
     MIN_WIDGET_H,
     MIN_WIDGET_W,
 } from "../pages/dashboardConstants";
@@ -52,6 +55,7 @@ const ServerResourceSettingsContainer = ({
     currentSize,
     sizeBounds,
     refreshIntervalSec,
+    widgetFontSize,
     onSizeChange,
     onRefreshIntervalChange,
     onWidgetMetaChange,
@@ -63,6 +67,9 @@ const ServerResourceSettingsContainer = ({
     });
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 30);
     const [titleDraft, setTitleDraft] = useState(title);
+    const [fontSizeDraft, setFontSizeDraft] = useState(
+        widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE,
+    );
     const [selectedTargetIdsDraft, setSelectedTargetIdsDraft] = useState(
         () => [...targetIds],
     );
@@ -74,6 +81,9 @@ const ServerResourceSettingsContainer = ({
         setIntervalDraft(refreshIntervalSec ?? 30);
     }, [refreshIntervalSec]);
     useEffect(() => { setTitleDraft(title); }, [title]);
+    useEffect(() => {
+        setFontSizeDraft(widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE);
+    }, [widgetFontSize]);
 
     const handleSizeApply = () => {
         const w = clamp(
@@ -103,6 +113,17 @@ const ServerResourceSettingsContainer = ({
         if (t && t !== title) onWidgetMetaChange?.({ title: t });
     };
 
+    const handleFontSizeApply = () => {
+        const v = clamp(
+            fontSizeDraft,
+            MIN_WIDGET_FONT_SIZE,
+            MAX_WIDGET_FONT_SIZE,
+            DEFAULT_WIDGET_FONT_SIZE,
+        );
+        setFontSizeDraft(v);
+        onWidgetMetaChange?.({ dataFontSize: v });
+    };
+
     const handleSaveTargets = () => {
         onWidgetConfigChange?.({ targetIds: selectedTargetIdsDraft });
         onClose?.();
@@ -123,6 +144,9 @@ const ServerResourceSettingsContainer = ({
             intervalDraft={intervalDraft}
             onIntervalDraftChange={setIntervalDraft}
             onIntervalApply={handleIntervalApply}
+            fontSizeDraft={fontSizeDraft}
+            onFontSizeDraftChange={setFontSizeDraft}
+            onFontSizeApply={handleFontSizeApply}
             selectedTargetIds={selectedTargetIdsDraft}
             onSelectedTargetIdsChange={setSelectedTargetIdsDraft}
             onSave={handleSaveTargets}
@@ -146,6 +170,7 @@ const ServerResourceCard = ({
     sizeBounds,
     onSizeChange,
     refreshIntervalSec,
+    widgetFontSize,
     onRefreshIntervalChange,
     onWidgetMetaChange,
     onWidgetConfigChange,
@@ -766,6 +791,7 @@ const ServerResourceCard = ({
                     currentSize={currentSize}
                     sizeBounds={sizeBounds}
                     refreshIntervalSec={refreshIntervalSec}
+                    widgetFontSize={widgetFontSize}
                     onSizeChange={onSizeChange}
                     onRefreshIntervalChange={onRefreshIntervalChange}
                     onWidgetMetaChange={onWidgetMetaChange}
@@ -796,6 +822,7 @@ const ServerResourceCard = ({
                     <div
                         className={`srv-list srv-list-${displayMode}`}
                         ref={scrollRef}
+                        style={{ fontSize: `${widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE}px` }}
                     >
                         {displayServers.map((srv) => (
                             <ServerRow

@@ -1,6 +1,14 @@
 /*
  * MonitorTargetPicker — 백엔드에 등록된 모니터 대상을 다중 선택하는 공용 픽커.
  * 위젯 추가 모달 / 위젯 ⚙ 설정 모달 양쪽에서 동일하게 사용한다.
+ *
+ * specificity 가드: row 가 <label> 이라 외부 컨테이너의 `.form-group label`
+ * (DashboardPage.css), `.cfgpage-group-body label`, `.cfg-section label`,
+ * `.um-modal label` 등 (specificity 0,1,1) 이 우리 `.target-pick-row` (0,1,0)
+ * 를 덮어 `display: block` 이 적용되면 row 가 column 처럼 보였다. 모든
+ * picker rule 에 `.target-pick-list` prefix 를 붙여 specificity 를 (0,2,X)
+ * 로 끌어올려 외부 label 스타일을 무시한다. text-transform / letter-spacing /
+ * margin 등 inherit 되는 속성도 명시적으로 reset.
  */
 
 .target-pick-list {
@@ -15,63 +23,96 @@
     background: rgba(15, 23, 42, 0.4);
 }
 
-.target-pick-row {
+.target-pick-list .target-pick-row {
     display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
     align-items: center;
     gap: 10px;
     padding: 8px 10px;
+    margin: 0;
     border-radius: 6px;
     cursor: pointer;
     transition: background-color 0.15s ease;
     font-size: 12px;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--text-primary, #e2e8f0);
 }
 
-.target-pick-row:hover {
+.target-pick-list .target-pick-row:hover {
     background-color: rgba(148, 163, 184, 0.08);
 }
 
-.target-pick-row.checked {
+.target-pick-list .target-pick-row.checked {
     background-color: rgba(25, 160, 255, 0.12);
 }
 
-.target-pick-row.disabled .target-pick-meta {
+.target-pick-list .target-pick-row.disabled .target-pick-title,
+.target-pick-list .target-pick-row.disabled .target-pick-sub {
     opacity: 0.55;
 }
 
-.target-pick-row > input[type="checkbox"] {
+/* 외부 `.form-group input` 등이 width: 100% / padding 12px 을 강제하지 못하도록
+   체크박스에도 명시적 reset. width/height 는 브라우저 기본 (≈ 13px) 유지. */
+.target-pick-list .target-pick-row > input[type="checkbox"] {
     flex-shrink: 0;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
 }
 
-.target-pick-meta {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+/* title 은 좌측 정렬 + 가용 공간 차지, sub 는 우측 정렬 + 자기 크기만. 한 줄에
+   둘 다 들어가며 폭이 좁아지면 title 이 ellipsis 로 잘린다 (sub 는 핵심 식별
+   정보라 자르지 않음). */
+.target-pick-list .target-pick-title {
+    flex: 1 1 auto;
     min-width: 0;
-}
-
-.target-pick-title {
     font-weight: 600;
     color: var(--text-primary, #e2e8f0);
     display: flex;
     gap: 6px;
     align-items: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.target-pick-sub {
+.target-pick-list .target-pick-sub {
+    flex: 0 0 auto;
+    margin-left: auto;
+    text-align: right;
     font-size: 11px;
+    font-weight: 400;
     color: var(--text-tertiary, #94a3b8);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.target-pick-badge {
+/* 전체 선택 행: 일반 row 와 시각적으로 구분되도록 하단 border + 약간 진한 배경 */
+.target-pick-list .target-pick-row-all {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+    background-color: rgba(148, 163, 184, 0.05);
+    margin-bottom: 2px;
+    font-size: 12px;
+}
+
+.target-pick-list .target-pick-row-all .target-pick-title {
+    color: var(--text-secondary, #cbd5e1);
+}
+
+.target-pick-list .target-pick-badge {
     font-size: 10px;
     padding: 1px 6px;
     border-radius: 999px;
     background: rgba(148, 163, 184, 0.16);
     color: #cbd5e1;
     font-weight: 500;
+    text-transform: none;
+    letter-spacing: normal;
 }
 
 .target-pick-hint {

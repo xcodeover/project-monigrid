@@ -65,7 +65,7 @@
     border-bottom: 1px solid rgba(148, 163, 184, 0.12);
     user-select: none;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: inherit;
     letter-spacing: 0.02em;
 }
 
@@ -112,7 +112,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 .dynamic-table td.abnormal-cell {
@@ -237,12 +237,9 @@
     }
 }
 
-/* Responsive Design */
+/* Responsive Design — 폰트 크기는 위젯별 설정(inline style)이 단일 출처라
+   여기서는 padding 만 줄인다. 사용자가 설정한 폰트가 항상 우선된다. */
 @media (max-width: 768px) {
-    .dynamic-table {
-        font-size: 12px;
-    }
-
     .dynamic-table th,
     .dynamic-table td {
         padding: 8px;
@@ -260,33 +257,21 @@
 
 /* Container-query responsive */
 @container (max-width: 359px) {
-    .dynamic-table {
-        font-size: 11px;
-    }
-
     .dynamic-table th {
         padding: 6px 8px;
-        font-size: 10px;
     }
 
     .dynamic-table td {
         padding: 5px 8px;
-        font-size: 11px;
     }
 }
 
 @container (max-width: 259px) {
-    .dynamic-table {
-        font-size: 10px;
-    }
-
     .dynamic-table th {
         padding: 4px 6px;
-        font-size: 9px;
     }
 
     .dynamic-table td {
         padding: 4px 6px;
-        font-size: 10px;
     }
 }
