@@ -186,6 +186,14 @@
     box-shadow: 0 0 0 3px rgba(25, 160, 255, 0.1);
 }
 
+/* OS/브라우저는 <option> 의 배경을 system white 로 그리고 select 의 light text
+   color 가 inherit 돼 흰 글자 + 흰 배경으로 안 보이는 케이스가 있다. 다른
+   페이지들과 동일하게 option 의 배경/글자색을 명시. */
+.ah-filters select option {
+    color: var(--text-primary);
+    background-color: var(--bg-elevated);
+}
+
 .ah-keyword {
     grid-column: span 2;
 }
@@ -264,7 +272,9 @@
     position: sticky;
     top: 0;
     z-index: 2;
-    text-align: left;
+    /* text-align 은 컬럼 클래스(.ah-col-*) 에서 결정. 여기서 left 를 강제하면
+       specificity (0,1,2 > 0,1,0) 때문에 컬럼별 center 정렬이 무시된다.
+       th 의 기본 정렬도 left 이므로 생략해도 동일. */
     padding: 8px 12px;
     background: var(--bg-elevated, #1a2332);
     color: var(--text-tertiary, #64748b);
@@ -279,15 +289,25 @@
     box-shadow: inset 0 -1px 0 rgba(148, 163, 184, 0.20);
 }
 
-/* 고정 컬럼 폭 — 백엔드 설정 그리드와 동일하게 명시적 픽셀/minmax 사용 */
-.ah-col-time        { width: 160px; }
-.ah-col-sev         { width: 70px; }
-.ah-col-level       { width: 80px; }
-.ah-col-source-type { width: 110px; }
-.ah-col-target      { width: 200px; }
-.ah-col-target-id   { width: 160px; }
-.ah-col-metric      { width: 110px; }
+/* 고정 컬럼 폭 — 콘텐츠 길이 기반으로 분배.
+   시간(YYYY-MM-DD HH:MM:SS) 168 / 배지 컬럼은 좁고 center / target 라벨이
+   가장 가변적이라 넓게 / 마지막 메시지가 남는 공간 확보. */
+.ah-col-time        { width: 168px; }
+.ah-col-sev         { width: 124px; text-align: center; }   /* "정상 → 알람" 한 줄 */
+.ah-col-level       { width: 90px;  text-align: center; }   /* "CRITICAL" 9자 */
+.ah-col-source-type { width: 120px; }
+.ah-col-target      { width: 220px; }
+.ah-col-target-id   { width: 150px; }
+.ah-col-metric      { width: 120px; }
 .ah-col-msg         { width: auto; }   /* 남은 공간 차지 */
+
+/* 배지 컬럼은 thead/tbody 모두 가운데 정렬 — th 의 width 정의(.ah-col-sev,
+   .ah-col-level)는 thead 에만 클래스가 붙어 있어 td 에는 nth-child 로 일괄
+   적용. 컬럼 순서가 thead 와 동일하므로 nth-child 매핑이 안전하다. */
+.ah-table tbody td:nth-child(2),
+.ah-table tbody td:nth-child(3) {
+    text-align: center;
+}
 
 .ah-table tbody td {
     padding: 7px 12px;

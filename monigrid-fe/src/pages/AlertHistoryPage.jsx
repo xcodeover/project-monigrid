@@ -11,6 +11,56 @@ import "./AlertHistoryPage.css";
 const PAGE_SIZE = 100;
 const EXPORT_PAGE_SIZE = 1000; // BE limit cap; we paginate until total exhausted
 
+// 조회 부하 방지를 위한 최대 기간 (시작~종료 차이의 상한).
+// 1년 = 365일. 윤년이라도 같은 월/일을 정확히 1년 잡으면 365 또는 366. 일관성을
+// 위해 day 기준 365 로 고정 — 사용자가 정확히 같은 시각의 1년 전을 선택했을 때
+// 윤년이면 살짝 초과로 막힐 수 있지만, 그 1일 차이는 안내 메시지로 충분.
+const MAX_RANGE_DAYS = 365;
+const MAX_RANGE_MS = MAX_RANGE_DAYS * 24 * 60 * 60 * 1000;
+
+/** Date → datetime-local input value ("YYYY-MM-DDTHH:mm", 로컬 시각 기준). */
+const toLocalInputValue = (date) => {
+    const pad = (n) => String(n).padStart(2, "0");
+    const y = date.getFullYear();
+    const M = pad(date.getMonth() + 1);
+    const d = pad(date.getDate());
+    const h = pad(date.getHours());
+    const m = pad(date.getMinutes());
+    return `${y}-${M}-${d}T${h}:${m}`;
+};
+
+/** 페이지 진입/초기화 시 사용할 default 범위: 한 달 전 ~ 현재. */
+const getDefaultRange = () => {
+    const now = new Date();
+    const monthAgo = new Date(now);
+    monthAgo.setMonth(monthAgo.getMonth() - 1);
+    return {
+        from: toLocalInputValue(monthAgo),
+        to: toLocalInputValue(now),
+    };
+};
+
+/**
+ * 시작/종료 datetime-local 값의 유효성/범위 검증.
+ * - 한쪽이 비어 있으면 검증 통과 (BE 측이 unbounded 으로 처리).
+ * - 시작 > 종료 면 에러.
+ * - 기간이 MAX_RANGE_DAYS 초과면 에러.
+ * 반환: 에러 메시지(string) 또는 null.
+ */
+const validateRange = (fromVal, toVal) => {
+    if (!fromVal || !toVal) return null;
+    const fd = new Date(fromVal);
+    const td = new Date(toVal);
+    if (Number.isNaN(fd.getTime()) || Number.isNaN(td.getTime())) return null;
+    if (fd.getTime() > td.getTime()) {
+        return "시작 일시가 종료 일시보다 늦습니다.";
+    }
+    if (td.getTime() - fd.getTime() > MAX_RANGE_MS) {
+        return `조회 기간은 최대 ${MAX_RANGE_DAYS}일 (1년) 까지만 가능합니다.`;
+    }
+    return null;
+};
+
 /** RFC 4180 escape: 콤마/큰따옴표/개행이 있으면 큰따옴표 wrap + 내부 큰따옴표 escape */
 const escapeCsvField = (val) => {
     const s = val == null ? "" : String(val);
@@ -50,9 +100,11 @@ const SOURCE_TYPE_LABELS = {
     "data_api:bar-chart": "데이터 API (바)",
 };
 
+// 알람 transition 의 방향성을 직관적으로 보이도록 "정상 → 알람" 형태로 표시.
+// raise = 정상 → 알람,  clear = 알람 → 정상.
 const SEVERITY_LABELS = {
-    raise: "발생",
-    clear: "해제",
+    raise: "정상 → 알람",
+    clear: "알람 → 정상",
 };
 
 const formatDateTime = (value) => {
@@ -69,13 +121,17 @@ const formatDateTime = (value) => {
 };
 
 // `<input type="datetime-local">` 의 value 는 timezone offset 이 빠진
-// "YYYY-MM-DDTHH:mm" 문자열이다. BE 는 ISO-8601 으로 비교하므로 그 문자열에
-// `:00` 만 붙여 ISO-like 로 만들어 보낸다 (정확한 timezone 은 사용자 로컬 기준).
+// "YYYY-MM-DDTHH:mm" 문자열로, 사용자 로컬 timezone 기준 wall-clock 시각이다.
+// BE 는 created_at 을 UTC 로 저장하고 비교도 UTC 로 하므로, 입력값을 일단
+// Date 로 파싱해 (브라우저 로컬 기준) 다시 toISOString() 으로 UTC ISO 변환한다.
+// 잘못된 입력이면 null 반환.
 const localDateTimeToIso = (value) => {
     if (!value) return null;
     const trimmed = String(value).trim();
     if (!trimmed) return null;
-    return trimmed.length === 16 ? `${trimmed}:00` : trimmed;
+    const dt = new Date(trimmed);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toISOString();
 };
 
 /* ── Page ─────────────────────────────────────────────────────── */
@@ -87,8 +143,10 @@ export default function AlertHistoryPage() {
     const user = useAuthStore((state) => state.user);
 
     // ── 필터 (UI draft) ────────────────────────────────────────
-    const [from, setFrom] = useState("");
-    const [to, setTo] = useState("");
+    // 페이지 진입 시 기본 범위: 한 달 전 ~ 현재. lazy init 으로 마운트 시 1회만
+    // 계산되도록 함 — 매 렌더마다 new Date() 가 호출되지 않도록.
+    const [from, setFrom] = useState(() => getDefaultRange().from);
+    const [to, setTo] = useState(() => getDefaultRange().to);
     const [sourceType, setSourceType] = useState("");
     const [sourceId, setSourceId] = useState("");
     const [severity, setSeverity] = useState("");
@@ -138,6 +196,15 @@ export default function AlertHistoryPage() {
 
     // ── 조회 ───────────────────────────────────────────────────
     const fetchAlerts = useCallback(async (overrides = {}) => {
+        // 기간 검증 — 1년 초과 / 역전된 범위는 BE 호출 전에 차단.
+        const rangeError = validateRange(from, to);
+        if (rangeError) {
+            setError(rangeError);
+            setItems([]);
+            setTotal(0);
+            setLoading(false);
+            return;
+        }
         setLoading(true);
         setError(null);
         const offset = overrides.page != null ? overrides.page * PAGE_SIZE : page * PAGE_SIZE;
@@ -185,7 +252,10 @@ export default function AlertHistoryPage() {
     };
 
     const handleReset = () => {
-        setFrom(""); setTo(""); setSourceType(""); setSourceId("");
+        // 시간 범위는 빈 값이 아닌 default (한 달 전 ~ 현재) 로 되돌린다.
+        const r = getDefaultRange();
+        setFrom(r.from); setTo(r.to);
+        setSourceType(""); setSourceId("");
         setSeverity(""); setKeyword(""); setPage(0);
         // setState batch 직후의 fetchAlerts 는 stale 이므로 한 번 더 호출
         setTimeout(() => fetchAlerts({ page: 0 }), 0);
@@ -212,6 +282,12 @@ export default function AlertHistoryPage() {
     // 발생해 total 이 늘어나도 첫 페이지 응답의 total 까지만 받고 끊는다.
     const handleExport = useCallback(async () => {
         if (exporting) return;
+        // CSV 도 같은 1년 제한. 조회와 일치시켜 사용자에게 일관된 가드.
+        const rangeError = validateRange(from, to);
+        if (rangeError) {
+            setError(rangeError);
+            return;
+        }
         setExporting(true);
         setError(null);
         try {
@@ -255,7 +331,8 @@ export default function AlertHistoryPage() {
             const rows = collected.map((it) => [
                 formatDateTime(it.createdAt),
                 SEVERITY_LABELS[it.severity] || it.severity || "",
-                (it.level || "").toUpperCase(),
+                // 알람→정상(clear) 은 회복 transition 이라 레벨이 의미 없어 빈칸.
+                it.severity === "clear" ? "" : (it.level || "").toUpperCase(),
                 SOURCE_TYPE_LABELS[it.sourceType] || it.sourceType || "",
                 it.label || targetIdToLabel[it.sourceId] || "",
                 it.sourceId || "",
@@ -294,7 +371,7 @@ export default function AlertHistoryPage() {
                 </button>
                 <div className="ah-title-wrap">
                     <h1>🚨 알림 이력</h1>
-                    <p>BE 가 수집 갱신 직후 평가한 임계치 위반 / 회복 transition 이력입니다.</p>
+                    <p>BE 가 수집 갱신 직후 평가한 임계치 위반 / 회복 transition 이력입니다. (최대 조회 기간 1년)</p>
                 </div>
                 <div className="ah-actions">
                     <span className="ah-user">@{user?.username || "user"}</span>
@@ -351,8 +428,8 @@ export default function AlertHistoryPage() {
                     <span>구분</span>
                     <select value={severity} onChange={(e) => setSeverity(e.target.value)}>
                         <option value="">전체</option>
-                        <option value="raise">발생</option>
-                        <option value="clear">해제</option>
+                        <option value="raise">정상 → 알람</option>
+                        <option value="clear">알람 → 정상</option>
                     </select>
                 </label>
                 <label className="ah-keyword">
@@ -427,9 +504,11 @@ export default function AlertHistoryPage() {
                                                 </span>
                                             </td>
                                             <td>
-                                                <span className={levelClass}>
-                                                    {(it.level || "-").toUpperCase()}
-                                                </span>
+                                                {it.severity === "clear" ? null : (
+                                                    <span className={levelClass}>
+                                                        {(it.level || "-").toUpperCase()}
+                                                    </span>
+                                                )}
                                             </td>
                                             <td className="ah-cell-truncate" title={sourceTypeLabel}>
                                                 {sourceTypeLabel}

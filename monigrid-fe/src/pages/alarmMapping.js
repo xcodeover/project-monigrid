@@ -7,9 +7,14 @@
  * `alarmStore.syncAlarmedWidgets()`.
  *
  * Mapping rules:
- *   - server-resource / network-test / status-list widgets : `widget.targetIds`
- *     contains monitor target ids. The BE alert sourceId is the monitor target
- *     id, so we just intersect.
+ *   - status-list widgets : `widget.targetIds` (top-level) — http_status sourceIds.
+ *   - server-resource widgets : `widget.serverConfig.targetIds` — server_resource sourceIds.
+ *   - network-test widgets : `widget.networkConfig.targetIds` — network sourceIds.
+ *     Different widget types store target ids under different keys because the
+ *     widget creation path in DashboardPage writes them there (serverConfig /
+ *     networkConfig carry per-type extras alongside the target list). The BE
+ *     alert sourceId is the monitor target id, so we intersect against whichever
+ *     list the widget type stores.
  *   - data API widgets (table / line-chart / bar-chart) : the BE alert
  *     sourceType is `data_api:<widget_type>` and sourceId is the api id
  *     (= the row id in `monigrid_apis`). Widgets reference an API via
@@ -124,7 +129,13 @@ export function computeAlarmedWidgets({
             (st) => MONITOR_TYPE_TO_WIDGET[st] === w.type,
         );
         if (monitorSourceType) {
-            const ids = Array.isArray(w.targetIds) ? w.targetIds : [];
+            const rawIds =
+                w.type === WIDGET_TYPE_SERVER_RESOURCE
+                    ? w.serverConfig?.targetIds
+                    : w.type === WIDGET_TYPE_NETWORK_TEST
+                    ? w.networkConfig?.targetIds
+                    : w.targetIds;
+            const ids = Array.isArray(rawIds) ? rawIds : [];
             const set = monitorAlertsBySourceType[monitorSourceType];
             if (set && ids.some((tid) => set.has(tid))) {
                 out.add(widgetId);
