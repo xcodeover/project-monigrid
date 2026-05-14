@@ -42,6 +42,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from .db import ensure_jvm_started
@@ -52,7 +53,7 @@ except ImportError:
     jaydebeapi = None
 
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 _SUPPORTED_DB_TYPES = ("oracle", "mariadb", "mssql")
 
@@ -226,6 +227,96 @@ def _ddl_statements(db_type: str) -> list[str]:
                 PRIMARY KEY (api_id, widget_type)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_notification_channels (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                kind VARCHAR(32) NOT NULL UNIQUE,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                config_encrypted LONGTEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR(128) NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_notification_groups (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(128) NOT NULL UNIQUE,
+                description VARCHAR(512),
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR(128) NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_notification_recipients (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                group_id BIGINT NOT NULL,
+                kind VARCHAR(16) NOT NULL DEFAULT 'email',
+                address VARCHAR(255) NOT NULL,
+                display_name VARCHAR(128),
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_recipients_group (group_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_notification_rules (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(128) NOT NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                source_type VARCHAR(32) NULL,
+                source_id_pattern VARCHAR(255) NULL,
+                metric_pattern VARCHAR(128) NULL,
+                min_level VARCHAR(16) NOT NULL DEFAULT 'warn',
+                recipient_group_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                cooldown_sec INT NOT NULL DEFAULT 300,
+                digest_window_sec INT NOT NULL DEFAULT 0,
+                send_on_clear TINYINT(1) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_by VARCHAR(128) NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR(128) NULL,
+                INDEX idx_rules_enabled (enabled)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_notification_queue (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                alert_event_id BIGINT NULL,
+                rule_id BIGINT NULL,
+                channel_id BIGINT NOT NULL,
+                recipient_address VARCHAR(255) NOT NULL,
+                subject VARCHAR(512) NOT NULL,
+                body_html LONGTEXT,
+                body_text LONGTEXT,
+                status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                attempt INT NOT NULL DEFAULT 0,
+                next_attempt_at TIMESTAMP NULL DEFAULT NULL,
+                last_error VARCHAR(2048),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sent_at TIMESTAMP NULL DEFAULT NULL,
+                INDEX idx_queue_status (status, next_attempt_at),
+                INDEX idx_queue_event (alert_event_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS monigrid_silence_rules (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(128) NOT NULL,
+                source_type VARCHAR(32) NULL,
+                source_id_pattern VARCHAR(255) NULL,
+                metric_pattern VARCHAR(128) NULL,
+                starts_at TIMESTAMP NOT NULL,
+                ends_at TIMESTAMP NOT NULL,
+                reason VARCHAR(512),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_by VARCHAR(128) NULL,
+                INDEX idx_silence_window (starts_at, ends_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
         ]
     if db_type == "mssql":
         return [
@@ -345,6 +436,117 @@ def _ddl_statements(db_type: str) -> list[str]:
                 CONSTRAINT pk_widget_configs PRIMARY KEY (api_id, widget_type)
             )
             """,
+            """
+            IF OBJECT_ID('monigrid_notification_channels', 'U') IS NULL
+            CREATE TABLE monigrid_notification_channels (
+                id BIGINT IDENTITY(1,1) PRIMARY KEY,
+                kind NVARCHAR(32) NOT NULL UNIQUE,
+                enabled BIT NOT NULL DEFAULT 1,
+                config_encrypted NVARCHAR(MAX),
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_by NVARCHAR(128) NULL
+            )
+            """,
+            """
+            IF OBJECT_ID('monigrid_notification_groups', 'U') IS NULL
+            CREATE TABLE monigrid_notification_groups (
+                id BIGINT IDENTITY(1,1) PRIMARY KEY,
+                name NVARCHAR(128) NOT NULL UNIQUE,
+                description NVARCHAR(512),
+                enabled BIT NOT NULL DEFAULT 1,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_by NVARCHAR(128) NULL
+            )
+            """,
+            """
+            IF OBJECT_ID('monigrid_notification_recipients', 'U') IS NULL
+            CREATE TABLE monigrid_notification_recipients (
+                id BIGINT IDENTITY(1,1) PRIMARY KEY,
+                group_id BIGINT NOT NULL,
+                kind NVARCHAR(16) NOT NULL DEFAULT 'email',
+                address NVARCHAR(255) NOT NULL,
+                display_name NVARCHAR(128),
+                enabled BIT NOT NULL DEFAULT 1,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_recipients_group')
+            CREATE INDEX idx_recipients_group ON monigrid_notification_recipients (group_id)
+            """,
+            """
+            IF OBJECT_ID('monigrid_notification_rules', 'U') IS NULL
+            CREATE TABLE monigrid_notification_rules (
+                id BIGINT IDENTITY(1,1) PRIMARY KEY,
+                name NVARCHAR(128) NOT NULL,
+                enabled BIT NOT NULL DEFAULT 1,
+                source_type NVARCHAR(32) NULL,
+                source_id_pattern NVARCHAR(255) NULL,
+                metric_pattern NVARCHAR(128) NULL,
+                min_level NVARCHAR(16) NOT NULL DEFAULT 'warn',
+                recipient_group_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                cooldown_sec INT NOT NULL DEFAULT 300,
+                digest_window_sec INT NOT NULL DEFAULT 0,
+                send_on_clear BIT NOT NULL DEFAULT 0,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                created_by NVARCHAR(128) NULL,
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_by NVARCHAR(128) NULL
+            )
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_rules_enabled')
+            CREATE INDEX idx_rules_enabled ON monigrid_notification_rules (enabled)
+            """,
+            """
+            IF OBJECT_ID('monigrid_notification_queue', 'U') IS NULL
+            CREATE TABLE monigrid_notification_queue (
+                id BIGINT IDENTITY(1,1) PRIMARY KEY,
+                alert_event_id BIGINT NULL,
+                rule_id BIGINT NULL,
+                channel_id BIGINT NOT NULL,
+                recipient_address NVARCHAR(255) NOT NULL,
+                subject NVARCHAR(512) NOT NULL,
+                body_html NVARCHAR(MAX),
+                body_text NVARCHAR(MAX),
+                status NVARCHAR(16) NOT NULL DEFAULT 'pending',
+                attempt INT NOT NULL DEFAULT 0,
+                next_attempt_at DATETIME2 NULL,
+                last_error NVARCHAR(2048),
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                sent_at DATETIME2 NULL
+            )
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_queue_status')
+            CREATE INDEX idx_queue_status ON monigrid_notification_queue (status, next_attempt_at)
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_queue_event')
+            CREATE INDEX idx_queue_event ON monigrid_notification_queue (alert_event_id)
+            """,
+            """
+            IF OBJECT_ID('monigrid_silence_rules', 'U') IS NULL
+            CREATE TABLE monigrid_silence_rules (
+                id BIGINT IDENTITY(1,1) PRIMARY KEY,
+                name NVARCHAR(128) NOT NULL,
+                source_type NVARCHAR(32) NULL,
+                source_id_pattern NVARCHAR(255) NULL,
+                metric_pattern NVARCHAR(128) NULL,
+                starts_at DATETIME2 NOT NULL,
+                ends_at DATETIME2 NOT NULL,
+                reason NVARCHAR(512),
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                created_by NVARCHAR(128) NULL
+            )
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_silence_window')
+            CREATE INDEX idx_silence_window ON monigrid_silence_rules (starts_at, ends_at)
+            """,
         ]
     # oracle
     return [
@@ -446,6 +648,106 @@ def _ddl_statements(db_type: str) -> list[str]:
             CONSTRAINT pk_widget_configs PRIMARY KEY (api_id, widget_type)
         )
         """,
+        """
+        CREATE TABLE monigrid_notification_channels (
+            id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+            kind VARCHAR2(32) NOT NULL UNIQUE,
+            enabled NUMBER(1) DEFAULT 1 NOT NULL,
+            config_encrypted CLOB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_by VARCHAR2(128) NULL
+        )
+        """,
+        """
+        CREATE TABLE monigrid_notification_groups (
+            id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+            name VARCHAR2(128) NOT NULL UNIQUE,
+            description VARCHAR2(512),
+            enabled NUMBER(1) DEFAULT 1 NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_by VARCHAR2(128) NULL
+        )
+        """,
+        """
+        CREATE TABLE monigrid_notification_recipients (
+            id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+            group_id NUMBER NOT NULL,
+            kind VARCHAR2(16) DEFAULT 'email' NOT NULL,
+            address VARCHAR2(255) NOT NULL,
+            display_name VARCHAR2(128),
+            enabled NUMBER(1) DEFAULT 1 NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX idx_recipients_group ON monigrid_notification_recipients (group_id)
+        """,
+        """
+        CREATE TABLE monigrid_notification_rules (
+            id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+            name VARCHAR2(128) NOT NULL,
+            enabled NUMBER(1) DEFAULT 1 NOT NULL,
+            source_type VARCHAR2(32) NULL,
+            source_id_pattern VARCHAR2(255) NULL,
+            metric_pattern VARCHAR2(128) NULL,
+            min_level VARCHAR2(16) DEFAULT 'warn' NOT NULL,
+            recipient_group_id NUMBER NOT NULL,
+            channel_id NUMBER NOT NULL,
+            cooldown_sec NUMBER(10) DEFAULT 300 NOT NULL,
+            digest_window_sec NUMBER(10) DEFAULT 0 NOT NULL,
+            send_on_clear NUMBER(1) DEFAULT 0 NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            created_by VARCHAR2(128) NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_by VARCHAR2(128) NULL
+        )
+        """,
+        """
+        CREATE INDEX idx_rules_enabled ON monigrid_notification_rules (enabled)
+        """,
+        """
+        CREATE TABLE monigrid_notification_queue (
+            id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+            alert_event_id NUMBER NULL,
+            rule_id NUMBER NULL,
+            channel_id NUMBER NOT NULL,
+            recipient_address VARCHAR2(255) NOT NULL,
+            subject VARCHAR2(512) NOT NULL,
+            body_html CLOB,
+            body_text CLOB,
+            status VARCHAR2(16) DEFAULT 'pending' NOT NULL,
+            attempt NUMBER(10) DEFAULT 0 NOT NULL,
+            next_attempt_at TIMESTAMP NULL,
+            last_error VARCHAR2(2048),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            sent_at TIMESTAMP NULL
+        )
+        """,
+        """
+        CREATE INDEX idx_queue_status ON monigrid_notification_queue (status, next_attempt_at)
+        """,
+        """
+        CREATE INDEX idx_queue_event ON monigrid_notification_queue (alert_event_id)
+        """,
+        """
+        CREATE TABLE monigrid_silence_rules (
+            id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+            name VARCHAR2(128) NOT NULL,
+            source_type VARCHAR2(32) NULL,
+            source_id_pattern VARCHAR2(255) NULL,
+            metric_pattern VARCHAR2(128) NULL,
+            starts_at TIMESTAMP NOT NULL,
+            ends_at TIMESTAMP NOT NULL,
+            reason VARCHAR2(512),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            created_by VARCHAR2(128) NULL
+        )
+        """,
+        """
+        CREATE INDEX idx_silence_window ON monigrid_silence_rules (starts_at, ends_at)
+        """,
     ]
 
 
@@ -453,6 +755,15 @@ def _oracle_table_exists(cur, table: str) -> bool:
     cur.execute(
         "SELECT COUNT(*) FROM user_tables WHERE table_name = ?",
         [table.upper()],
+    )
+    row = cur.fetchone()
+    return bool(row and int(row[0]) > 0)
+
+
+def _oracle_index_exists(cur, index: str) -> bool:
+    cur.execute(
+        "SELECT COUNT(*) FROM user_indexes WHERE index_name = ?",
+        [index.upper()],
     )
     row = cur.fetchone()
     return bool(row and int(row[0]) > 0)
@@ -816,9 +1127,13 @@ class SettingsStore:
         cur = self._cursor()
         try:
             if self._cfg.db_type == "oracle":
-                # Oracle lacks IF NOT EXISTS; probe user_tables to stay idempotent.
+                # Oracle lacks IF NOT EXISTS; probe user_tables / user_indexes
+                # before each CREATE so re-running the DDL list is idempotent.
                 table = _extract_table_name(normalized)
                 if table and _oracle_table_exists(cur, table):
+                    return
+                index = _extract_index_name(normalized)
+                if index and _oracle_index_exists(cur, index):
                     return
             cur.execute(normalized)
         finally:
@@ -861,8 +1176,14 @@ class SettingsStore:
         "version",
         "global_jdbc_jars",
         "dashboard_title",
+        "app_company_name",
         # Phase 3: timemachine retention window (hours). 0 disables write/eviction.
         "timemachine_retention_hours",
+        # Notification subsystem master switch. Stored as a JSON object
+        # ({"enabled": bool}) for forward-compat (rate caps, default
+        # cooldown, etc may join later). Default OFF — operators must
+        # opt in explicitly so a fresh deployment never spams.
+        "notification.global",
     )
 
     @_sync
@@ -1991,26 +2312,51 @@ class SettingsStore:
         message: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> None:
-        """Append a single alert event row. Caller responsible for filtering
-        out same-state ticks (we don't dedupe here)."""
+        """Append a single alert event row — but only when severity actually
+        transitions from the prior recorded state for that (source, metric).
+
+        사용자 요구: "동일 상태 유지일때는 기록하지 않음. 상태가 변경되었을 때
+        만 기록함 (정상→알람 또는 알람→정상)". AlertEvaluator 의 in-memory
+        `_active` 가 일차적으로 dedupe 하지만, BE 재시작/장애 복구로 `_active`
+        가 비워지면 진행 중 알람이 새 raise 로 다시 들어가는 케이스가 있다.
+        여기서 한 번 더 DB last-severity 와 비교해 transition 만 기록한다.
+
+        created_at 은 어플리케이션 측에서 UTC 로 명시 전달한다. DB DEFAULT
+        (CURRENT_TIMESTAMP / SYSUTCDATETIME) 는 dialect 마다 기준 timezone 이
+        달라서 (MariaDB: 서버 로컬, MSSQL: UTC), 노드 timezone 이 다르면 정렬·
+        필터가 어긋난다. UTC naive 로 통일 후 응답 단계에서 'Z' 를 붙여
+        클라이언트로 내려준다.
+        """
+        new_severity = str(severity)
+        last = self._last_alert_severity_unlocked(
+            source_type=str(source_type),
+            source_id=str(source_id),
+            metric=metric,
+        )
+        if last is not None and last == new_severity:
+            # 동일 상태 — INSERT skip. (정상→정상, 알람→알람 모두)
+            return
+
         payload_json = (
             json.dumps(payload, ensure_ascii=False) if payload is not None else None
         )
+        now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         cur = self._cursor()
         try:
             cur.execute(
                 "INSERT INTO monigrid_alert_events "
-                "(source_type, source_id, metric, severity, level, label, message, payload) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(source_type, source_id, metric, severity, level, label, message, payload, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     str(source_type),
                     str(source_id),
                     metric,
-                    str(severity),
+                    new_severity,
                     level,
                     label,
                     message,
                     payload_json,
+                    now_utc_naive,
                 ],
             )
         finally:
@@ -2019,6 +2365,47 @@ class SettingsStore:
             except Exception:
                 pass
         self._conn.commit()
+
+    def _last_alert_severity_unlocked(
+        self,
+        *,
+        source_type: str,
+        source_id: str,
+        metric: str | None,
+    ) -> str | None:
+        """Return the most recent severity for (source_type, source_id, metric).
+
+        Called from inside ``record_alert_event`` which already holds the
+        SettingsStore RLock via ``@_sync`` — so we must NOT take it again.
+        Returns None if no prior row exists.
+
+        NULL metric is matched explicitly (NULL = NULL fails in SQL).
+        """
+        sql = (
+            "SELECT severity FROM monigrid_alert_events "
+            "WHERE source_type = ? AND source_id = ? "
+            "AND ((metric IS NULL AND ? IS NULL) OR metric = ?) "
+        )
+        if self._cfg.db_type == "mariadb":
+            sql += "ORDER BY id DESC LIMIT 1"
+        else:
+            sql += "ORDER BY id DESC OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY"
+        cur = self._cursor()
+        try:
+            cur.execute(sql, [source_type, source_id, metric, metric])
+            row = cur.fetchone()
+        except Exception:
+            # 조회 실패는 dedupe 를 포기하고 INSERT 진행 — append-log 가
+            # 우선이고, 중복 row 한두 개가 _record_safe 의 fallback 보다 낫다.
+            return None
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if row is None:
+            return None
+        return str(row[0]) if row[0] is not None else None
 
     @_sync
     def list_alert_events(
@@ -2035,7 +2422,10 @@ class SettingsStore:
     ) -> tuple[list[dict[str, Any]], int]:
         """Filtered list. Returns (rows, total_count_before_paging).
 
-        - from_ts / to_ts: ISO-8601 strings; bound by created_at inclusive.
+        - from_ts / to_ts: ISO-8601 strings (Z / +offset 허용); UTC 로 변환해
+          created_at(UTC naive) 와 datetime 객체로 비교한다. 문자열 그대로
+          넘기면 MariaDB TIMESTAMP 가 'T'/'Z' 표기를 거부할 수 있어 반드시
+          datetime 으로 캐스팅한다.
         - keyword: substring match against label OR message (case-sensitive
           fallback OK — BE-side normalisation can come later).
         - limit / offset: paging. limit clamped to [1, 1000].
@@ -2043,14 +2433,17 @@ class SettingsStore:
         limit = max(1, min(int(limit), 1000))
         offset = max(0, int(offset))
 
+        from_dt = _parse_iso_to_utc_naive(from_ts) if from_ts else None
+        to_dt = _parse_iso_to_utc_naive(to_ts) if to_ts else None
+
         wheres: list[str] = []
         params: list[Any] = []
-        if from_ts:
+        if from_dt is not None:
             wheres.append("created_at >= ?")
-            params.append(from_ts)
-        if to_ts:
+            params.append(from_dt)
+        if to_dt is not None:
             wheres.append("created_at <= ?")
-            params.append(to_ts)
+            params.append(to_dt)
         if source_type:
             wheres.append("source_type = ?")
             params.append(str(source_type))
@@ -2117,11 +2510,6 @@ class SettingsStore:
                 payload_obj = json.loads(payload_text) if payload_text else None
             except json.JSONDecodeError:
                 payload_obj = {"raw": payload_text}
-            created_raw = r[9]
-            created_iso = (
-                created_raw.isoformat() if hasattr(created_raw, "isoformat")
-                else (str(created_raw) if created_raw is not None else None)
-            )
             out.append({
                 "id": int(r[0]) if r[0] is not None else None,
                 "sourceType": str(r[1]) if r[1] is not None else None,
@@ -2132,7 +2520,7 @@ class SettingsStore:
                 "label": str(r[6]) if r[6] is not None else None,
                 "message": str(r[7]) if r[7] is not None else None,
                 "payload": payload_obj,
-                "createdAt": created_iso,
+                "createdAt": _to_utc_iso8601(r[9]),
             })
         return out, total
 
@@ -2343,6 +2731,930 @@ class SettingsStore:
                 pass
         self._conn.commit()
 
+    # ─────────────────────────────────────────────────────────────────────
+    # Notifications: channels / groups / recipients / rules / silence / queue
+    # All ops go through @_sync so they share the SettingsStore RLock with
+    # collector + cache + Flask workers — same posture as the rest of the
+    # store. INSERTs return the new row id via _last_inserted_id so the REST
+    # layer can echo a POST response back.
+    # ─────────────────────────────────────────────────────────────────────
+
+    # ── notification: channels (one row per kind) ─────────────────────────
+    @_sync
+    def list_notification_channels(self) -> list[dict[str, Any]]:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT id, kind, enabled, config_encrypted, "
+                "created_at, updated_at, updated_by FROM monigrid_notification_channels "
+                "ORDER BY id"
+            )
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return [
+            {
+                "id": int(r[0]),
+                "kind": str(r[1]),
+                "enabled": bool(r[2]),
+                "configEncrypted": _read_clob(r[3]),
+                "createdAt": _iso(r[4]),
+                "updatedAt": _iso(r[5]),
+                "updatedBy": r[6],
+            }
+            for r in rows
+        ]
+
+    @_sync
+    def get_notification_channel(self, kind: str) -> dict[str, Any] | None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT id, kind, enabled, config_encrypted, "
+                "created_at, updated_at, updated_by FROM monigrid_notification_channels "
+                "WHERE kind = ?",
+                [str(kind)],
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if not row:
+            return None
+        return {
+            "id": int(row[0]),
+            "kind": str(row[1]),
+            "enabled": bool(row[2]),
+            "configEncrypted": _read_clob(row[3]),
+            "createdAt": _iso(row[4]),
+            "updatedAt": _iso(row[5]),
+            "updatedBy": row[6],
+        }
+
+    @_sync
+    def upsert_notification_channel(
+        self,
+        *,
+        kind: str,
+        enabled: bool,
+        config_encrypted: str,
+        actor: str = "",
+    ) -> int:
+        """Insert or update a channel row keyed by `kind` (which is UNIQUE)."""
+        existing = self._channel_id_by_kind_unlocked(kind)
+        cur = self._cursor()
+        actor_norm = (actor or "").strip() or None
+        try:
+            if existing is None:
+                cur.execute(
+                    "INSERT INTO monigrid_notification_channels "
+                    "(kind, enabled, config_encrypted, created_at, updated_at, updated_by) "
+                    f"VALUES (?, ?, ?, {self._now_literal()}, {self._now_literal()}, ?)",
+                    [str(kind), 1 if enabled else 0, config_encrypted, actor_norm],
+                )
+                channel_id = self._last_inserted_id(cur, "monigrid_notification_channels")
+            else:
+                cur.execute(
+                    "UPDATE monigrid_notification_channels SET "
+                    f"enabled = ?, config_encrypted = ?, {self._current_ts_expr('updated_at')}, "
+                    "updated_by = ? WHERE id = ?",
+                    [1 if enabled else 0, config_encrypted, actor_norm, existing],
+                )
+                channel_id = existing
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        return int(channel_id) if channel_id is not None else (existing or 0)
+
+    def _channel_id_by_kind_unlocked(self, kind: str) -> int | None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT id FROM monigrid_notification_channels WHERE kind = ?",
+                [str(kind)],
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return int(row[0]) if row else None
+
+    @_sync
+    def set_notification_channel_enabled(
+        self, kind: str, enabled: bool, actor: str = "",
+    ) -> None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "UPDATE monigrid_notification_channels SET "
+                f"enabled = ?, {self._current_ts_expr('updated_at')}, updated_by = ? "
+                "WHERE kind = ?",
+                [1 if enabled else 0, (actor or "").strip() or None, str(kind)],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    # ── notification: groups ──────────────────────────────────────────────
+    @_sync
+    def list_notification_groups(self) -> list[dict[str, Any]]:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT id, name, description, enabled, created_at, updated_at, updated_by "
+                "FROM monigrid_notification_groups ORDER BY name"
+            )
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return [
+            {
+                "id": int(r[0]),
+                "name": str(r[1]),
+                "description": r[2],
+                "enabled": bool(r[3]),
+                "createdAt": _iso(r[4]),
+                "updatedAt": _iso(r[5]),
+                "updatedBy": r[6],
+            }
+            for r in rows
+        ]
+
+    @_sync
+    def create_notification_group(
+        self, *, name: str, description: str | None = None,
+        enabled: bool = True, actor: str = "",
+    ) -> int:
+        if not (name or "").strip():
+            raise ValueError("group name is required")
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "INSERT INTO monigrid_notification_groups "
+                "(name, description, enabled, created_at, updated_at, updated_by) "
+                f"VALUES (?, ?, ?, {self._now_literal()}, {self._now_literal()}, ?)",
+                [name.strip(), description, 1 if enabled else 0,
+                 (actor or "").strip() or None],
+            )
+            new_id = self._last_inserted_id(cur, "monigrid_notification_groups")
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        return int(new_id) if new_id is not None else 0
+
+    @_sync
+    def update_notification_group(
+        self, group_id: int, *,
+        name: str | None = None,
+        description: str | None = None,
+        enabled: bool | None = None,
+        actor: str = "",
+    ) -> None:
+        sets: list[str] = []
+        params: list[Any] = []
+        if name is not None:
+            if not name.strip():
+                raise ValueError("group name cannot be blank")
+            sets.append("name = ?"); params.append(name.strip())
+        if description is not None:
+            sets.append("description = ?"); params.append(description or None)
+        if enabled is not None:
+            sets.append("enabled = ?"); params.append(1 if enabled else 0)
+        if not sets:
+            return
+        sets.append(self._current_ts_expr("updated_at"))
+        sets.append("updated_by = ?")
+        params.append((actor or "").strip() or None)
+        params.append(int(group_id))
+        cur = self._cursor()
+        try:
+            cur.execute(
+                f"UPDATE monigrid_notification_groups SET {', '.join(sets)} WHERE id = ?",
+                params,
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    @_sync
+    def delete_notification_group(self, group_id: int) -> None:
+        # Soft constraint — if recipients/rules still reference this group,
+        # caller (route layer) is expected to refuse. We still cascade-delete
+        # recipients here so the group goes away cleanly.
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "DELETE FROM monigrid_notification_recipients WHERE group_id = ?",
+                [int(group_id)],
+            )
+            cur.execute(
+                "DELETE FROM monigrid_notification_groups WHERE id = ?",
+                [int(group_id)],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    # ── notification: recipients ──────────────────────────────────────────
+    @_sync
+    def list_notification_recipients(
+        self, group_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        cur = self._cursor()
+        try:
+            if group_id is None:
+                cur.execute(
+                    "SELECT id, group_id, kind, address, display_name, enabled, created_at "
+                    "FROM monigrid_notification_recipients ORDER BY group_id, id"
+                )
+            else:
+                cur.execute(
+                    "SELECT id, group_id, kind, address, display_name, enabled, created_at "
+                    "FROM monigrid_notification_recipients WHERE group_id = ? ORDER BY id",
+                    [int(group_id)],
+                )
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return [
+            {
+                "id": int(r[0]),
+                "groupId": int(r[1]),
+                "kind": str(r[2]),
+                "address": str(r[3]),
+                "displayName": r[4],
+                "enabled": bool(r[5]),
+                "createdAt": _iso(r[6]),
+            }
+            for r in rows
+        ]
+
+    @_sync
+    def create_notification_recipient(
+        self, *, group_id: int, kind: str = "email",
+        address: str, display_name: str | None = None, enabled: bool = True,
+    ) -> int:
+        addr = (address or "").strip()
+        if not addr:
+            raise ValueError("recipient address is required")
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "INSERT INTO monigrid_notification_recipients "
+                "(group_id, kind, address, display_name, enabled, created_at) "
+                f"VALUES (?, ?, ?, ?, ?, {self._now_literal()})",
+                [int(group_id), str(kind or "email"), addr,
+                 (display_name or "").strip() or None, 1 if enabled else 0],
+            )
+            new_id = self._last_inserted_id(cur, "monigrid_notification_recipients")
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        return int(new_id) if new_id is not None else 0
+
+    @_sync
+    def update_notification_recipient(
+        self, recipient_id: int, *,
+        kind: str | None = None,
+        address: str | None = None,
+        display_name: str | None = None,
+        enabled: bool | None = None,
+    ) -> None:
+        sets: list[str] = []
+        params: list[Any] = []
+        if kind is not None:
+            sets.append("kind = ?"); params.append(str(kind))
+        if address is not None:
+            addr = (address or "").strip()
+            if not addr:
+                raise ValueError("recipient address cannot be blank")
+            sets.append("address = ?"); params.append(addr)
+        if display_name is not None:
+            sets.append("display_name = ?"); params.append((display_name or "").strip() or None)
+        if enabled is not None:
+            sets.append("enabled = ?"); params.append(1 if enabled else 0)
+        if not sets:
+            return
+        params.append(int(recipient_id))
+        cur = self._cursor()
+        try:
+            cur.execute(
+                f"UPDATE monigrid_notification_recipients SET {', '.join(sets)} WHERE id = ?",
+                params,
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    @_sync
+    def delete_notification_recipient(self, recipient_id: int) -> None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "DELETE FROM monigrid_notification_recipients WHERE id = ?",
+                [int(recipient_id)],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    # ── notification: rules ───────────────────────────────────────────────
+    _RULE_COLS = (
+        "id, name, enabled, source_type, source_id_pattern, metric_pattern, "
+        "min_level, recipient_group_id, channel_id, cooldown_sec, "
+        "digest_window_sec, send_on_clear, created_at, created_by, "
+        "updated_at, updated_by"
+    )
+
+    def _row_to_rule(self, r: tuple) -> dict[str, Any]:
+        return {
+            "id": int(r[0]),
+            "name": str(r[1]),
+            "enabled": bool(r[2]),
+            "sourceType": r[3],
+            "sourceIdPattern": r[4],
+            "metricPattern": r[5],
+            "minLevel": str(r[6] or "warn"),
+            "recipientGroupId": int(r[7]),
+            "channelId": int(r[8]),
+            "cooldownSec": int(r[9] or 0),
+            "digestWindowSec": int(r[10] or 0),
+            "sendOnClear": bool(r[11]),
+            "createdAt": _iso(r[12]),
+            "createdBy": r[13],
+            "updatedAt": _iso(r[14]),
+            "updatedBy": r[15],
+        }
+
+    @_sync
+    def list_notification_rules(self, *, only_enabled: bool = False) -> list[dict[str, Any]]:
+        cur = self._cursor()
+        try:
+            sql = f"SELECT {self._RULE_COLS} FROM monigrid_notification_rules"
+            if only_enabled:
+                sql += " WHERE enabled = 1"
+            sql += " ORDER BY id"
+            cur.execute(sql)
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return [self._row_to_rule(r) for r in rows]
+
+    @_sync
+    def get_notification_rule(self, rule_id: int) -> dict[str, Any] | None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                f"SELECT {self._RULE_COLS} FROM monigrid_notification_rules WHERE id = ?",
+                [int(rule_id)],
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return self._row_to_rule(row) if row else None
+
+    @_sync
+    def create_notification_rule(
+        self, *, name: str,
+        recipient_group_id: int, channel_id: int,
+        source_type: str | None = None,
+        source_id_pattern: str | None = None,
+        metric_pattern: str | None = None,
+        min_level: str = "warn",
+        cooldown_sec: int = 300,
+        digest_window_sec: int = 0,
+        send_on_clear: bool = False,
+        enabled: bool = True,
+        actor: str = "",
+    ) -> int:
+        if not (name or "").strip():
+            raise ValueError("rule name is required")
+        if min_level not in ("warn", "critical"):
+            raise ValueError("min_level must be 'warn' or 'critical'")
+        actor_norm = (actor or "").strip() or None
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "INSERT INTO monigrid_notification_rules "
+                "(name, enabled, source_type, source_id_pattern, metric_pattern, "
+                "min_level, recipient_group_id, channel_id, cooldown_sec, "
+                "digest_window_sec, send_on_clear, created_at, created_by, "
+                "updated_at, updated_by) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                f"{self._now_literal()}, ?, {self._now_literal()}, ?)",
+                [name.strip(), 1 if enabled else 0,
+                 source_type, source_id_pattern, metric_pattern,
+                 min_level, int(recipient_group_id), int(channel_id),
+                 int(cooldown_sec), int(digest_window_sec),
+                 1 if send_on_clear else 0,
+                 actor_norm, actor_norm],
+            )
+            new_id = self._last_inserted_id(cur, "monigrid_notification_rules")
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        return int(new_id) if new_id is not None else 0
+
+    @_sync
+    def update_notification_rule(
+        self, rule_id: int, *,
+        name: str | None = None,
+        enabled: bool | None = None,
+        source_type: str | None = None,
+        source_id_pattern: str | None = None,
+        metric_pattern: str | None = None,
+        min_level: str | None = None,
+        recipient_group_id: int | None = None,
+        channel_id: int | None = None,
+        cooldown_sec: int | None = None,
+        digest_window_sec: int | None = None,
+        send_on_clear: bool | None = None,
+        actor: str = "",
+    ) -> None:
+        sets: list[str] = []
+        params: list[Any] = []
+        if name is not None:
+            if not name.strip():
+                raise ValueError("rule name cannot be blank")
+            sets.append("name = ?"); params.append(name.strip())
+        if enabled is not None:
+            sets.append("enabled = ?"); params.append(1 if enabled else 0)
+        for col, val in (
+            ("source_type", source_type),
+            ("source_id_pattern", source_id_pattern),
+            ("metric_pattern", metric_pattern),
+        ):
+            if val is not None:
+                sets.append(f"{col} = ?"); params.append(val or None)
+        if min_level is not None:
+            if min_level not in ("warn", "critical"):
+                raise ValueError("min_level must be 'warn' or 'critical'")
+            sets.append("min_level = ?"); params.append(min_level)
+        for col, val in (
+            ("recipient_group_id", recipient_group_id),
+            ("channel_id", channel_id),
+            ("cooldown_sec", cooldown_sec),
+            ("digest_window_sec", digest_window_sec),
+        ):
+            if val is not None:
+                sets.append(f"{col} = ?"); params.append(int(val))
+        if send_on_clear is not None:
+            sets.append("send_on_clear = ?"); params.append(1 if send_on_clear else 0)
+        if not sets:
+            return
+        sets.append(self._current_ts_expr("updated_at"))
+        sets.append("updated_by = ?")
+        params.append((actor or "").strip() or None)
+        params.append(int(rule_id))
+        cur = self._cursor()
+        try:
+            cur.execute(
+                f"UPDATE monigrid_notification_rules SET {', '.join(sets)} WHERE id = ?",
+                params,
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    @_sync
+    def delete_notification_rule(self, rule_id: int) -> None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "DELETE FROM monigrid_notification_rules WHERE id = ?",
+                [int(rule_id)],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    # ── notification: silence rules ───────────────────────────────────────
+    @_sync
+    def list_silence_rules(self) -> list[dict[str, Any]]:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT id, name, source_type, source_id_pattern, metric_pattern, "
+                "starts_at, ends_at, reason, created_at, created_by "
+                "FROM monigrid_silence_rules ORDER BY starts_at DESC, id DESC"
+            )
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return [
+            {
+                "id": int(r[0]),
+                "name": str(r[1]),
+                "sourceType": r[2],
+                "sourceIdPattern": r[3],
+                "metricPattern": r[4],
+                "startsAt": _iso(r[5]),
+                "endsAt": _iso(r[6]),
+                "reason": r[7],
+                "createdAt": _iso(r[8]),
+                "createdBy": r[9],
+            }
+            for r in rows
+        ]
+
+    @_sync
+    def list_active_silence_rules(
+        self, *, at_utc: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        ref = (at_utc or datetime.now(timezone.utc)).replace(tzinfo=None)
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT id, name, source_type, source_id_pattern, metric_pattern, "
+                "starts_at, ends_at, reason "
+                "FROM monigrid_silence_rules WHERE starts_at <= ? AND ends_at >= ?",
+                [ref, ref],
+            )
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return [
+            {
+                "id": int(r[0]),
+                "name": str(r[1]),
+                "sourceType": r[2],
+                "sourceIdPattern": r[3],
+                "metricPattern": r[4],
+                "startsAt": _iso(r[5]),
+                "endsAt": _iso(r[6]),
+                "reason": r[7],
+            }
+            for r in rows
+        ]
+
+    @_sync
+    def create_silence_rule(
+        self, *, name: str,
+        starts_at: datetime, ends_at: datetime,
+        source_type: str | None = None,
+        source_id_pattern: str | None = None,
+        metric_pattern: str | None = None,
+        reason: str | None = None,
+        actor: str = "",
+    ) -> int:
+        if not (name or "").strip():
+            raise ValueError("silence name is required")
+        if ends_at <= starts_at:
+            raise ValueError("silence ends_at must be after starts_at")
+        starts_naive = starts_at.astimezone(timezone.utc).replace(tzinfo=None) \
+            if starts_at.tzinfo else starts_at
+        ends_naive = ends_at.astimezone(timezone.utc).replace(tzinfo=None) \
+            if ends_at.tzinfo else ends_at
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "INSERT INTO monigrid_silence_rules "
+                "(name, source_type, source_id_pattern, metric_pattern, "
+                "starts_at, ends_at, reason, created_at, created_by) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, {self._now_literal()}, ?)",
+                [name.strip(), source_type, source_id_pattern, metric_pattern,
+                 starts_naive, ends_naive, reason,
+                 (actor or "").strip() or None],
+            )
+            new_id = self._last_inserted_id(cur, "monigrid_silence_rules")
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        return int(new_id) if new_id is not None else 0
+
+    @_sync
+    def delete_silence_rule(self, silence_id: int) -> None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "DELETE FROM monigrid_silence_rules WHERE id = ?",
+                [int(silence_id)],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    # ── notification: queue ───────────────────────────────────────────────
+    _QUEUE_COLS = (
+        "id, alert_event_id, rule_id, channel_id, recipient_address, "
+        "subject, body_html, body_text, status, attempt, "
+        "next_attempt_at, last_error, created_at, sent_at"
+    )
+
+    def _row_to_queue_item(self, r: tuple) -> dict[str, Any]:
+        return {
+            "id": int(r[0]),
+            "alertEventId": int(r[1]) if r[1] is not None else None,
+            "ruleId": int(r[2]) if r[2] is not None else None,
+            "channelId": int(r[3]),
+            "recipientAddress": str(r[4]),
+            "subject": str(r[5]),
+            "bodyHtml": _read_clob(r[6]),
+            "bodyText": _read_clob(r[7]),
+            "status": str(r[8]),
+            "attempt": int(r[9] or 0),
+            "nextAttemptAt": _iso(r[10]),
+            "lastError": _read_clob(r[11]),
+            "createdAt": _iso(r[12]),
+            "sentAt": _iso(r[13]),
+        }
+
+    @_sync
+    def enqueue_notification(
+        self, *, channel_id: int,
+        recipient_address: str, subject: str,
+        body_html: str = "", body_text: str = "",
+        alert_event_id: int | None = None,
+        rule_id: int | None = None,
+        next_attempt_at: datetime | None = None,
+    ) -> int:
+        if not recipient_address.strip():
+            raise ValueError("recipient_address is required")
+        nxt = None
+        if next_attempt_at is not None:
+            nxt = next_attempt_at.astimezone(timezone.utc).replace(tzinfo=None) \
+                if next_attempt_at.tzinfo else next_attempt_at
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "INSERT INTO monigrid_notification_queue "
+                "(alert_event_id, rule_id, channel_id, recipient_address, "
+                "subject, body_html, body_text, status, attempt, "
+                "next_attempt_at, created_at) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, {self._now_literal()})",
+                [alert_event_id, rule_id, int(channel_id),
+                 recipient_address.strip(), subject, body_html, body_text, nxt],
+            )
+            new_id = self._last_inserted_id(cur, "monigrid_notification_queue")
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        return int(new_id) if new_id is not None else 0
+
+    @_sync
+    def claim_pending_notifications(
+        self, *, limit: int = 50,
+        now_utc: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch up to `limit` pending rows whose next_attempt_at is due.
+
+        We don't take an explicit row-lock — the SettingsStore RLock + worker
+        single-threaded poll is enough today (one worker process). If we ever
+        run two workers, switch to UPDATE ... WHERE status='pending' RETURNING
+        or a SELECT FOR UPDATE.
+        """
+        ref = (now_utc or datetime.now(timezone.utc)).replace(tzinfo=None)
+        cur = self._cursor()
+        try:
+            db = self._cfg.db_type
+            base = (
+                f"SELECT {self._QUEUE_COLS} FROM monigrid_notification_queue "
+                "WHERE status = 'pending' "
+                "AND (next_attempt_at IS NULL OR next_attempt_at <= ?) "
+                "ORDER BY id"
+            )
+            if db == "mariadb":
+                cur.execute(base + " LIMIT ?", [ref, int(limit)])
+            elif db == "mssql":
+                cur.execute(
+                    base + " OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY",
+                    [ref, int(limit)],
+                )
+            else:  # oracle
+                cur.execute(
+                    base + " FETCH FIRST ? ROWS ONLY",
+                    [ref, int(limit)],
+                )
+            rows = cur.fetchall()
+            ids = [int(r[0]) for r in rows]
+            if ids:
+                placeholders = ",".join(["?"] * len(ids))
+                cur.execute(
+                    f"UPDATE monigrid_notification_queue SET status = 'sending' "
+                    f"WHERE id IN ({placeholders})",
+                    ids,
+                )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        return [self._row_to_queue_item(r) for r in rows]
+
+    @_sync
+    def mark_notification_sent(self, queue_id: int) -> None:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                f"UPDATE monigrid_notification_queue SET status = 'sent', "
+                f"sent_at = {self._now_literal()}, last_error = NULL "
+                "WHERE id = ?",
+                [int(queue_id)],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    @_sync
+    def mark_notification_failed(
+        self, queue_id: int, *,
+        error: str,
+        next_attempt_at: datetime | None = None,
+        mark_dead: bool = False,
+    ) -> None:
+        nxt = None
+        if next_attempt_at is not None:
+            nxt = next_attempt_at.astimezone(timezone.utc).replace(tzinfo=None) \
+                if next_attempt_at.tzinfo else next_attempt_at
+        new_status = "dead" if mark_dead else "pending"
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "UPDATE monigrid_notification_queue SET status = ?, "
+                "attempt = attempt + 1, last_error = ?, next_attempt_at = ? "
+                "WHERE id = ?",
+                [new_status, (error or "")[:2000], nxt, int(queue_id)],
+            )
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+
+    @_sync
+    def list_notification_queue(
+        self, *,
+        status: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        params: list[Any] = []
+        where = ""
+        if status:
+            where = " WHERE status = ?"
+            params.append(str(status))
+        cur = self._cursor()
+        try:
+            cur.execute(
+                f"SELECT COUNT(*) FROM monigrid_notification_queue{where}",
+                params,
+            )
+            total = int(cur.fetchone()[0])
+            db = self._cfg.db_type
+            base = (
+                f"SELECT {self._QUEUE_COLS} FROM monigrid_notification_queue"
+                f"{where} ORDER BY id DESC"
+            )
+            if db == "mariadb":
+                cur.execute(base + " LIMIT ? OFFSET ?", params + [int(limit), int(offset)])
+            else:
+                cur.execute(
+                    base + " OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
+                    params + [int(offset), int(limit)],
+                )
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return {
+            "items": [self._row_to_queue_item(r) for r in rows],
+            "totalCount": total,
+            "limit": int(limit),
+            "offset": int(offset),
+        }
+
+    @_sync
+    def retry_notification_queue_item(self, queue_id: int) -> bool:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "UPDATE monigrid_notification_queue SET status = 'pending', "
+                "attempt = 0, next_attempt_at = NULL, last_error = NULL "
+                "WHERE id = ? AND status IN ('failed', 'dead')",
+                [int(queue_id)],
+            )
+            updated = getattr(cur, "rowcount", 0) or 0
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        return int(updated) > 0
+
+    @_sync
+    def cancel_notification_queue_item(self, queue_id: int) -> bool:
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "UPDATE monigrid_notification_queue SET status = 'cancelled' "
+                "WHERE id = ? AND status IN ('pending', 'failed')",
+                [int(queue_id)],
+            )
+            updated = getattr(cur, "rowcount", 0) or 0
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        self._conn.commit()
+        return int(updated) > 0
+
+    @_sync
+    def count_dead_notifications_in_window(
+        self, *, window_seconds: int = 86400,
+    ) -> int:
+        ref = (datetime.now(timezone.utc)
+               - timedelta(seconds=int(window_seconds))).replace(tzinfo=None)
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT COUNT(*) FROM monigrid_notification_queue "
+                "WHERE status = 'dead' AND created_at >= ?",
+                [ref],
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return int(row[0]) if row else 0
+
     # ── internals: generic upsert ─────────────────────────────────────────
 
     def _upsert(
@@ -2472,6 +3784,39 @@ class SettingsStore:
             return "SYSUTCDATETIME()"
         return "CURRENT_TIMESTAMP"
 
+    def _last_inserted_id(self, cur, table: str, *, pk_col: str = "id") -> int | None:
+        """Return the auto-increment id assigned by the most recent INSERT.
+
+        Tries cursor.lastrowid first (works on MariaDB via jaydebeapi); falls
+        back to dialect-specific lookups. Safe inside @_sync because the
+        SettingsStore RLock prevents another writer from interleaving between
+        the INSERT and the lookup — Oracle's ``SELECT MAX(id)`` is therefore
+        race-free in this codebase.
+        """
+        rid = getattr(cur, "lastrowid", None)
+        if rid is not None and rid != 0:
+            try:
+                return int(rid)
+            except (TypeError, ValueError):
+                pass
+        db = self._cfg.db_type
+        try:
+            if db == "mariadb":
+                cur.execute("SELECT LAST_INSERT_ID()")
+            elif db == "mssql":
+                cur.execute("SELECT SCOPE_IDENTITY()")
+            else:  # oracle
+                cur.execute(f"SELECT MAX({pk_col}) FROM {table}")
+            row = cur.fetchone()
+        except Exception:
+            return None
+        if not row or row[0] is None:
+            return None
+        try:
+            return int(row[0])
+        except (TypeError, ValueError):
+            return None
+
     def _execute_simple(self, sql: str) -> None:
         cur = self._cursor()
         try:
@@ -2484,6 +3829,24 @@ class SettingsStore:
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _iso(value: Any) -> str | None:
+    """Render a datetime (or already-string) as an ISO-8601 string with 'Z'.
+
+    Used by all the JSON-shaped getters so the FE never has to special-case
+    naive vs aware vs string dates coming back from JDBC. None passes through.
+    """
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        try:
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+            return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        except Exception:
+            return value.isoformat()
+    return str(value)
 
 
 def _read_clob(value: Any) -> str:
@@ -2541,6 +3904,28 @@ def _row_to_monitor_target(row: Any) -> dict[str, Any]:
     }
 
 
+def _parse_iso_to_utc_naive(value: Any) -> datetime | None:
+    """Parse ISO-8601 (with or without TZ suffix) and return UTC-naive datetime.
+
+    Used for query params (from_ts / to_ts) so DB drivers receive a real
+    datetime, not a string with 'T' / 'Z' that MariaDB TIMESTAMP comparison
+    can't coerce. Naive input is assumed UTC (matches our INSERT contract).
+    Returns None on missing / invalid input.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _to_utc_iso8601(value: Any) -> str | None:
     """Convert any datetime-ish value to a UTC ISO8601 string with 'Z'.
 
@@ -2592,6 +3977,26 @@ def _extract_table_name(ddl: str) -> str | None:
         return None
     tail = ddl[idx + len("CREATE TABLE"):].strip()
     # strip possible IF NOT EXISTS (not used for Oracle, defensive anyway)
+    if tail.upper().startswith("IF NOT EXISTS"):
+        tail = tail[len("IF NOT EXISTS"):].strip()
+    end = 0
+    while end < len(tail) and (tail[end].isalnum() or tail[end] == "_"):
+        end += 1
+    name = tail[:end]
+    return name or None
+
+
+def _extract_index_name(ddl: str) -> str | None:
+    """Pull index name out of a `CREATE [UNIQUE] INDEX <name> ON ...` DDL."""
+    upper = ddl.upper()
+    idx = upper.find("CREATE INDEX")
+    if idx < 0:
+        idx = upper.find("CREATE UNIQUE INDEX")
+        if idx < 0:
+            return None
+        tail = ddl[idx + len("CREATE UNIQUE INDEX"):].strip()
+    else:
+        tail = ddl[idx + len("CREATE INDEX"):].strip()
     if tail.upper().startswith("IF NOT EXISTS"):
         tail = tail[len("IF NOT EXISTS"):].strip()
     end = 0
