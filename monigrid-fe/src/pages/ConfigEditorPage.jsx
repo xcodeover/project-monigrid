@@ -8,6 +8,7 @@ import DirtyListSummary from "../components/DirtyListSummary";
 import PasswordInput from "../components/PasswordInput";
 import MonitorTargetsTab from "../components/MonitorTargetsTab";
 import TimemachineSettingsTab from "../components/TimemachineSettingsTab";
+import NotificationsTab from "../components/NotificationsTab";
 import BackendConfigPasswordPrompt from "../components/BackendConfigPasswordPrompt";
 import { ConfigFooterContext } from "./configFooterContext";
 import {
@@ -553,6 +554,7 @@ const TABS = [
     { key: "connections", label: "DB 연결" },
     { key: "widgetGroup", label: "위젯별 설정" },
     { key: "timemachine", label: "타임머신" },
+    { key: "notifications", label: "알림" },
 ];
 
 const WIDGET_SUB_TABS = [
@@ -568,7 +570,9 @@ const WIDGET_SUB_TABS = [
 const SELF_BINDING_SUB_TABS = new Set([
     "serverTargets", "networkTargets", "httpStatusTargets",
 ]);
-const SELF_BINDING_TOP_TABS = new Set(["timemachine"]);
+// notifications 탭은 자체 PUT/PATCH 흐름이라 ConfigEditorPage 의 handleSave
+// (PUT /dashboard/config) 를 호출하지 않는다. timemachine 과 동일 패턴.
+const SELF_BINDING_TOP_TABS = new Set(["timemachine", "notifications"]);
 
 export default function ConfigEditorPage() {
     const navigate = useNavigate();
@@ -704,6 +708,11 @@ export default function ConfigEditorPage() {
     const [connections, setConnections] = useState([]);
     const [globalJdbcJars, setGlobalJdbcJars] = useState("");
     const [sqlValidation, setSqlValidation] = useState({});
+    // 표시(브랜딩) 메타: 기본 탭 서버 섹션에서 admin 이 편집. 모두 monigrid_settings_kv
+    // 의 top-level scalar 로 저장되어 PUT /dashboard/config 한 번에 같이 넘긴다.
+    const [appVersion, setAppVersion] = useState("");
+    const [appTitle, setAppTitle] = useState("");
+    const [appCompanyName, setAppCompanyName] = useState("");
 
     const [collapsedConns, setCollapsedConns] = useState({});
     const [collapsedApis, setCollapsedApis] = useState({});
@@ -784,9 +793,22 @@ export default function ConfigEditorPage() {
             connections: connections.map(({ _isNew: _n, ...rest }) => rest),
             globalJdbcJars,
             sqlValidation,
+            version: appVersion,
+            dashboard_title: appTitle,
+            app_company_name: appCompanyName,
         });
         return cur !== ref;
-    }, [server, auth, logging, connections, globalJdbcJars, sqlValidation]);
+    }, [
+        server,
+        auth,
+        logging,
+        connections,
+        globalJdbcJars,
+        sqlValidation,
+        appVersion,
+        appTitle,
+        appCompanyName,
+    ]);
 
     // 사용자가 폐기 confirm 을 수락한 직후 ~ loadConfig 완료 까지의 transition
     // 윈도우. 이 동안엔 isPageDirty 를 강제로 false 처리해 (a) 다음 탭 클릭에서
@@ -834,6 +856,12 @@ export default function ConfigEditorPage() {
             );
             setGlobalJdbcJars(data.global_jdbc_jars || "");
             setSqlValidation(data.sql_validation || {});
+            const loadedVersion = String(data.version ?? "");
+            const loadedTitle = String(data.dashboard_title ?? "");
+            const loadedCompany = String(data.app_company_name ?? "");
+            setAppVersion(loadedVersion);
+            setAppTitle(loadedTitle);
+            setAppCompanyName(loadedCompany);
             setRawJson(JSON.stringify(data, null, 2));
             // 일반 영역 dirty 판정용 snapshot — connections 는 _isNew 등 FE-only
             // 플래그가 없는 raw API 응답 그대로 저장 (비교 시 FE 쪽도 _isNew strip).
@@ -844,6 +872,9 @@ export default function ConfigEditorPage() {
                 connections: Array.isArray(data.connections) ? data.connections : [],
                 globalJdbcJars: data.global_jdbc_jars || "",
                 sqlValidation: data.sql_validation || {},
+                version: loadedVersion,
+                dashboard_title: loadedTitle,
+                app_company_name: loadedCompany,
             });
         } catch (e) {
             setError(e?.response?.data?.message || e?.message || "설정을 불러오지 못했습니다.");
@@ -896,6 +927,10 @@ export default function ConfigEditorPage() {
             sql_validation: sqlValidation,
             connections: cleanConnections,
             apis: buildApisForSave(),
+            // 브랜딩/표시 메타 — BE 의 _KV_SCALARS 에 정의된 키와 일치해야 한다.
+            version: appVersion.trim(),
+            dashboard_title: appTitle.trim(),
+            app_company_name: appCompanyName.trim(),
         };
     };
 
@@ -1279,6 +1314,35 @@ export default function ConfigEditorPage() {
                                                     <input type="number" value={server.query_timeout_sec ?? 10} onChange={(e) => setServer((p) => ({ ...p, query_timeout_sec: Number(e.target.value) }))} min="1" />
                                                 </label>
                                             </div>
+                                            <div className="cfg-row-3">
+                                                <label><span>앱 타이틀</span>
+                                                    <input
+                                                        type="text"
+                                                        value={appTitle}
+                                                        onChange={(e) => setAppTitle(e.target.value)}
+                                                        placeholder="Monitoring Dashboard"
+                                                        maxLength={200}
+                                                    />
+                                                </label>
+                                                <label><span>회사명 (Footer Copyright)</span>
+                                                    <input
+                                                        type="text"
+                                                        value={appCompanyName}
+                                                        onChange={(e) => setAppCompanyName(e.target.value)}
+                                                        placeholder="Monitoring Dashboard"
+                                                        maxLength={200}
+                                                    />
+                                                </label>
+                                                <label><span>버전 (Footer 표시)</span>
+                                                    <input
+                                                        type="text"
+                                                        value={appVersion}
+                                                        onChange={(e) => setAppVersion(e.target.value)}
+                                                        placeholder="빌드 기본값 사용 시 비워두세요"
+                                                        maxLength={32}
+                                                    />
+                                                </label>
+                                            </div>
                                         </div>
                                     </section>
 
@@ -1456,6 +1520,13 @@ export default function ConfigEditorPage() {
                         {activeTab === "timemachine" && (
                             <div className="cfgpage-pane cfgpage-pane-monitor">
                                 <TimemachineSettingsTab />
+                            </div>
+                        )}
+
+                        {/* ── 알림 탭 (Phase 6) ─────────────────────── */}
+                        {activeTab === "notifications" && (
+                            <div className="cfgpage-pane cfgpage-pane-monitor">
+                                <NotificationsTab />
                             </div>
                         )}
                     </>

@@ -2,9 +2,14 @@
  * AlarmBanner: fixed top bar shown when any widget is in "dead" state.
  * Plays a Web Audio API beep on alarm. Admin can acknowledge or toggle sound.
  */
-import React, { useEffect, useRef, useCallback, useMemo } from "react";
+import React, { lazy, Suspense, useEffect, useRef, useCallback, useMemo, useState } from "react";
 import { useAlarmStore } from "../store/alarmStore.js";
+import { useDashboardStore } from "../store/dashboardStore.js";
+import { useAuthStore } from "../store/authStore.js";
 import "./AlarmBanner.css";
+
+// Lazy: SendAlertNowModal pulls in extra services we only need on click.
+const SendAlertNowModal = lazy(() => import("./SendAlertNowModal.jsx"));
 
 // 모듈 단위 단일 AudioContext 인스턴스.
 // 매 호출마다 새 AudioContext를 만들면 브라우저당 인스턴스 한도(Chrome ≈ 6)에
@@ -87,9 +92,16 @@ const AlarmBanner = () => {
     const alarmSound     = useAlarmStore((s) => s.alarmSound);
     const acknowledgeAlarm = useAlarmStore((s) => s.acknowledgeAlarm);
     const setSoundEnabled  = useAlarmStore((s) => s.setSoundEnabled);
+    // widget id → 표시용 라벨. 같은 dashboardStore 를 다른 컴포넌트도 구독하지만
+    // 셀렉터로 widgets 만 뽑으면 다른 키 변경 시 재렌더되지 않는다.
+    const widgets = useDashboardStore((s) => s.widgets);
 
     const isAlarming = alarmedWidgets.size > 0;
     const beepTimerRef = useRef(null);
+    const user = useAuthStore((s) => s.user);
+    const isAdmin = user?.role === "admin"
+        || String(user?.username || "").trim().toLowerCase() === "admin";
+    const [sendNowOpen, setSendNowOpen] = useState(false);
     // Tracks the sorted join-key of the last alarm set that was processed.
     // Using a string key (instead of size) ensures member-swap detection:
     // e.g. A→B with equal size produces a different key → effect re-fires.
@@ -132,18 +144,24 @@ const AlarmBanner = () => {
         return stopBeepLoop;
     }, [isAlarming, acknowledged, soundEnabled, alarmKey, stopBeepLoop]);
 
-    // Memoise the formatted alarm list so the spread + slice + join doesn't
-    // run on every render of the parent (this banner re-renders whenever
-    // any dashboard widget updates).
-    const widgetList = useMemo(
-        () => [...alarmedWidgets].slice(0, 5).join(", "),
-        [alarmedWidgets],
-    );
+    // widget id 대신 사용자에게 의미 있는 위젯 타이틀을 표시. 매핑 실패
+    // (예: alarmedWidgets 에 있는 id 가 widgets 에서 사라진 경우) 시 id 그대로
+    // 표시해서 디버깅 단서를 남긴다.
+    const widgetList = useMemo(() => {
+        const titleById = new Map(
+            (widgets || []).map((w) => [w.id, w.title || w.id]),
+        );
+        return [...alarmedWidgets]
+            .slice(0, 5)
+            .map((id) => titleById.get(id) || id)
+            .join(", ");
+    }, [alarmedWidgets, widgets]);
     const extra = alarmedWidgets.size > 5 ? ` 외 ${alarmedWidgets.size - 5}개` : "";
 
     if (!isAlarming) return null;
 
     return (
+        <>
         <div className={`alarm-banner${acknowledged ? " muted" : ""}`}>
             <span className="alarm-icon">{acknowledged ? "🔕" : "🚨"}</span>
 
@@ -155,6 +173,16 @@ const AlarmBanner = () => {
                     ({widgetList}{extra})
                 </span>
             </span>
+
+            {isAdmin && (
+                <button
+                    className="alarm-btn"
+                    onClick={() => setSendNowOpen(true)}
+                    title="활성 알람을 즉시 메일로 발송"
+                >
+                    📧 메일 보내기
+                </button>
+            )}
 
             {!acknowledged && (
                 <button
@@ -174,6 +202,13 @@ const AlarmBanner = () => {
                 {soundEnabled ? "🔊" : "🔇"}
             </button>
         </div>
+
+        {sendNowOpen && (
+            <Suspense fallback={null}>
+                <SendAlertNowModal open={sendNowOpen} onClose={() => setSendNowOpen(false)} />
+            </Suspense>
+        )}
+        </>
     );
 };
 
