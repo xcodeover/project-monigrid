@@ -29,6 +29,7 @@ from . import (
     health_proxy_routes,
     monitor_routes,
     network_routes,
+    notification_routes,
     server_routes,
     system_routes,
     timemachine_routes,
@@ -49,6 +50,7 @@ def register_all_routes(app, backend, limiter) -> None:
     timemachine_routes.register(app, backend, limiter)
     user_preferences_routes.register(app, backend, limiter)
     admin_user_routes.register(app, backend, limiter)
+    notification_routes.register(app, backend, limiter)
     health_proxy_routes.register(app, backend, limiter)
     system_routes.register(app, backend, limiter)
     dynamic_routes.register(app, backend, limiter)

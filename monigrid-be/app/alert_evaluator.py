@@ -23,6 +23,7 @@ Wiring contract:
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 import threading
 from typing import Any
 
@@ -263,11 +264,22 @@ class AlertEvaluator:
         *,
         settings_store,
         logger: logging.Logger,
+        notify_sink=None,
     ) -> None:
         self._store = settings_store
         self._logger = logger
         self._active: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._lock = threading.RLock()
+        # Optional fire-and-forget callable invoked after a transition is
+        # successfully recorded. Wrapped in try/except so notification
+        # subsystem failures never affect the monitoring hot path. See
+        # notification/dispatcher.py for the receiver side.
+        self._notify_sink = notify_sink
+
+    def set_notify_sink(self, sink) -> None:
+        """Late binding — service.py wires the dispatcher in after both
+        evaluator and dispatcher are constructed."""
+        self._notify_sink = sink
 
     # ── public API ────────────────────────────────────────────────────────
 
@@ -595,6 +607,48 @@ class AlertEvaluator:
                 "record_alert_event failed sourceType=%s sourceId=%s severity=%s",
                 source_type, source_id, severity,
             )
+            return
+        # Fire-and-forget notification dispatch. Hard-isolated: any failure
+        # here MUST NOT propagate back into the collector loop.
+        sink = self._notify_sink
+        if sink is None:
+            return
+        try:
+            sink({
+                "source_type": source_type,
+                "source_id": source_id,
+                "metric": metric,
+                "severity": severity,
+                "level": level,
+                "label": label,
+                "message": message,
+                "payload": payload or {},
+                "created_at": datetime.now(timezone.utc),
+            })
+        except Exception:
+            self._logger.exception(
+                "notify_sink raised — suppressed; collector path unaffected",
+            )
+
+    def snapshot_active(self) -> list[dict[str, Any]]:
+        """Return a stable snapshot of currently raised alarms.
+
+        Used by the notification dispatcher to enrich the email body with
+        'other alarms firing right now'. Cheap copy under the lock so callers
+        can iterate without races.
+        """
+        with self._lock:
+            return [
+                {
+                    "sourceType": k[0],
+                    "sourceId": k[1],
+                    "metric": k[2] or None,
+                    "label": v.get("label"),
+                    "level": v.get("level"),
+                    "message": v.get("message"),
+                }
+                for k, v in self._active.items()
+            ]
 
 
 def _severity_level(violation: dict[str, Any]) -> str:

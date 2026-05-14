@@ -33,6 +33,10 @@ from .jdbc_executor import JdbcQueryExecutor
 from .log_reader import LogReader
 from .logging_setup import _startup_log, configure_logging
 from .monitor_collector_manager import MonitorCollectorManager, MonitorSnapshot
+from .notification import NotificationDispatcher, NotificationWorker
+from .notification.channels import Channel, ChannelConfigError
+from .notification.channels.smtp import SmtpChannel
+from .notification.crypto import decrypt_dict, encrypt_dict
 from .settings_store import SettingsStore, SqlRepository
 from .sql_editor_service import SqlEditorService
 from .timemachine_store import TimemachineStore
@@ -136,6 +140,26 @@ class MonitoringBackend:
             settings_store=self.settings_store,
             logger=self.logger,
         )
+        # Phase 6: notification subsystem. Dispatcher receives transitions
+        # from the evaluator (fire-and-forget), Worker drains the persistent
+        # queue. Both are constructed unconditionally — the global toggle
+        # gate happens *inside* the dispatcher so flipping it on/off doesn't
+        # require a service restart. Wiring is symmetric to evaluator: build
+        # before producers exist, set notify_sink last.
+        self._notification_dispatcher = NotificationDispatcher(
+            store=self.settings_store,
+            get_app_url=lambda: getattr(self.config, "public_app_url", "") or "",
+            app_name=getattr(self.config, "dashboard_title", None) or "MoniGrid",
+        )
+        self._notification_dispatcher.set_evaluator(self._alert_evaluator)
+        self._alert_evaluator.set_notify_sink(self._notification_dispatcher.on_event)
+        self._notification_worker = NotificationWorker(
+            store=self.settings_store,
+            channel_provider=self._build_channel_registry,
+            poll_interval_sec=float(os.environ.get("NOTIFICATION_POLL_SEC", "30")),
+            max_workers=int(os.environ.get("NOTIFICATION_WORKERS", "4")),
+            batch_limit=int(os.environ.get("NOTIFICATION_BATCH", "50")),
+        )
         self._monitor_collector = MonitorCollectorManager(
             target_loader=self.settings_store.list_monitor_targets,
             executor_provider=lambda: self.monitor_executor,
@@ -207,6 +231,25 @@ class MonitoringBackend:
                 self.logger.error("JVM pre-start failed (will retry on first query): %s", exc)
         self._cache_manager.start()
         self._monitor_collector.start()
+        # Notification dispatcher + worker live alongside the cache/collector
+        # threads. Started after them so the very first transition the
+        # evaluator emits already has a sink to land in.
+        self._notification_dispatcher.start()
+        self._notification_worker.start()
+
+        # Phase 6: meta-monitor for the notification subsystem itself.
+        # Raises a system alarm into the regular alert pipeline whenever the
+        # dead-letter count in the last 24 h crosses a threshold — that's the
+        # signal that channels are mis-configured or the SMTP relay is down,
+        # which the operator needs to see in the dashboard banner *without*
+        # depending on email working.
+        self._notif_meta_stop = threading.Event()
+        self._notif_meta_thread = threading.Thread(
+            target=self._notification_meta_monitor_loop,
+            name="notification-meta-monitor",
+            daemon=True,
+        )
+        self._notif_meta_thread.start()
         enabled_apis = [ep for ep in self.config.apis.values() if ep.enabled]
         _startup_log(
             self.logger,
@@ -226,7 +269,11 @@ class MonitoringBackend:
     # ── Cache management (delegated to EndpointCacheManager) ──────────────
 
     def _stop_background_refreshers(self) -> None:
-        # Kept for monigrid_be.py shutdown hook (still calls this name).
+        # Called by both reload() and the process shutdown hook. Notification
+        # subsystem deliberately is NOT stopped here: it has no per-config
+        # state, runs on its own pools, and re-creating Thread/Executor
+        # instances on every reload is wasted work. Process shutdown calls
+        # _shutdown_notification_subsystem explicitly.
         self._cache_manager.stop()
         self._monitor_collector.stop()
         # Phase 3: stop retention thread + close SQLite connection so the
@@ -242,6 +289,92 @@ class MonitoringBackend:
                 self._timemachine.close()
             except Exception:
                 pass
+
+    def _shutdown_notification_subsystem(self) -> None:
+        """Stop dispatcher + worker + meta-monitor. Process-shutdown only —
+        reload() must not call this because the threads can't be restarted
+        in place."""
+        # Meta monitor first (cheap, just a loop with sleep).
+        try:
+            if getattr(self, "_notif_meta_stop", None) is not None:
+                self._notif_meta_stop.set()
+            if getattr(self, "_notif_meta_thread", None) is not None:
+                self._notif_meta_thread.join(timeout=2)
+        except Exception:
+            self.logger.exception("notification meta monitor stop raised")
+        # Worker next: it still needs the dispatcher's evaluator/store
+        # references during in-flight delivery cleanup. Then dispatcher
+        # (drains its in-process queue).
+        try:
+            if getattr(self, "_notification_worker", None) is not None:
+                self._notification_worker.stop(timeout=5.0)
+        except Exception:
+            self.logger.exception("notification worker stop raised")
+        try:
+            if getattr(self, "_notification_dispatcher", None) is not None:
+                self._notification_dispatcher.stop(timeout=5.0)
+        except Exception:
+            self.logger.exception("notification dispatcher stop raised")
+
+    # ── Notification meta monitor ────────────────────────────────────────
+
+    # Tunable via env so QA can lower the threshold for tests.
+    _NOTIF_META_TICK_SEC = float(os.environ.get("NOTIFICATION_META_TICK_SEC", "300"))
+    _NOTIF_META_WINDOW_SEC = int(os.environ.get("NOTIFICATION_META_WINDOW_SEC", "86400"))
+    _NOTIF_META_THRESHOLD = int(os.environ.get("NOTIFICATION_META_THRESHOLD", "100"))
+
+    def _notification_meta_monitor_loop(self) -> None:
+        """Every 5 min, count dead-lettered notifications in the trailing
+        24 h. ≥ threshold → emit a 'monigrid_meta' raise; otherwise emit a
+        clear. record_alert_event de-dupes same-state writes, so we can call
+        unconditionally each tick without polluting the transition log.
+
+        We deliberately bypass the dispatcher hook by setting source_type
+        outside any user rule's match space ('monigrid_meta') — we don't
+        want a meta-alarm to itself try to send an email. The dashboard
+        banner alone surfaces it.
+        """
+        # Initial wait so a fresh boot doesn't fire immediately on a cold DB.
+        if self._notif_meta_stop.wait(min(60.0, self._NOTIF_META_TICK_SEC)):
+            return
+        while not self._notif_meta_stop.is_set():
+            try:
+                self._notification_meta_tick()
+            except Exception:
+                self.logger.exception("notification meta tick failed")
+            if self._notif_meta_stop.wait(self._NOTIF_META_TICK_SEC):
+                return
+
+    def _notification_meta_tick(self) -> None:
+        try:
+            dead = self.settings_store.count_dead_notifications_in_window(
+                window_seconds=self._NOTIF_META_WINDOW_SEC,
+            )
+        except Exception:
+            self.logger.exception("count dead notifications failed")
+            return
+        triggered = dead >= self._NOTIF_META_THRESHOLD
+        severity = "raise" if triggered else "clear"
+        try:
+            self.settings_store.record_alert_event(
+                source_type="monigrid_meta",
+                source_id="notification.dead",
+                metric=None,
+                severity=severity,
+                level="warn",
+                label="알림 발송 실패 누적",
+                message=(
+                    f"최근 {self._NOTIF_META_WINDOW_SEC // 3600}시간 내 발송 사망 {dead}건 "
+                    f"(임계 {self._NOTIF_META_THRESHOLD}). 채널 설정/네트워크 점검 필요."
+                ) if triggered else (
+                    f"최근 {self._NOTIF_META_WINDOW_SEC // 3600}시간 내 발송 사망 {dead}건 "
+                    f"— 임계 미만으로 정상화."
+                ),
+                payload={"deadCount": dead, "threshold": self._NOTIF_META_THRESHOLD,
+                         "windowSec": self._NOTIF_META_WINDOW_SEC},
+            )
+        except Exception:
+            self.logger.exception("record meta alert failed")
 
     # ── Timemachine archival hooks (Phase 3) ─────────────────────────────
 
@@ -876,3 +1009,140 @@ class MonitoringBackend:
         )
         for ep in enabled_apis:
             _startup_log(self.logger, "Hosted API id=%s path=%s", ep.api_id, ep.rest_api_path)
+
+    # ── Notification subsystem (Phase 6) ─────────────────────────────────
+
+    def _build_channel_registry(self) -> dict[int, Channel]:
+        """Build the live channel registry from the DB. Called by the worker
+        on each tick so config changes are picked up within the poll
+        interval (default 30s) without a service restart.
+
+        Channels with broken / undecryptable config are skipped with a log
+        — the rest of the registry remains usable.
+        """
+        registry: dict[int, Channel] = {}
+        try:
+            rows = self.settings_store.list_notification_channels()
+        except Exception:
+            self.logger.exception("list_notification_channels failed during channel registry build")
+            return registry
+        for row in rows:
+            if not row.get("enabled"):
+                continue
+            kind = row.get("kind")
+            blob = row.get("configEncrypted") or ""
+            if not blob:
+                self.logger.warning("channel %s (%s) has no config; skipping", row.get("id"), kind)
+                continue
+            try:
+                cfg = decrypt_dict(blob)
+            except Exception:
+                self.logger.exception("channel %s decrypt failed; skipping", row.get("id"))
+                continue
+            try:
+                if kind == "smtp":
+                    registry[int(row["id"])] = SmtpChannel.from_config(cfg)
+                else:
+                    self.logger.info("channel %s kind=%s not yet supported", row.get("id"), kind)
+            except ChannelConfigError as exc:
+                self.logger.warning("channel %s config invalid: %s", row.get("id"), exc)
+            except Exception:
+                self.logger.exception("channel %s build failed", row.get("id"))
+        return registry
+
+    def get_notification_global(self) -> dict[str, Any]:
+        try:
+            scalars = self.settings_store.load_scalar_sections() or {}
+        except Exception:
+            self.logger.exception("notification.global load failed")
+            return {"enabled": False}
+        raw = scalars.get("notification.global")
+        if isinstance(raw, dict):
+            return {"enabled": bool(raw.get("enabled", False))}
+        return {"enabled": False}
+
+    def set_notification_global(self, *, enabled: bool, actor: str = "") -> dict[str, Any]:
+        # actor is recorded by the upstream audit log layer; KV scalar itself
+        # is just the boolean payload.
+        self.settings_store.set_kv_scalar(
+            "notification.global", {"enabled": bool(enabled)},
+        )
+        self.logger.info("notification.global set enabled=%s by %s", enabled, actor or "?")
+        return {"enabled": bool(enabled)}
+
+    def save_notification_channel(
+        self, *, kind: str, enabled: bool,
+        plain_config: dict[str, Any], actor: str = "",
+    ) -> dict[str, Any]:
+        """Encrypt + persist a channel's config. Validates the config by
+        instantiating the matching Channel subclass (raises ChannelConfigError
+        on bad input) before writing to the DB."""
+        if kind == "smtp":
+            SmtpChannel.from_config(plain_config)  # raises if invalid
+        elif kind:
+            raise ValueError(f"unknown channel kind: {kind!r}")
+        encrypted = encrypt_dict(plain_config)
+        channel_id = self.settings_store.upsert_notification_channel(
+            kind=kind, enabled=enabled, config_encrypted=encrypted, actor=actor,
+        )
+        return {"id": int(channel_id), "kind": kind, "enabled": bool(enabled)}
+
+    def send_test_email(
+        self, *, channel_kind: str, recipient: str,
+    ) -> dict[str, Any]:
+        """Build the channel from the saved config and send a one-off test
+        message. Surfaces channel errors to the caller so the UI can show
+        them in the 'test' button feedback."""
+        from .notification.templates import render_test_email
+        row = self.settings_store.get_notification_channel(channel_kind)
+        if row is None:
+            raise ValueError(f"channel {channel_kind!r} not configured")
+        if not row.get("enabled"):
+            raise ValueError(f"channel {channel_kind!r} is disabled")
+        cfg = decrypt_dict(row.get("configEncrypted") or "")
+        if channel_kind != "smtp":
+            raise ValueError(f"unknown channel kind: {channel_kind!r}")
+        channel = SmtpChannel.from_config(cfg)
+        subject, html, text = render_test_email(
+            recipient=recipient,
+            app_name=getattr(self.config, "dashboard_title", None) or "MoniGrid",
+        )
+        result = channel.send(
+            recipient_address=recipient, subject=subject,
+            body_html=html, body_text=text,
+        )
+        return {"ok": bool(result.ok), "detail": result.detail}
+
+    def get_notification_dispatcher_stats(self) -> dict[str, Any]:
+        if self._notification_dispatcher is None:
+            return {}
+        return self._notification_dispatcher.stats()
+
+    def send_notification_now(
+        self, *, alert_event: dict[str, Any],
+        channel_id: int, recipient_addresses: list[str],
+    ) -> dict[str, Any]:
+        """One-shot enqueue bypassing rule matching / cooldown. Used by
+        the 'send to operator now' button on AlarmBanner. Subject + body
+        are rendered from the supplied alert event dict."""
+        from .notification.templates import render_alert_email
+        if not recipient_addresses:
+            raise ValueError("recipient_addresses must be non-empty")
+        subject, html, text = render_alert_email(
+            event=alert_event,
+            related_active=None,
+            sparkline_svg=None,
+            dashboard_url=None,
+            timemachine_url=None,
+            cooldown_recent_count=0,
+            app_name=getattr(self.config, "dashboard_title", None) or "MoniGrid",
+        )
+        ids: list[int] = []
+        for addr in recipient_addresses:
+            new_id = self.settings_store.enqueue_notification(
+                channel_id=int(channel_id),
+                recipient_address=addr,
+                subject=subject, body_html=html, body_text=text,
+            )
+            ids.append(int(new_id))
+        return {"queued": ids, "count": len(ids)}

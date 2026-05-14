@@ -294,6 +294,7 @@ if __name__ == "__main__":
         raise
     finally:
         backend._stop_background_refreshers()
+        backend._shutdown_notification_subsystem()
         backend._close_all_pools()
         try:
             settings_store.close()
