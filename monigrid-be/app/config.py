@@ -89,6 +89,7 @@ _DEFAULT_RATE_LIMITS = RateLimitConfig(
 class AppConfig:
     version: str
     dashboard_title: str
+    app_company_name: str
     host: str
     port: int
     thread_pool_size: int
@@ -294,10 +295,14 @@ def build_app_config(raw: dict[str, Any], base_dir: str) -> AppConfig:
 
     # dashboard_title: empty string → FE falls back to VITE_APP_TITLE
     dashboard_title = str(raw.get("dashboard_title") or "").strip()
+    # app_company_name: footer Copyright 표시용 회사명. 빈 문자열 → FE 가
+    # VITE_COMPANY_NAME (빌드 시) 으로 fallback.
+    app_company_name = str(raw.get("app_company_name") or "").strip()
 
     return AppConfig(
         version=config_version,
         dashboard_title=dashboard_title,
+        app_company_name=app_company_name,
         host=str(server.get("host", "0.0.0.0")),
         port=int(server.get("port", 5000)),
         thread_pool_size=max(1, int(server.get("thread_pool_size", 8))),
