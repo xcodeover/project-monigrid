@@ -1,0 +1,38 @@
+{% if event.severity == "clear" -%}
+[{{ app_name }}] [해소됨] {{ event.metric or "-" }} 정상화 — {{ event.label or event.source_id }}
+{% else -%}
+[{{ app_name }}] [{{ event.level | level_label }}] {{ event.metric or "-" }} 임계치 초과 — {{ event.label or event.source_id }}
+{% endif %}
+{{ "=" * 60 }}
+
+발생 시각 : {{ event.created_at | kst }}
+소스      : {{ event.source_type | source_label }} ({{ event.source_type }})
+대상      : {{ event.label or event.source_id }}{% if payload.host %} ({{ payload.host }}){% endif %}
+
+지표      : {{ event.metric or "-" }}
+{% if payload.value is defined -%}
+측정값    : {{ payload.value }}{% if payload.threshold is defined %} (임계치: {{ payload.threshold }}){% endif %}
+{% endif -%}
+{% if event.message -%}
+메시지    : {{ event.message }}
+{% endif %}
+{% if cooldown_recent_count > 0 -%}
+※ 최근 5분간 동일 알람이 {{ cooldown_recent_count }}회 발생 (cooldown 으로 1통만 발송).
+{% endif %}
+{% if related -%}
+
+[함께 활성화된 다른 알람 ({{ related|length }}건)]
+{% for r in related -%}
+  - {{ r.label or r.source_id }} - {{ r.metric or "-" }} ({{ (r.level or "warn") | level_label }})
+{% endfor -%}
+{% endif %}
+{% if dashboard_url -%}
+
+대시보드   : {{ dashboard_url }}
+{% endif -%}
+{% if timemachine_url -%}
+Time Machine: {{ timemachine_url }}
+{% endif %}
+
+--
+This is an automated message from {{ app_name }}.

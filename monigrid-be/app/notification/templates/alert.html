@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>{{ app_name }} 알람</title>
+</head>
+<body style="margin:0;padding:24px;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111827;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+    <tr>
+      <td style="background:{{ event.level | level_color }};color:#ffffff;padding:16px 24px;font-size:16px;font-weight:600;">
+        {% if event.severity == "clear" %}
+          [해소됨] {{ event.metric or "-" }} 임계치 정상화 — {{ event.label or event.source_id }}
+        {% else %}
+          [{{ event.level | level_label }}] {{ event.metric or "-" }} 임계치 초과 — {{ event.label or event.source_id }}
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:20px 24px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;font-size:13px;">
+          <tr>
+            <td style="padding:6px 0;color:#6b7280;width:120px;">발생 시각</td>
+            <td style="padding:6px 0;">{{ event.created_at | kst }}</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;color:#6b7280;">소스</td>
+            <td style="padding:6px 0;">{{ event.source_type | source_label }} ({{ event.source_type }})</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;color:#6b7280;">대상</td>
+            <td style="padding:6px 0;"><b>{{ event.label or event.source_id }}</b>
+              {% if payload.host %} <span style="color:#6b7280;">({{ payload.host }})</span>{% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;color:#6b7280;">지표</td>
+            <td style="padding:6px 0;">{{ event.metric or "-" }}</td>
+          </tr>
+          {% if payload.value is defined %}
+          <tr>
+            <td style="padding:6px 0;color:#6b7280;">측정값</td>
+            <td style="padding:6px 0;"><b>{{ payload.value }}</b>
+              {% if payload.threshold is defined %}
+                <span style="color:#6b7280;"> (임계치: {{ payload.threshold }})</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endif %}
+          {% if event.message %}
+          <tr>
+            <td style="padding:6px 0;color:#6b7280;vertical-align:top;">메시지</td>
+            <td style="padding:6px 0;">{{ event.message }}</td>
+          </tr>
+          {% endif %}
+        </table>
+
+        {% if cooldown_recent_count > 0 %}
+        <p style="margin:14px 0 0 0;padding:8px 12px;background:#fef3c7;color:#92400e;border-radius:6px;font-size:12px;">
+          최근 5분간 동일 알람이 <b>{{ cooldown_recent_count }}회</b> 발생했습니다 (cooldown 으로 1통만 발송).
+        </p>
+        {% endif %}
+
+        {% if sparkline_svg %}
+        <div style="margin-top:18px;">
+          <div style="font-size:12px;color:#6b7280;margin-bottom:6px;">최근 1시간 추이</div>
+          {{ sparkline_svg | safe }}
+        </div>
+        {% endif %}
+
+        {% if related %}
+        <div style="margin-top:18px;">
+          <div style="font-size:12px;color:#6b7280;margin-bottom:6px;">함께 활성화된 다른 알람 ({{ related|length }}건)</div>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;font-size:12px;">
+            {% for r in related %}
+            <tr>
+              <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;color:#374151;">
+                {{ r.label or r.source_id }} - {{ r.metric or "-" }}
+              </td>
+              <td style="padding:4px 8px;border-bottom:1px solid #f3f4f6;color:#6b7280;text-align:right;">
+                {{ (r.level or "warn") | level_label }}
+              </td>
+            </tr>
+            {% endfor %}
+          </table>
+        </div>
+        {% endif %}
+
+        {% if dashboard_url or timemachine_url %}
+        <div style="margin-top:24px;">
+          {% if dashboard_url %}
+          <a href="{{ dashboard_url }}" style="display:inline-block;padding:10px 16px;margin-right:8px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:500;">대시보드 열기</a>
+          {% endif %}
+          {% if timemachine_url %}
+          <a href="{{ timemachine_url }}" style="display:inline-block;padding:10px 16px;background:#6b7280;color:#ffffff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:500;">Time Machine 으로 시점 보기</a>
+          {% endif %}
+        </div>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:14px 24px;background:#f9fafb;border-top:1px solid #f3f4f6;font-size:11px;color:#9ca3af;">
+        This is an automated message from {{ app_name }}.
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
