@@ -65,6 +65,9 @@ monigrid-be/sql.bak/
 *.db
 *.dump
 *.bak
+# scripts/export_settings_db.py 의 산출물 — 실 DB host / bcrypt hash 포함.
+monigrid_db_export*.sql
+*.dump.sql
 
 # ── JDBC drivers (binary, license-bound) ─────────────────────────────────────
 monigrid-be/drivers/*.jar
