@@ -152,7 +152,9 @@ class MonitoringBackend:
             app_name=getattr(self.config, "dashboard_title", None) or "MoniGrid",
         )
         self._notification_dispatcher.set_evaluator(self._alert_evaluator)
-        self._alert_evaluator.set_notify_sink(self._notification_dispatcher.on_event)
+        # Notify sink is wired ONLY when this node becomes dispatcher leader
+        # (_activate_dispatcher_leader). Followers leave sink=None so their
+        # evaluator-emitted transitions don't pile up in an idle queue.
         self._notification_worker = NotificationWorker(
             store=self.settings_store,
             channel_provider=self._build_channel_registry,
@@ -231,25 +233,63 @@ class MonitoringBackend:
                 self.logger.error("JVM pre-start failed (will retry on first query): %s", exc)
         self._cache_manager.start()
         self._monitor_collector.start()
-        # Notification dispatcher + worker live alongside the cache/collector
-        # threads. Started after them so the very first transition the
-        # evaluator emits already has a sink to land in.
-        self._notification_dispatcher.start()
-        self._notification_worker.start()
 
-        # Phase 6: meta-monitor for the notification subsystem itself.
-        # Raises a system alarm into the regular alert pipeline whenever the
-        # dead-letter count in the last 24 h crosses a threshold — that's the
-        # signal that channels are mis-configured or the SMTP relay is down,
-        # which the operator needs to see in the dashboard banner *without*
-        # depending on email working.
+        # ── A-A 노드 동기화 + dispatcher leader election ──────────────────
+        #
+        # Notification dispatcher 가 다중 노드에서 동시에 돌면 같은 알람을
+        # 두 번씩 보낸다 (per-process cooldown 은 cross-node 가 아님). DB
+        # 측 lease 로 단일 leader 만 dispatcher/worker/meta-monitor 를
+        # 활성화. 단일 노드 운영 시: 자동으로 그 노드가 leader.
+        #
+        # 노드 ID: hostname-pid 조합. 같은 호스트에서 두 인스턴스가 떠도
+        # PID 로 분리. log 에 한 번 표시해 운영자가 leader 노드를 식별 가능.
+        import socket
+        self._node_id = f"{socket.gethostname()}-{os.getpid()}"
+        self._is_dispatcher_leader = False
+        self._lease_stop = threading.Event()
+        self._lease_thread: threading.Thread | None = None
         self._notif_meta_stop = threading.Event()
-        self._notif_meta_thread = threading.Thread(
-            target=self._notification_meta_monitor_loop,
-            name="notification-meta-monitor",
+        self._notif_meta_thread: threading.Thread | None = None
+
+        # Config sync polling — 모든 노드 (leader/follower 무관). 한 노드의
+        # write 가 다른 노드 메모리 config 로 전파되도록 5초 간격 폴링.
+        self._config_sync_stop = threading.Event()
+        try:
+            self._last_seen_config_seq = self.settings_store.read_config_seq()
+        except Exception:
+            self.logger.exception("read_config_seq failed at startup; assuming 0")
+            self._last_seen_config_seq = 0
+        self._config_sync_thread = threading.Thread(
+            target=self._config_sync_loop,
+            name="config-sync",
             daemon=True,
         )
-        self._notif_meta_thread.start()
+        self._config_sync_thread.start()
+
+        # Leader 시도 — 부팅 시점에 한 번. 부팅 race 는 RLock + DB 가 정리.
+        # 실패하면 follower 로 시작, leader-watcher 스레드가 takeover 노린다.
+        try:
+            acquired = self.settings_store.try_acquire_dispatcher_lease(
+                node_id=self._node_id, ttl_sec=30,
+            )
+        except Exception:
+            self.logger.exception("dispatcher lease acquire failed at startup")
+            acquired = False
+        if acquired:
+            self._activate_dispatcher_leader()
+        else:
+            _startup_log(
+                self.logger,
+                "Dispatcher in FOLLOWER mode (peer holds lease) node=%s",
+                self._node_id,
+            )
+        # leader/follower 모두 lease loop 시작 — leader 는 renew, follower 는 watch.
+        self._lease_thread = threading.Thread(
+            target=self._dispatcher_lease_loop,
+            name="dispatcher-lease",
+            daemon=True,
+        )
+        self._lease_thread.start()
         enabled_apis = [ep for ep in self.config.apis.values() if ep.enabled]
         _startup_log(
             self.logger,
@@ -291,10 +331,34 @@ class MonitoringBackend:
                 pass
 
     def _shutdown_notification_subsystem(self) -> None:
-        """Stop dispatcher + worker + meta-monitor. Process-shutdown only —
-        reload() must not call this because the threads can't be restarted
-        in place."""
-        # Meta monitor first (cheap, just a loop with sleep).
+        """Stop dispatcher + worker + meta-monitor + lease/sync loops.
+        Process-shutdown only — reload() must not call this because the
+        threads can't be restarted in place.
+        """
+        # Stop config sync + lease loops first so they don't try to
+        # interact with state we're tearing down.
+        try:
+            if getattr(self, "_config_sync_stop", None) is not None:
+                self._config_sync_stop.set()
+            if getattr(self, "_config_sync_thread", None) is not None:
+                self._config_sync_thread.join(timeout=2)
+        except Exception:
+            self.logger.exception("config sync stop raised")
+        try:
+            if getattr(self, "_lease_stop", None) is not None:
+                self._lease_stop.set()
+            if getattr(self, "_lease_thread", None) is not None:
+                self._lease_thread.join(timeout=2)
+        except Exception:
+            self.logger.exception("dispatcher lease loop stop raised")
+        # Voluntarily release leader lease so a peer can take over
+        # immediately instead of waiting for TTL expiry.
+        if getattr(self, "_is_dispatcher_leader", False):
+            try:
+                self.settings_store.release_dispatcher_lease(self._node_id)
+            except Exception:
+                self.logger.exception("release lease at shutdown raised")
+        # Meta monitor (cheap, just a loop with sleep).
         try:
             if getattr(self, "_notif_meta_stop", None) is not None:
                 self._notif_meta_stop.set()
@@ -315,6 +379,155 @@ class MonitoringBackend:
                 self._notification_dispatcher.stop(timeout=5.0)
         except Exception:
             self.logger.exception("notification dispatcher stop raised")
+
+    # ── A-A 노드 동기화: config polling + dispatcher leader election ─────
+
+    _CONFIG_SYNC_TICK_SEC = 5.0
+    _LEASE_TICK_SEC = 10.0
+    _LEASE_TTL_SEC = 30
+
+    def _activate_dispatcher_leader(self) -> None:
+        """Become the dispatcher leader — start dispatcher/worker/meta and
+        re-wire the evaluator notify_sink to the local dispatcher.
+
+        Called at startup if acquire succeeds, OR by the lease watcher
+        when a takeover succeeds. Idempotent — if already leader, no-op.
+        NotificationDispatcher.start() can restart cleanly (clears stop
+        event + new thread). NotificationWorker's ThreadPoolExecutor cannot,
+        so we rebuild the worker instance on each activation.
+        """
+        if self._is_dispatcher_leader:
+            return
+        # Worker's ThreadPoolExecutor cannot be restarted (shutdown is final),
+        # so rebuild a fresh worker each time we become leader. Dispatcher
+        # itself reuses the existing instance — its threading.Event clears
+        # on start() and the queue carries state across leader takeovers.
+        if getattr(self, "_notification_worker", None) is not None:
+            # Defensive: if a prior worker exists (e.g. brief flap), make sure
+            # it's fully shut down before we replace the reference.
+            try:
+                self._notification_worker.stop(timeout=2.0)
+            except Exception:
+                pass
+        self._notification_worker = NotificationWorker(
+            store=self.settings_store,
+            channel_provider=self._build_channel_registry,
+            poll_interval_sec=float(os.environ.get("NOTIFICATION_POLL_SEC", "30")),
+            max_workers=int(os.environ.get("NOTIFICATION_WORKERS", "4")),
+            batch_limit=int(os.environ.get("NOTIFICATION_BATCH", "50")),
+        )
+        self._notification_dispatcher.start()
+        self._notification_worker.start()
+        # Re-wire evaluator → dispatcher. On a follower this sink is None so
+        # alarm transitions don't pile up in an idle dispatcher queue.
+        self._alert_evaluator.set_notify_sink(self._notification_dispatcher.on_event)
+        # Meta monitor starts under leader so dead-letter alarm only fires
+        # once across the cluster (counting is DB-shared anyway).
+        if self._notif_meta_thread is None or not self._notif_meta_thread.is_alive():
+            self._notif_meta_stop.clear()
+            self._notif_meta_thread = threading.Thread(
+                target=self._notification_meta_monitor_loop,
+                name="notification-meta-monitor",
+                daemon=True,
+            )
+            self._notif_meta_thread.start()
+        self._is_dispatcher_leader = True
+        _startup_log(
+            self.logger,
+            "Dispatcher in LEADER mode node=%s lease_ttl=%ds",
+            self._node_id, self._LEASE_TTL_SEC,
+        )
+
+    def _deactivate_dispatcher_leader(self) -> None:
+        """Lose / release leadership — stop dispatcher/worker/meta but keep
+        node alive as follower. Called on lease takeover or graceful demote.
+        Also detaches the evaluator → dispatcher sink so this follower's
+        alarm transitions stop piling up in a now-idle dispatcher queue.
+        """
+        if not self._is_dispatcher_leader:
+            return
+        self._is_dispatcher_leader = False
+        # Detach sink FIRST so no new events land in the queue we're stopping.
+        try:
+            self._alert_evaluator.set_notify_sink(None)
+        except Exception:
+            self.logger.exception("evaluator sink detach on demote raised")
+        try:
+            self._notif_meta_stop.set()
+            if self._notif_meta_thread is not None:
+                self._notif_meta_thread.join(timeout=2)
+        except Exception:
+            self.logger.exception("meta monitor stop on demote raised")
+        try:
+            if self._notification_worker is not None:
+                self._notification_worker.stop(timeout=5.0)
+        except Exception:
+            self.logger.exception("worker stop on demote raised")
+        try:
+            if self._notification_dispatcher is not None:
+                self._notification_dispatcher.stop(timeout=5.0)
+        except Exception:
+            self.logger.exception("dispatcher stop on demote raised")
+        self.logger.warning(
+            "Dispatcher demoted to FOLLOWER (lease lost or released) node=%s",
+            self._node_id,
+        )
+
+    def _config_sync_loop(self) -> None:
+        """Poll the shared settings DB for config_seq bumps from peer nodes
+        and apply a partial reload locally. Runs on every node regardless
+        of leadership.
+        """
+        while not self._config_sync_stop.is_set():
+            try:
+                current = self.settings_store.read_config_seq()
+                if current != self._last_seen_config_seq:
+                    self.logger.info(
+                        "config_seq changed %s -> %s, applying peer config reload",
+                        self._last_seen_config_seq, current,
+                    )
+                    try:
+                        self.apply_peer_config_change()
+                    except Exception:
+                        self.logger.exception("peer config reload failed")
+                    # Even if reload partially failed, advance the seq so we
+                    # don't reload-loop on every tick. Operators see the
+                    # exception in logs.
+                    self._last_seen_config_seq = current
+            except Exception:
+                # Settings DB blip — try again next tick. Don't bump seq.
+                self.logger.exception("config sync tick failed")
+            if self._config_sync_stop.wait(self._CONFIG_SYNC_TICK_SEC):
+                return
+
+    def _dispatcher_lease_loop(self) -> None:
+        """Background loop that keeps the leader lease alive (if leader)
+        or watches for takeover opportunity (if follower).
+
+        Leader path: renew every TICK seconds. If renew returns False (peer
+        forcibly took over) → demote.
+        Follower path: try_acquire every TICK seconds. If we win → activate.
+        """
+        while not self._lease_stop.is_set():
+            try:
+                if self._is_dispatcher_leader:
+                    ok = self.settings_store.renew_dispatcher_lease(
+                        self._node_id, ttl_sec=self._LEASE_TTL_SEC,
+                    )
+                    if not ok:
+                        # A peer somehow took over (clock skew? operator
+                        # cleared the meta row?). Drop to follower.
+                        self._deactivate_dispatcher_leader()
+                else:
+                    acquired = self.settings_store.try_acquire_dispatcher_lease(
+                        self._node_id, ttl_sec=self._LEASE_TTL_SEC,
+                    )
+                    if acquired:
+                        self._activate_dispatcher_leader()
+            except Exception:
+                self.logger.exception("dispatcher lease tick failed")
+            if self._lease_stop.wait(self._LEASE_TICK_SEC):
+                return
 
     # ── Notification meta monitor ────────────────────────────────────────
 
@@ -618,6 +831,24 @@ class MonitoringBackend:
         with self._reload_lock:
             old_config = self.config
             self.settings_store.save_config_dict(new_config_dict, actor=actor)
+            new_config = self._config_reloader()
+            diff = compute_config_diff(old_config, new_config)
+            result = self._apply_config_diff(diff, new_config)
+            self.config = new_config
+            self._check_classpath_for_reload(new_config)
+            return result
+
+    def apply_peer_config_change(self) -> dict:
+        """A-A peer-driven reload — re-read settings DB and apply the diff
+        without writing. Called by `_config_sync_loop` when it detects that
+        another node bumped `config_seq`. Symmetric to
+        `apply_partial_config_reload` but skips the save_config_dict step
+        (which would re-bump config_seq and feed-loop forever).
+        """
+        from .config_diff import compute_config_diff
+
+        with self._reload_lock:
+            old_config = self.config
             new_config = self._config_reloader()
             diff = compute_config_diff(old_config, new_config)
             result = self._apply_config_diff(diff, new_config)

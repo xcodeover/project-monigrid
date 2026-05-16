@@ -31,7 +31,20 @@ def register(app, backend, limiter) -> None:
     @app.route("/dashboard/health", methods=["GET"])
     @require_auth
     def dashboard_health():
-        """Authenticated diagnostic health: includes version + endpoint count."""
+        """Authenticated diagnostic health: includes version + endpoint count
+        + A-A node identity / dispatcher leader status (so operators can
+        verify which node is currently sending notifications without having
+        to grep logs across nodes).
+        """
+        # Dispatcher leader info — best-effort read; never blocks health.
+        try:
+            leader = backend.settings_store.read_dispatcher_leader()
+        except Exception:
+            leader = None
+        try:
+            config_seq = backend.settings_store.read_config_seq()
+        except Exception:
+            config_seq = None
         return jsonify({
             "status": "healthy",
             "version": backend.config.version,
@@ -39,4 +52,8 @@ def register(app, backend, limiter) -> None:
             "companyName": backend.config.app_company_name,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "loadedEndpoints": len(backend.config.apis),
+            "nodeId": getattr(backend, "_node_id", None),
+            "isDispatcherLeader": bool(getattr(backend, "_is_dispatcher_leader", False)),
+            "dispatcherLeader": leader,
+            "configSeq": config_seq,
         }), 200
