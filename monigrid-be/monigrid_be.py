@@ -127,6 +127,17 @@ install_global_exception_hooks(backend.logger)
 def _resolve_allowed_origins() -> list[str]:
     raw = os.environ.get("CORS_ALLOWED_ORIGINS", "").strip()
     if not raw:
+        # Backward-compat: 옛 .env 의 CORS_ORIGINS 도 인식. 새 키가 있으면
+        # 새 키 우선; 새 키 미설정 + 옛 키만 있으면 옛 값을 쓰되 deprecation
+        # 경고를 한 번 남긴다. (운영자가 키 이름을 바꾸기 전까지 무중단 유지)
+        legacy = os.environ.get("CORS_ORIGINS", "").strip()
+        if legacy:
+            logging.getLogger("monitoring_backend").warning(
+                "CORS_ORIGINS is deprecated; rename to CORS_ALLOWED_ORIGINS "
+                "in .env. Continuing with the legacy value for now.",
+            )
+            raw = legacy
+    if not raw:
         env = (os.environ.get("FLASK_ENV") or "").strip().lower()
         if env != "development":
             logging.getLogger("monitoring_backend").warning(

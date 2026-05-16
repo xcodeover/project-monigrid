@@ -834,43 +834,89 @@ curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
 
 ## 11. 환경 변수
 
-`.env` 파일 또는 시스템 환경변수로 설정합니다. `config.json` 값보다 **우선 적용**됩니다.
+`.env` 파일 또는 시스템 환경변수로 설정합니다.
+
+> **설계 원칙** — 운영/로깅/풀/캐시/스레드 등 대부분의 튜닝 항목은
+> **settings DB(`config` 섹션, 즉 최초 시드된 `config.json`)** 에서
+> 관리합니다. `.env` 는 **보안 키 + 환경 분기 + 부트스트랩 폴백**만
+> 담당합니다.
+
+### 11.1 보안 / 부트스트랩 (자주 설정)
 
 | 변수명 | 설명 | 기본값 |
 |--------|------|--------|
-| `MONITORING_CONFIG_PATH` | config.json 경로 오버라이드 | `(exe 옆 config.json)` |
-| `FLASK_ENV` | Flask 실행 환경 | `development` |
-| `DEBUG` | 디버그 모드 | `False` |
-| `API_HOST` | 서버 바인드 주소 | `127.0.0.1` |
-| `API_PORT` | 서버 포트 | `5000` |
-| `API_RATE_LIMIT` | API 요청 제한 | `100/minute` |
-| `CORS_ORIGINS` | 허용 CORS 출처 (쉼표 구분) | `http://127.0.0.1:3000` |
-| `AUTH_USERNAME` | 로그인 계정 오버라이드 | config.json 값 |
-| `AUTH_PASSWORD` | 로그인 비밀번호 오버라이드 | config.json 값 |
-| `ADMIN_USERNAME` | 관리자 판별 사용자명 | `admin` |
-| `JWT_SECRET_KEY` | JWT 서명 키 — **운영 필수 설정**. 기본값 그대로 사용 시 `FLASK_ENV != development` 환경에서 RuntimeError로 부팅 실패 | `default-secret-key` |
+| `MONIGRID_SECRET_KEY` | 알림 채널(SMTP 등) 자격증명 암호화 마스터 키. **운영 필수** — `FLASK_ENV != development` 이면 미설정 시 부팅 실패 | (없음, dev fallback) |
+| `MONIGRID_SECRET_KEYS` | 키 회전용 CSV (`신규,이전`). 첫 키가 active(암호화), 나머지는 복호화 전용. 설정되면 `MONIGRID_SECRET_KEY` 무시 | (없음) |
+| `JWT_SECRET_KEY` | JWT 서명 키. 32B 미만이면 안전한 기본값으로 폴백 + WARN 로그 — 운영에서 반드시 강한 무작위 값으로 교체 | (안전 기본값) |
 | `JWT_ALGORITHM` | JWT 알고리즘 | `HS256` |
-| `JWT_EXPIRATION_HOURS` | JWT 만료 시간 (시간) | `24` |
-| `LOG_LEVEL` | 로그 레벨 | `INFO` |
-| `LOG_DIRECTORY` | 로그 디렉토리 | `logs` |
-| `LOG_FILE_PREFIX` | 로그 파일 접두사 | `monitoring_backend` |
-| `LOG_RETENTION_DAYS` | 로그 보관 일수 | `7` |
-| `LOG_SLOW_QUERY_THRESHOLD_SEC` | 슬로우 쿼리 경고 기준 (초) | `10` |
-| `DB_POOL_SIZE` | DB 연결 풀 크기 | `5` |
-| `DB_POOL_TIMEOUT_SEC` | DB 풀 연결 타임아웃 (초) | `30` |
-| `DB_POOL_RECYCLE_SEC` | DB 풀 연결 재활용 주기 (초) | `3600` |
-| `CACHE_TTL_SEC` | 캐시 TTL (초) | `300` |
-| `ENABLE_CACHE` | 캐시 활성화 여부 | `true` |
-| `THREAD_POOL_SIZE` | 스레드 풀 크기 | `16` |
+| `AUTH_USERNAME` / `AUTH_PASSWORD` | 부트스트랩 admin. **`monigrid_users` 에 admin 역할 계정이 1개라도 있으면 자동 비활성화** | `admin` / `admin` |
+| `ADMIN_USERNAME` | 관리자 역할 판별 사용자명 (부트스트랩 로그인용) | `admin` |
 
-### 보안 권장 사항
+### 11.2 런타임 / 네트워크
 
-운영 환경에서는 반드시 다음 환경변수를 설정하세요. `JWT_SECRET_KEY`는 기본값 사용 시 서버가 시작되지 않습니다:
+| 변수명 | 설명 | 기본값 |
+|--------|------|--------|
+| `FLASK_ENV` | 실행 환경. `development` 외에는 production 처럼 동작 | `production` |
+| `USE_WAITRESS` | `1` → waitress, `0` → werkzeug 개발 서버 | `1` |
+| `WAITRESS_THREADS` | waitress 워커 스레드 수 | `16` |
+| `CORS_ALLOWED_ORIGINS` | 쉼표 구분 CORS allowlist. 미설정 + production 이면 wildcard `*` + WARN | (wildcard) |
+| `CORS_ORIGINS` | **deprecated** — `CORS_ALLOWED_ORIGINS` 미설정 시에만 폴백으로 인식 (WARN 출력) | — |
+
+### 11.3 DB / 외부 시스템
+
+| 변수명 | 설명 | 기본값 |
+|--------|------|--------|
+| `DB_POOL_SIZE` | 모니터링 대상 DB 연결 풀 크기 | `5` |
+| `DB_CONNECT_RETRY_ATTEMPTS` | 신규 connect 재시도 횟수 | `3` |
+| `DB_CONNECT_RETRY_BACKOFF_SEC` | 재시도 backoff (초) | `0.5` |
+| `DB_CONNECT_VALIDATION_TIMEOUT_SEC` | 풀 반환 시 validation 타임아웃 (초) | `2` |
+| `SETTINGS_DB_RECONNECT_ATTEMPTS` | settings DB 재접속 시도 횟수 | `3` |
+| `SETTINGS_DB_RECONNECT_BACKOFF_SEC` | settings DB 재접속 backoff (초) | `0.5` |
+| `JAVA_HOME` | JDK 11+ 경로 (JVM 자동 탐색이 실패할 때 명시) | OS 기본 |
+| `MONITORING_INIT_SETTINGS_PATH` | `initsetting.json` 경로 오버라이드 | `(BASE_DIR/initsetting.json)` |
+| `MONITORING_CONFIG_PATH` | 최초 시드용 `config.json` 경로 오버라이드 | `(BASE_DIR/config.json)` |
+| `TIMEMACHINE_DB_PATH` | TimeMachine 로컬 SQLite 파일 경로 | `(BASE_DIR/timemachine.db)` |
+| `HEALTHCHECK_BLOCK_PRIVATE` | `1` → health-check 프록시에서 사설/loopback/link-local IP 차단 (DNS 호스트네임은 IP 로 재해석 후 검사). 클라우드 메타데이터 IP(`169.254.169.254` 등) 는 이 설정과 무관하게 항상 차단. 내부 LAN 모니터링이 필요하면 `0` 으로 명시 설정 | `1` (보안 우선 기본값) |
+
+### 11.4 알림 서브시스템 (옵션)
+
+| 변수명 | 설명 | 기본값 |
+|--------|------|--------|
+| `NOTIFICATION_POLL_SEC` | 워커 큐 폴링 주기 (초) | `30` |
+| `NOTIFICATION_WORKERS` | 워커 ThreadPool 크기 | `4` |
+| `NOTIFICATION_BATCH` | 한 tick 에 처리할 큐 row 수 | `50` |
+| `NOTIFICATION_META_TICK_SEC` | dead 누적 메타-알람 체크 주기 (초) | `300` |
+| `NOTIFICATION_META_WINDOW_SEC` | 메타-알람 평가 윈도우 (초) | `86400` |
+| `NOTIFICATION_META_THRESHOLD` | 메타-알람 임계값 | `100` |
+| `MONIGRID_NOTIFICATION_FAULT` | `raise` / `hang` / `fail` — 5중 격리 검증용 (dev 전용) | (없음) |
+
+### 11.5 settings DB(config) 에서 관리되는 항목
+
+아래 항목들은 **`.env` 가 아니라** settings DB 의 `config` 섹션(최초 시드된 `config.json`) 에서 변경합니다. 운영 중 변경 시 `POST /reload-config` 로 재로드합니다.
+
+| 영역 | 키 | 비고 |
+|------|----|------|
+| 서버 | `server.host`, `server.port`, `server.thread_pool_size` | 옛 `API_HOST`/`API_PORT`/`THREAD_POOL_SIZE` 환경변수는 더 이상 사용되지 않습니다 |
+| 로깅 | `logging.directory`, `logging.file_prefix`, `logging.retention_days`, `logging.slow_query_threshold_sec`, `logging.loglevel` | 옛 `LOG_*` 환경변수는 더 이상 사용되지 않습니다 |
+| Rate limit | `rate_limits.*` | 옛 `API_RATE_LIMIT` 환경변수는 더 이상 사용되지 않습니다 |
+| 인증 기본값 | `auth.username`, `auth.password` | env(`AUTH_USERNAME`/`AUTH_PASSWORD`) 가 우선 |
+
+### 11.6 보안 권장 사항
+
+운영 환경에서는 반드시 다음을 설정하세요:
 
 ```env
-JWT_SECRET_KEY=your-very-long-random-secret-key-here
-AUTH_USERNAME=your_admin_id
-AUTH_PASSWORD=your_secure_password
+# 알림 자격증명 암호화 마스터 키 — 미설정 시 부팅 실패
+MONIGRID_SECRET_KEY=<urlsafe base64 32B 또는 임의 passphrase>
+
+# JWT 서명 키 — 32B 이상 무작위 값으로 교체
+JWT_SECRET_KEY=<openssl rand -base64 32 등으로 생성>
+
+# CORS — 프론트엔드 도메인으로 제한
+CORS_ALLOWED_ORIGINS=https://dash.example.com,https://ops.example.com
+
+# (선택) 부트스트랩 admin 비활성화 — 최초 admin 계정 생성 후
+AUTH_PASSWORD=
 ```
 
 ---
@@ -1234,10 +1280,11 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:5000/dashboard/cache/st
 **해결**:
 1. `.env` 파일에 프론트엔드 URL 추가:
    ```env
-   CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,http://프론트엔드IP:3000
+   CORS_ALLOWED_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,http://프론트엔드IP:3000
    ```
-2. 또는 `monigrid_be.py`의 CORS 설정 확인
-3. EXE 재시작
+   (옛 키 `CORS_ORIGINS` 도 인식되지만 부팅 시 deprecation 경고가 출력되므로 새 키로 교체하세요.)
+2. EXE 재시작
+3. 운영 환경에서 `CORS_ALLOWED_ORIGINS` 가 비어 있으면 wildcard `*` 로 폴백되며 부팅 로그에 WARN 이 출력됩니다 — 공유 네트워크 노출 전에 반드시 allowlist 를 지정하세요.
 
 ### 15.6 JWT 토큰 만료
 

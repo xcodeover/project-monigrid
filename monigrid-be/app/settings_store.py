@@ -772,15 +772,70 @@ def _oracle_index_exists(cur, index: str) -> bool:
 # ─── SettingsStore ────────────────────────────────────────────────────────────
 
 
+# ── A-A config sync — write methods that should bump config_seq ──────────────
+#
+# A-A 다중 노드 운영 시 한 노드의 config 변경을 다른 노드가 5초 폴링으로
+# pick up 한다. 아래 set 에 있는 write 메서드는 _sync 데코레이터가 자동으로
+# commit 직후 config_seq 를 bump 한다. 새 config-write 메서드 추가 시 이
+# set 에만 등록하면 됨.
+#
+# 제외 (런타임 데이터 / 큐 / 알람 transition — config 가 아니므로 peer reload
+# 불필요): record_alert_event, enqueue_notification, mark_*, claim_*,
+# retry_/cancel_notification_queue_item, set_kv_scalar (caller 가 필요 시
+# 별도로 bump).
+_BUMP_ON_WRITE = frozenset({
+    # connections / apis (replace_* 가 bulk write, 부분 upsert API 는 현재 없음)
+    "replace_connections",
+    "replace_apis",
+    # sql queries (per-id upsert + delete)
+    "upsert_sql", "delete_sql",
+    # monitor targets (per-id upsert + delete)
+    "upsert_monitor_target", "delete_monitor_target",
+    # widget configs (BE-central thresholds + display columns)
+    "save_widget_config", "delete_widget_config",
+    # user preferences (per-user dashboard layouts)
+    "save_user_preferences", "delete_user_preferences",
+    # users (admin)
+    "create_user", "update_user", "delete_user",
+    # notification: channels / groups / recipients / rules
+    "upsert_notification_channel", "set_notification_channel_enabled",
+    "create_notification_group", "update_notification_group", "delete_notification_group",
+    "create_notification_recipient", "update_notification_recipient", "delete_notification_recipient",
+    "create_notification_rule", "update_notification_rule", "delete_notification_rule",
+    # silence rules
+    "create_silence_rule", "delete_silence_rule",
+    # KV scalar wrappers (scalar sections + scalars are written via save_config_dict
+    # / save_scalar_sections / set_kv_scalar — bumping save_config_dict covers
+    # both REST PUT /dashboard/config and the seeded section writes).
+    "save_config_dict", "save_scalar_sections", "set_kv_scalar",
+})
+
+
 def _sync(method):
     # Single JDBC connection is shared across collector threads, the cache
     # refresh loop, and Flask workers — concurrent cursors on it raised
     # `Connection is busy` / `ResultSet already closed`. RLock serializes
     # public ops so multi-statement sequences stay atomic against peers.
+    #
+    # Methods in `_BUMP_ON_WRITE` additionally bump the A-A config_seq after
+    # the underlying write returns, so peer nodes pick up the change on their
+    # next polling tick. Bump happens inside the same RLock so cursor stays
+    # available; failure is logged but non-fatal (write is already committed).
+    should_bump = method.__name__ in _BUMP_ON_WRITE
+
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._lock:
-            return method(self, *args, **kwargs)
+            ret = method(self, *args, **kwargs)
+            if should_bump:
+                try:
+                    self._bump_config_seq_unlocked()
+                except Exception:
+                    self._logger.warning(
+                        "config_seq bump failed after %s — peer nodes may see stale config",
+                        method.__name__,
+                    )
+            return ret
     return wrapper
 
 
@@ -1160,6 +1215,156 @@ class SettingsStore:
             key_value=key,
             values={"v": value},
         )
+
+    def _get_meta_unlocked(self, key: str) -> str | None:
+        """Read a single meta value. Caller must hold self._lock."""
+        cur = self._cursor()
+        try:
+            cur.execute(
+                "SELECT v FROM monigrid_settings_meta WHERE k = ?",
+                [str(key)],
+            )
+            row = cur.fetchone()
+            return str(row[0]) if row else None
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+    # ── A-A 노드 동기화 ───────────────────────────────────────────────────
+    #
+    # config_seq: 모든 config write 시 1씩 증가. 각 노드는 5초 폴링으로
+    #   자기가 마지막에 본 seq 와 비교 — 다르면 apply_partial_config_reload.
+    # dispatcher_leader_node / _until: notification dispatcher 가 단일
+    #   노드에서만 동작하도록 lease 기반 leader election. 만료된 lease 는
+    #   다른 노드가 takeover. 단일 노드 운영 시: 자동으로 그 노드가 leader.
+
+    _META_CONFIG_SEQ = "config_seq"
+    _META_LEADER_NODE = "dispatcher_leader_node"
+    _META_LEADER_UNTIL = "dispatcher_leader_until"  # ISO8601 UTC
+
+    def _bump_config_seq_unlocked(self) -> int:
+        """Increment config_seq atomically (inside RLock). Returns new value.
+
+        First call (row missing) initializes to 1. Subsequent calls UPDATE.
+        Failure here is non-fatal for the originating write — peer nodes
+        will pick up the change on their next polling tick anyway, just
+        with whatever delay the next bump introduces.
+        """
+        current = self._get_meta_unlocked(self._META_CONFIG_SEQ)
+        try:
+            next_val = (int(current) + 1) if current is not None else 1
+        except (TypeError, ValueError):
+            # Corrupt value (manual edit?) — reset to 1.
+            next_val = 1
+        self._set_meta(self._META_CONFIG_SEQ, str(next_val))
+        self._conn.commit()
+        return next_val
+
+    @_sync
+    def read_config_seq(self) -> int:
+        """Return the current config sequence (0 if never written)."""
+        v = self._get_meta_unlocked(self._META_CONFIG_SEQ)
+        try:
+            return int(v) if v is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    @_sync
+    def try_acquire_dispatcher_lease(self, node_id: str, ttl_sec: int = 30) -> bool:
+        """Try to become the dispatcher leader.
+
+        Atomic logic (inside RLock + same JDBC connection, no peer race):
+          - If no lease row, or lease expired, or lease already owned by
+            this node → claim/refresh and return True.
+          - Otherwise (active lease owned by another node) → return False.
+
+        Caller schedules `renew_dispatcher_lease` periodically (e.g. ttl/3)
+        to keep ownership.
+        """
+        node_id = str(node_id).strip()
+        if not node_id:
+            raise ValueError("node_id is required")
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        expires = now + timedelta(seconds=int(ttl_sec))
+        expires_str = expires.strftime("%Y-%m-%d %H:%M:%S")
+
+        current_node = self._get_meta_unlocked(self._META_LEADER_NODE)
+        current_until = self._get_meta_unlocked(self._META_LEADER_UNTIL)
+        current_until_valid = False
+        if current_until:
+            try:
+                until_dt = datetime.strptime(current_until, "%Y-%m-%d %H:%M:%S")
+                current_until_valid = until_dt > now
+            except ValueError:
+                current_until_valid = False
+
+        can_claim = (
+            current_node is None
+            or current_node == node_id
+            or not current_until_valid
+        )
+        if not can_claim:
+            return False
+
+        self._set_meta(self._META_LEADER_NODE, node_id)
+        self._set_meta(self._META_LEADER_UNTIL, expires_str)
+        self._conn.commit()
+        return True
+
+    @_sync
+    def renew_dispatcher_lease(self, node_id: str, ttl_sec: int = 30) -> bool:
+        """Refresh lease expiry — only if this node still owns it.
+
+        Returns False if the lease was taken over by another node (caller
+        should stop its dispatcher and re-attempt acquire next tick).
+        """
+        node_id = str(node_id).strip()
+        current_node = self._get_meta_unlocked(self._META_LEADER_NODE)
+        if current_node != node_id:
+            return False
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        expires = now + timedelta(seconds=int(ttl_sec))
+        self._set_meta(
+            self._META_LEADER_UNTIL,
+            expires.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        self._conn.commit()
+        return True
+
+    @_sync
+    def release_dispatcher_lease(self, node_id: str) -> None:
+        """Voluntarily release leadership (e.g. graceful shutdown).
+
+        Only erases the lease if this node currently owns it — a no-op
+        otherwise (defensive against shutdown-after-takeover race).
+        """
+        node_id = str(node_id).strip()
+        current_node = self._get_meta_unlocked(self._META_LEADER_NODE)
+        if current_node != node_id:
+            return
+        self._set_meta(self._META_LEADER_NODE, "")
+        self._set_meta(self._META_LEADER_UNTIL, "")
+        self._conn.commit()
+
+    @_sync
+    def read_dispatcher_leader(self) -> dict[str, Any] | None:
+        """Return {nodeId, expiresAt} of the current leader, or None if no
+        valid lease. Read-only — for diagnostics / admin UI.
+        """
+        node = self._get_meta_unlocked(self._META_LEADER_NODE)
+        until = self._get_meta_unlocked(self._META_LEADER_UNTIL)
+        if not node or not until:
+            return None
+        try:
+            until_dt = datetime.strptime(until, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+        if until_dt <= datetime.now(timezone.utc).replace(tzinfo=None):
+            return None
+        return {"nodeId": node, "expiresAt": until_dt.isoformat() + "Z"}
 
     # ── scalar KV sections ────────────────────────────────────────────────
 
@@ -2341,6 +2546,7 @@ class SettingsStore:
             json.dumps(payload, ensure_ascii=False) if payload is not None else None
         )
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        now_utc_str = now_utc_naive.strftime("%Y-%m-%d %H:%M:%S")
         cur = self._cursor()
         try:
             cur.execute(
@@ -2356,7 +2562,7 @@ class SettingsStore:
                     label,
                     message,
                     payload_json,
-                    now_utc_naive,
+                    now_utc_str,
                 ],
             )
         finally:
@@ -2440,10 +2646,13 @@ class SettingsStore:
         params: list[Any] = []
         if from_dt is not None:
             wheres.append("created_at >= ?")
-            params.append(from_dt)
+            # jaydebeapi + MariaDB JDBC 는 setObject(datetime) 오버로드가 없어
+            # 그대로 넘기면 TypeError 가 난다. 파일 내 다른 호출들과 동일하게
+            # "YYYY-MM-DD HH:MM:SS" 문자열로 직렬화해 바인딩한다.
+            params.append(from_dt.strftime("%Y-%m-%d %H:%M:%S"))
         if to_dt is not None:
             wheres.append("created_at <= ?")
-            params.append(to_dt)
+            params.append(to_dt.strftime("%Y-%m-%d %H:%M:%S"))
         if source_type:
             wheres.append("source_type = ?")
             params.append(str(source_type))
@@ -3316,7 +3525,8 @@ class SettingsStore:
     def list_active_silence_rules(
         self, *, at_utc: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        ref = (at_utc or datetime.now(timezone.utc)).replace(tzinfo=None)
+        ref_dt = (at_utc or datetime.now(timezone.utc)).replace(tzinfo=None)
+        ref = ref_dt.strftime("%Y-%m-%d %H:%M:%S")
         cur = self._cursor()
         try:
             cur.execute(
@@ -3359,10 +3569,6 @@ class SettingsStore:
             raise ValueError("silence name is required")
         if ends_at <= starts_at:
             raise ValueError("silence ends_at must be after starts_at")
-        starts_naive = starts_at.astimezone(timezone.utc).replace(tzinfo=None) \
-            if starts_at.tzinfo else starts_at
-        ends_naive = ends_at.astimezone(timezone.utc).replace(tzinfo=None) \
-            if ends_at.tzinfo else ends_at
         cur = self._cursor()
         try:
             cur.execute(
@@ -3370,9 +3576,11 @@ class SettingsStore:
                 "(name, source_type, source_id_pattern, metric_pattern, "
                 "starts_at, ends_at, reason, created_at, created_by) "
                 f"VALUES (?, ?, ?, ?, ?, ?, ?, {self._now_literal()}, ?)",
-                [name.strip(), source_type, source_id_pattern, metric_pattern,
-                 starts_naive, ends_naive, reason,
-                 (actor or "").strip() or None],
+                self._bind_params([
+                    name.strip(), source_type, source_id_pattern, metric_pattern,
+                    starts_at, ends_at, reason,
+                    (actor or "").strip() or None,
+                ]),
             )
             new_id = self._last_inserted_id(cur, "monigrid_silence_rules")
         finally:
@@ -3436,8 +3644,9 @@ class SettingsStore:
             raise ValueError("recipient_address is required")
         nxt = None
         if next_attempt_at is not None:
-            nxt = next_attempt_at.astimezone(timezone.utc).replace(tzinfo=None) \
+            nxt_dt = next_attempt_at.astimezone(timezone.utc).replace(tzinfo=None) \
                 if next_attempt_at.tzinfo else next_attempt_at
+            nxt = nxt_dt.strftime("%Y-%m-%d %H:%M:%S")
         cur = self._cursor()
         try:
             cur.execute(
@@ -3470,7 +3679,8 @@ class SettingsStore:
         run two workers, switch to UPDATE ... WHERE status='pending' RETURNING
         or a SELECT FOR UPDATE.
         """
-        ref = (now_utc or datetime.now(timezone.utc)).replace(tzinfo=None)
+        ref_dt = (now_utc or datetime.now(timezone.utc)).replace(tzinfo=None)
+        ref = ref_dt.strftime("%Y-%m-%d %H:%M:%S")
         cur = self._cursor()
         try:
             db = self._cfg.db_type
@@ -3535,8 +3745,9 @@ class SettingsStore:
     ) -> None:
         nxt = None
         if next_attempt_at is not None:
-            nxt = next_attempt_at.astimezone(timezone.utc).replace(tzinfo=None) \
+            nxt_dt = next_attempt_at.astimezone(timezone.utc).replace(tzinfo=None) \
                 if next_attempt_at.tzinfo else next_attempt_at
+            nxt = nxt_dt.strftime("%Y-%m-%d %H:%M:%S")
         new_status = "dead" if mark_dead else "pending"
         cur = self._cursor()
         try:
@@ -3638,8 +3849,9 @@ class SettingsStore:
     def count_dead_notifications_in_window(
         self, *, window_seconds: int = 86400,
     ) -> int:
-        ref = (datetime.now(timezone.utc)
-               - timedelta(seconds=int(window_seconds))).replace(tzinfo=None)
+        ref_dt = (datetime.now(timezone.utc)
+                  - timedelta(seconds=int(window_seconds))).replace(tzinfo=None)
+        ref = ref_dt.strftime("%Y-%m-%d %H:%M:%S")
         cur = self._cursor()
         try:
             cur.execute(
@@ -3783,6 +3995,37 @@ class SettingsStore:
         if self._cfg.db_type == "mssql":
             return "SYSUTCDATETIME()"
         return "CURRENT_TIMESTAMP"
+
+    @staticmethod
+    def _bind_param(value: Any) -> Any:
+        """Coerce a single Python value into a JDBC-bindable form.
+
+        Why: jaydebeapi + MariaDB JDBC has no setObject overload for
+        `datetime.datetime` / `datetime.date`, so a raw datetime parameter
+        raises ``TypeError: No matching overloads`` at bind time. This bug
+        has been hit ≥5 times in distinct call sites; centralizing the
+        coercion here means any new ``cur.execute(sql, _bind_params([...]))``
+        call site is automatically safe.
+
+        Convention: produce ``"YYYY-MM-DD HH:MM:SS"`` (UTC, naive) — all
+        existing call sites in this module already use this string format,
+        so MariaDB's TIMESTAMP / Oracle's TO_DATE-compatible / MSSQL's
+        DATETIME2 parsers all accept it without dialect branches.
+        """
+        if isinstance(value, datetime):
+            naive = value.astimezone(timezone.utc).replace(tzinfo=None) \
+                if value.tzinfo else value
+            return naive.strftime("%Y-%m-%d %H:%M:%S")
+        return value
+
+    @classmethod
+    def _bind_params(cls, params):
+        """Apply _bind_param to an iterable. Pass-through for None / dict."""
+        if params is None:
+            return None
+        if isinstance(params, (list, tuple)):
+            return [cls._bind_param(v) for v in params]
+        return params
 
     def _last_inserted_id(self, cur, table: str, *, pk_col: str = "id") -> int | None:
         """Return the auto-increment id assigned by the most recent INSERT.

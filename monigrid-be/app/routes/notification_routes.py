@@ -25,12 +25,64 @@ stored password alone).
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from flask import jsonify, request
 
 from app.auth import require_admin, require_auth
 from app.notification.crypto import decrypt_dict
+
+
+# ── ReDoS guard ─────────────────────────────────────────────────────────────
+#
+# The dispatcher worker thread evaluates user-supplied patterns
+# (`sourceIdPattern`, `metricPattern`) against every alert event via
+# ``re.fullmatch``. A catastrophic pattern like ``(a+)+$`` against a long
+# input stalls the worker for seconds-to-minutes; with `max_workers=4`,
+# four such patterns freeze the entire notification pipeline (TLO-class).
+#
+# Defense in depth: validate at save time so the bad pattern never reaches
+# the dispatcher. Cheap heuristics catch the common footgun shapes; an
+# in-thread regex timeout would be ideal but Python's `re` doesn't support
+# one without C-level monkey-patching.
+
+_REGEX_MAX_LEN = 128
+
+# Nested unbounded quantifier — group containing `+`/`*`/`{...}` followed by
+# another outer `+`/`*`/`{...}`. Examples caught: `(a+)+`, `(.*)+`, `(\w+)*`,
+# `(x{1,})+`. False-positive risk: `(a{3})+` (bounded inner) is also rejected
+# even though it's safe — acceptable trade-off given that bounded-bounded
+# nesting is rarely intentional in monitoring patterns. Operators can flatten
+# to `a{3}{0,}` form or remove the outer quantifier.
+_NESTED_QUANTIFIER = re.compile(r"\([^)]*[*+{][^)]*\)\s*[*+{]")
+
+
+def _validate_regex_pattern(value, *, field: str):
+    """Validate a user-supplied regex going into a rule. Returns the trimmed
+    string (or None for empty/None input). Raises ``ValueError`` on reject.
+
+    Pre-flight pattern hygiene — applied at every rule create/update site.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    if len(s) > _REGEX_MAX_LEN:
+        raise ValueError(
+            f"{field}: 패턴이 너무 깁니다 (최대 {_REGEX_MAX_LEN}자, 현재 {len(s)})"
+        )
+    if _NESTED_QUANTIFIER.search(s):
+        raise ValueError(
+            f"{field}: 중첩된 반복 한정자 (catastrophic backtracking 위험) — "
+            "예: (a+)+, (.*)+. 단순한 형태로 다시 작성하세요."
+        )
+    try:
+        re.compile(s)
+    except re.error as exc:
+        raise ValueError(f"{field}: 유효하지 않은 정규식 — {exc}")
+    return s
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -165,15 +217,34 @@ def register(app, backend, limiter) -> None:
         cfg_in = body.get("config") if isinstance(body.get("config"), dict) else {}
         enabled = bool(body.get("enabled", True))
         # Empty password means "keep existing" — fetch current and merge.
+        # IMPORTANT: if decrypt fails (master key rotated past all configured
+        # keys, or DB tampered), we MUST refuse the save — silently writing
+        # an empty password was a real bug that broke SMTP for ops who
+        # rotated MONIGRID_SECRET_KEY without supplying the old key via
+        # MONIGRID_SECRET_KEYS. Return 409 with a clear remediation path.
         if cfg_in.get("password", None) == "":
             try:
                 existing = backend.settings_store.get_notification_channel(kind)
                 if existing and existing.get("configEncrypted"):
-                    prior = decrypt_dict(existing["configEncrypted"])
+                    try:
+                        prior = decrypt_dict(existing["configEncrypted"])
+                    except ValueError as exc:
+                        backend.logger.warning(
+                            "channel save refused kind=%s — prior decrypt failed: %s",
+                            kind, exc,
+                        )
+                        return jsonify({
+                            "message": "기존 채널 설정의 비밀번호를 복호화할 수 없습니다. "
+                                       "마스터 키(MONIGRID_SECRET_KEY) 가 회전된 것 같습니다. "
+                                       "이전 키를 MONIGRID_SECRET_KEYS=신규,이전 형태로 추가한 뒤 "
+                                       "재시도하거나, 비밀번호 필드에 새 값을 직접 입력하세요.",
+                            "code": "PRIOR_DECRYPT_FAILED",
+                        }), 409
                     cfg_in = dict(cfg_in)
                     cfg_in["password"] = prior.get("password", "")
             except Exception:
                 backend.logger.exception("merge prior channel password failed kind=%s", kind)
+                return jsonify({"message": "기존 채널 설정 조회에 실패했습니다."}), 500
         try:
             result = backend.save_notification_channel(
                 kind=kind, enabled=enabled,
@@ -358,8 +429,12 @@ def register(app, backend, limiter) -> None:
             new_id = backend.settings_store.create_notification_rule(
                 name=str(body.get("name") or "").strip(),
                 source_type=_str_or_none(body.get("sourceType")),
-                source_id_pattern=_str_or_none(body.get("sourceIdPattern")),
-                metric_pattern=_str_or_none(body.get("metricPattern")),
+                source_id_pattern=_validate_regex_pattern(
+                    body.get("sourceIdPattern"), field="sourceIdPattern",
+                ),
+                metric_pattern=_validate_regex_pattern(
+                    body.get("metricPattern"), field="metricPattern",
+                ),
                 min_level=str(body.get("minLevel") or "warn"),
                 recipient_group_id=int(body.get("recipientGroupId") or 0),
                 channel_id=int(body.get("channelId") or 0),
@@ -396,6 +471,18 @@ def register(app, backend, limiter) -> None:
         ):
             if src in body:
                 kwargs[dst] = body[src]
+        # ReDoS guard on pattern fields (only when present in the patch).
+        try:
+            if "source_id_pattern" in kwargs:
+                kwargs["source_id_pattern"] = _validate_regex_pattern(
+                    kwargs["source_id_pattern"], field="sourceIdPattern",
+                )
+            if "metric_pattern" in kwargs:
+                kwargs["metric_pattern"] = _validate_regex_pattern(
+                    kwargs["metric_pattern"], field="metricPattern",
+                )
+        except ValueError as exc:
+            return jsonify({"message": str(exc)}), 400
         try:
             backend.settings_store.update_notification_rule(
                 rule_id, actor=_actor_username(backend), **kwargs,
@@ -461,8 +548,12 @@ def register(app, backend, limiter) -> None:
             new_id = backend.settings_store.create_silence_rule(
                 name=str(body.get("name") or "").strip(),
                 source_type=_str_or_none(body.get("sourceType")),
-                source_id_pattern=_str_or_none(body.get("sourceIdPattern")),
-                metric_pattern=_str_or_none(body.get("metricPattern")),
+                source_id_pattern=_validate_regex_pattern(
+                    body.get("sourceIdPattern"), field="sourceIdPattern",
+                ),
+                metric_pattern=_validate_regex_pattern(
+                    body.get("metricPattern"), field="metricPattern",
+                ),
                 starts_at=starts, ends_at=ends,
                 reason=_str_or_none(body.get("reason")),
                 actor=_actor_username(backend),
@@ -485,8 +576,13 @@ def register(app, backend, limiter) -> None:
             return jsonify({"message": f"silence delete failed: {exc}"}), 500
 
     # ── queue ────────────────────────────────────────────────────────
+    # admin-only: queue rows expose recipient_address + subject + (stripped)
+    # body + last_error per item. Even with body stripped, the recipient
+    # address list is a sensitive internal contacts disclosure and the
+    # subject can leak alarm content / metric values. Restrict to admin so
+    # regular users can't enumerate who got notified about what.
     @app.route("/dashboard/notifications/queue", methods=["GET"])
-    @require_auth
+    @require_admin
     def list_notification_queue():
         args = request.args
         status = _str_or_none(args.get("status"))
@@ -535,9 +631,14 @@ def register(app, backend, limiter) -> None:
         except Exception:
             backend.logger.exception("dispatcher stats failed")
             disp = {}
+        # Window/threshold come from the meta-monitor (env-tunable). FE uses
+        # these to draw the "dead alert" banner with the same numbers BE is
+        # actually evaluating against, instead of a hard-coded 24h / 100.
+        dead_window_sec = int(getattr(backend, "_NOTIF_META_WINDOW_SEC", 24 * 3600))
+        dead_threshold = int(getattr(backend, "_NOTIF_META_THRESHOLD", 100))
         try:
             dead_24h = backend.settings_store.count_dead_notifications_in_window(
-                window_seconds=24 * 3600,
+                window_seconds=dead_window_sec,
             )
         except Exception:
             backend.logger.exception("dead count failed")
@@ -555,12 +656,28 @@ def register(app, backend, limiter) -> None:
             "dispatcher": disp,
             "queueCounts": queue_counts,
             "deadIn24h": dead_24h,
+            "deadWindowSec": dead_window_sec,
+            "deadThreshold": dead_threshold,
         }), 200
 
     # ── send-now (one-shot, bypass rules) ────────────────────────────
     @app.route("/dashboard/notifications/send-now", methods=["POST"])
     @require_admin
     def send_notification_now():
+        """Operator escape hatch — immediately enqueue an alert to specific
+        recipients, bypassing rule matching / cooldown / silence.
+
+        Security posture:
+        - Recipients MUST be a subset of currently enabled rows in
+          ``monigrid_notification_recipients``. Without this guard, an
+          attacker holding an admin token (or a malicious insider) can turn
+          the configured SMTP server into an open relay branded with
+          ``from_address``. We refuse arbitrary recipients even for admins.
+        - Every accepted send is audit-logged (actor + addresses + count)
+          so post-incident forensics has a trail. The log goes to the
+          standard backend logger at INFO level (already daily-rotated +
+          tail-able via /logs) — no new DB table required.
+        """
         body = _json_body()
         event = body.get("event") if isinstance(body.get("event"), dict) else None
         channel_id = body.get("channelId")
@@ -572,11 +689,49 @@ def register(app, backend, limiter) -> None:
         addresses = [str(a).strip() for a in recipients if str(a).strip()]
         if not addresses:
             return jsonify({"message": "field 'recipients' must contain at least one address"}), 400
+
+        # ── recipient allowlist enforcement ──────────────────────────────
+        # Build allowlist from enabled rows across ALL groups. /send-now is
+        # not scoped to a single group (the operator may want a cross-group
+        # one-shot), so enabled-anywhere is the right grain.
+        try:
+            all_recipients = backend.settings_store.list_notification_recipients()
+        except Exception:
+            backend.logger.exception("send_notification_now: recipient list lookup failed")
+            return jsonify({"message": "recipient allowlist lookup failed"}), 500
+        allowlist = {
+            str(r.get("address", "")).strip().lower()
+            for r in all_recipients
+            if r.get("enabled") and str(r.get("address", "")).strip()
+        }
+        rejected = [a for a in addresses if a.lower() not in allowlist]
+        if rejected:
+            backend.logger.warning(
+                "send_notification_now refused — recipient(s) not in allowlist: "
+                "actor=%s rejected=%s channel=%s",
+                _actor_username(backend), rejected, channel_id,
+            )
+            return jsonify({
+                "message": "one or more recipients are not in the enabled "
+                           "recipient table; refusing to send",
+                "rejected": rejected,
+            }), 403
+
+        actor = _actor_username(backend)
         try:
             result = backend.send_notification_now(
                 alert_event=event,
                 channel_id=int(channel_id),
                 recipient_addresses=addresses,
+            )
+            # Audit log AFTER successful enqueue so failures don't pollute
+            # the trail with non-deliveries.
+            backend.logger.info(
+                "send_notification_now AUDIT actor=%s channel=%s recipients=%s "
+                "alarmSource=%s/%s queued=%s",
+                actor or "(unknown)", channel_id, addresses,
+                event.get("source_type"), event.get("source_id"),
+                result.get("count"),
             )
             return jsonify(result), 202
         except ValueError as exc:
