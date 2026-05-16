@@ -158,6 +158,27 @@ def configure_logging(logging_config) -> logging.Logger:
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
+    # Werkzeug attaches its own access logger that emits one INFO line per
+    # HTTP request in `127.0.0.1 - - [date] "METHOD path HTTP/1.1" status -`
+    # format. That duplicates the structured request entry/exit log already
+    # produced (at DEBUG) by monigrid_be.py and bypasses our formatter, so
+    # `LOG_LEVEL=INFO` ends up noisier than the operator asked for.
+    #
+    # Policy:
+    #   - project level == DEBUG  → keep werkzeug at INFO so per-request
+    #     access lines remain visible alongside our own DEBUG entries
+    #     (operator explicitly opted in to noise).
+    #   - project level >= INFO   → set werkzeug to WARNING so only real
+    #     server warnings/errors surface; per-request lines suppressed.
+    #
+    # We deliberately do NOT touch waitress's logger — its INFO/WARN output
+    # (e.g. queue depth saturation) is genuinely useful operational signal.
+    _werkzeug_logger = logging.getLogger("werkzeug")
+    _werkzeug_logger.setLevel(
+        logging.INFO if logging_config.level <= logging.DEBUG else logging.WARNING
+    )
+    _werkzeug_logger.propagate = False
+
     level_name = logging.getLevelName(logging_config.level)
     _startup_log(
         logger,

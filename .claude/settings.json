@@ -4,7 +4,8 @@
       "Bash(dir monigrid-be\\\\.env*)",
       "Bash(xargs grep -l \"criteria\")",
       "Bash(where mysqldump *)",
-      "Bash(where mysql *)"
+      "Bash(where mysql *)",
+      "Bash(awk -F: '$1 > 1160 {print}')"
     ]
   }
 }
