@@ -1,0 +1,290 @@
+/* SendAlertNowModal — content-side styling.
+ *
+ * Chrome(.settings-overlay / .settings-popup / .settings-popup-header /
+ * .settings-popup-body / .close-settings-btn / .primary-btn / .secondary-btn)
+ * 은 프로젝트의 canonical 위젯 설정 모달 패밀리를 그대로 재사용한다.
+ * 이 파일은 본문(폼, 알람 리스트, 푸터) 의 다크 테마 토큰만 정의.
+ */
+
+/* ── Popup size ──────────────────────────────────────────── */
+
+.san-popup {
+    width: min(720px, 100%);
+    max-height: min(82vh, 760px);
+}
+
+/* ── Body container ──────────────────────────────────────── */
+
+.san-body {
+    /* settings-popup-body 기본은 display:grid; gap:16px — 알람 리스트
+       섹션이 그리드 row 로 자연 stack 됨. 패딩만 유지. */
+}
+
+/* ── Section card ────────────────────────────────────────── */
+
+.san-section {
+    background-color: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(148, 163, 184, 0.08);
+    border-radius: 12px;
+    padding: 14px 16px;
+}
+
+.san-section h6 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(25, 160, 255, 0.9);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.san-section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.san-section-meta {
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
+}
+
+/* ── Form (channel + group selects) ──────────────────────── */
+
+.san-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 14px;
+    margin-top: 10px;
+}
+
+.san-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.san-field > span {
+    font-size: 11px;
+    color: var(--text-tertiary, #64748b);
+}
+
+.san-field select {
+    padding: 7px 10px;
+    background-color: rgba(255, 255, 255, 0.03);
+    color: var(--text-primary, #e2e8f0);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 8px;
+    font-size: 12.5px;
+    width: 100%;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+.san-field select:focus {
+    outline: none;
+    border-color: rgba(25, 160, 255, 0.34);
+    box-shadow: 0 0 0 3px rgba(25, 160, 255, 0.10);
+}
+
+.san-field select option {
+    color: var(--text-primary, #e2e8f0);
+    background-color: var(--bg-elevated, #1a2332);
+}
+
+/* ── Check-all row ───────────────────────────────────────── */
+
+.san-check-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--text-secondary, #94a3b8);
+    margin-bottom: 6px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.san-check-all input { accent-color: rgb(56, 178, 255); }
+
+/* ── Alarm list ──────────────────────────────────────────── */
+
+.san-alarms {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    border: 1px solid rgba(148, 163, 184, 0.10);
+    border-radius: 10px;
+    overflow: hidden;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.san-alarm {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    transition: background-color 0.12s ease;
+}
+
+.san-alarm:last-child { border-bottom: none; }
+
+.san-alarm:hover { background-color: rgba(255, 255, 255, 0.025); }
+
+.san-alarm.is-selected {
+    background-color: rgba(25, 160, 255, 0.06);
+}
+
+.san-alarm-label {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    align-items: start;
+    gap: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+}
+
+.san-alarm-label input[type="checkbox"] {
+    margin-top: 3px;
+    accent-color: rgb(56, 178, 255);
+}
+
+.san-alarm-body {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.san-alarm-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.san-alarm-name {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-primary, #e2e8f0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.san-alarm-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 10.5px;
+    color: var(--text-tertiary, #64748b);
+}
+
+.san-alarm-meta .san-sep { opacity: 0.5; }
+
+.san-alarm-source {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.san-alarm-message {
+    font-size: 11.5px;
+    color: var(--text-secondary, #94a3b8);
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ── Severity chip ───────────────────────────────────────── */
+
+.san-severity {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    border: 1px solid transparent;
+    line-height: 1.6;
+    flex-shrink: 0;
+}
+
+.san-severity-info {
+    background: rgba(25, 160, 255, 0.15);
+    border-color: rgba(25, 160, 255, 0.40);
+    color: rgb(186, 224, 255);
+}
+
+.san-severity-warn {
+    background: rgba(234, 179, 8, 0.15);
+    border-color: rgba(234, 179, 8, 0.40);
+    color: rgb(253, 224, 71);
+}
+
+.san-severity-critical {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.40);
+    color: rgb(252, 165, 165);
+}
+
+/* ── Empty state ─────────────────────────────────────────── */
+
+.san-empty {
+    padding: 28px 16px;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.012);
+    border: 1px dashed rgba(148, 163, 184, 0.18);
+    border-radius: 10px;
+    color: var(--text-tertiary, #64748b);
+    font-size: 12px;
+}
+
+/* ── Footer ──────────────────────────────────────────────── */
+
+.san-footer {
+    background-color: rgba(255, 255, 255, 0.015);
+    padding: 12px 20px;
+    border-top: 1px solid rgba(148, 163, 184, 0.08);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.san-footer-btn {
+    /* primary-btn / secondary-btn 의 기본 사이즈가 11/15px 인데, footer
+       전용으로 살짝 축약해서 일반 모달 footer 와 톤을 맞춘다. */
+    padding: 8px 16px;
+    font-size: 12px;
+    border-radius: 8px;
+}
+
+/* .san-result 가 있으면 flex:1 로 좌측 공간을 차지해 버튼이 자연스럽게
+   우측 정렬됨. 없으면 첫 버튼에 margin-left:auto 로 오른쪽으로 민다. */
+.san-footer > .san-footer-btn:first-child {
+    margin-left: auto;
+}
+
+/* ── Result banner (inline, replaces browser alert) ──────── */
+
+.san-result {
+    flex: 1;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.san-result-ok {
+    background: rgba(34, 197, 94, 0.10);
+    border-color: rgba(34, 197, 94, 0.30);
+    color: rgb(134, 239, 172);
+}
+
+.san-result-err {
+    background: rgba(239, 68, 68, 0.10);
+    border-color: rgba(239, 68, 68, 0.30);
+    color: rgb(252, 165, 165);
+}

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { alertService } from "../services/dashboardService";
 import {
     notificationChannelService,
@@ -6,6 +7,8 @@ import {
     notificationRecipientService,
     notificationSendNowService,
 } from "../services/notificationService";
+import { IconClose } from "./icons";
+import "./SendAlertNowModal.css";
 
 /**
  * "Send currently-firing alarms to operator now" modal.
@@ -15,6 +18,11 @@ import {
  * (c) which alarms to include — then we enqueue (alarm × recipient) pairs
  * via notificationSendNowService. Bypasses rules/cooldown/silence by
  * design (this is the operator-driven escape hatch).
+ *
+ * Chrome (overlay / popup / header / footer) is aligned with the project's
+ * canonical widget-settings modal family (`.settings-overlay`,
+ * `.settings-popup`, `.close-settings-btn`, `.primary-btn`, `.secondary-btn`).
+ * createPortal + Esc + scroll-lock + autofocus follow WidgetSettingsModal.
  */
 export default function SendAlertNowModal({ open, onClose }) {
     const [alerts, setAlerts] = useState([]);
@@ -25,10 +33,30 @@ export default function SendAlertNowModal({ open, onClose }) {
     const [groupId, setGroupId] = useState(null);
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState(null);
+    const popupRef = useRef(null);
+
+    // Esc-to-close + background scroll lock — matches WidgetSettingsModal.
+    useEffect(() => {
+        if (!open) return undefined;
+        const handleKeyDown = (event) => {
+            if (event.key === "Escape") {
+                event.stopPropagation();
+                onClose?.();
+            }
+        };
+        document.addEventListener("keydown", handleKeyDown);
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.removeEventListener("keydown", handleKeyDown);
+            document.body.style.overflow = previousOverflow;
+        };
+    }, [open, onClose]);
 
     useEffect(() => {
         if (!open) return;
         let cancelled = false;
+        setResult(null);
         Promise.all([
             alertService.listActive().catch(() => ({ items: [] })),
             notificationChannelService.list().catch(() => []),
@@ -47,6 +75,17 @@ export default function SendAlertNowModal({ open, onClose }) {
         return () => { cancelled = true; };
     }, [open]);
 
+    // Autofocus: defer focus until the portal renders.
+    useEffect(() => {
+        if (!open) return;
+        const node = popupRef.current;
+        if (!node) return;
+        const focusable = node.querySelector(
+            "select:not([disabled]), input:not([disabled]), button:not([disabled])",
+        );
+        (focusable ?? node).focus({ preventScroll: true });
+    }, [open]);
+
     const toggle = (idx) => {
         const next = new Set(selected);
         if (next.has(idx)) next.delete(idx);
@@ -54,10 +93,15 @@ export default function SendAlertNowModal({ open, onClose }) {
         setSelected(next);
     };
 
+    const toggleAll = (checked) => {
+        if (checked) setSelected(new Set(alerts.map((_, i) => i)));
+        else setSelected(new Set());
+    };
+
     const send = async () => {
-        if (!channelId) { alert("채널을 선택하세요."); return; }
-        if (!groupId) { alert("수신자 그룹을 선택하세요."); return; }
-        if (selected.size === 0) { alert("최소 1건의 알람을 선택하세요."); return; }
+        if (!channelId) { setResult({ ok: false, detail: "채널을 선택하세요." }); return; }
+        if (!groupId) { setResult({ ok: false, detail: "수신자 그룹을 선택하세요." }); return; }
+        if (selected.size === 0) { setResult({ ok: false, detail: "최소 1건의 알람을 선택하세요." }); return; }
         setBusy(true);
         setResult(null);
         try {
@@ -85,9 +129,18 @@ export default function SendAlertNowModal({ open, onClose }) {
                 });
                 totalQueued += r.count || 0;
             }
-            setResult({ ok: true, detail: `${totalQueued}건 큐 적재 완료. 발송은 워커가 즉시 진행합니다.` });
+            setResult({
+                ok: true,
+                detail: `${totalQueued}건 큐 적재 완료. 발송은 워커가 즉시 진행합니다.`,
+            });
         } catch (err) {
-            setResult({ ok: false, detail: err?.response?.data?.message || err.message });
+            setResult({
+                ok: false,
+                detail: err?.response?.data?.detail
+                    || err?.response?.data?.message
+                    || err?.message
+                    || "전송 실패",
+            });
         } finally {
             setBusy(false);
         }
@@ -95,90 +148,159 @@ export default function SendAlertNowModal({ open, onClose }) {
 
     if (!open) return null;
 
-    return (
-        <div className="san-overlay" onClick={onClose}>
-            <div className="san-modal" onClick={(e) => e.stopPropagation()}>
-                <header>
-                    <h3>활성 알람 즉시 메일 전송</h3>
-                    <button type="button" onClick={onClose}>✕</button>
-                </header>
-                <div className="san-body">
-                    <div className="san-form">
-                        <label>채널
-                            <select value={channelId || ""} onChange={(e) => setChannelId(parseInt(e.target.value, 10))}>
-                                <option value="">(선택)</option>
-                                {channels.map((c) => (
-                                    <option key={c.id} value={c.id} disabled={!c.enabled}>
-                                        {c.kind} {c.enabled ? "" : "(꺼짐)"}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
-                        <label>수신자 그룹
-                            <select value={groupId || ""} onChange={(e) => setGroupId(parseInt(e.target.value, 10))}>
-                                <option value="">(선택)</option>
-                                {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                            </select>
-                        </label>
+    const titleId = "send-alert-now-title";
+    const allSelected = alerts.length > 0 && selected.size === alerts.length;
+    const someSelected = selected.size > 0 && !allSelected;
+
+    const modal = (
+        <div className="settings-overlay">
+            <div
+                ref={popupRef}
+                className="settings-popup san-popup"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={titleId}
+                tabIndex={-1}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="settings-popup-header">
+                    <div>
+                        <h5 id={titleId}>활성 알람 즉시 메일 전송</h5>
+                        <p>규칙 / 쿨다운 / 억제 규칙을 무시하고 선택한 수신자에게 즉시 발송합니다.</p>
                     </div>
-                    <h4>발송할 알람 ({selected.size}/{alerts.length}건)</h4>
-                    <ul className="san-alarms">
-                        {alerts.map((a, i) => (
-                            <li key={i}>
-                                <label>
-                                    <input type="checkbox" checked={selected.has(i)} onChange={() => toggle(i)} />
-                                    <span className="san-label">{a.label || a.sourceId}</span>
-                                    <span className="san-meta">{a.sourceType} / {a.metric || "-"}</span>
-                                    <span className="san-message">{a.message || ""}</span>
-                                </label>
-                            </li>
-                        ))}
-                        {alerts.length === 0 && <li className="san-muted">활성 알람이 없습니다.</li>}
-                    </ul>
+                    <button
+                        type="button"
+                        className="close-settings-btn"
+                        onClick={onClose}
+                        aria-label="닫기"
+                    >
+                        <IconClose size={14} />
+                    </button>
                 </div>
-                <footer>
+
+                <div className="settings-popup-body san-body">
+                    <section className="san-section">
+                        <h6>발송 대상</h6>
+                        <div className="san-form">
+                            <label className="san-field">
+                                <span>채널</span>
+                                <select
+                                    value={channelId || ""}
+                                    onChange={(e) => setChannelId(parseInt(e.target.value, 10) || null)}
+                                >
+                                    <option value="">(선택)</option>
+                                    {channels.map((c) => (
+                                        <option key={c.id} value={c.id} disabled={!c.enabled}>
+                                            #{c.id} · {c.kind}{c.enabled ? "" : " (꺼짐)"}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            <label className="san-field">
+                                <span>수신자 그룹</span>
+                                <select
+                                    value={groupId || ""}
+                                    onChange={(e) => setGroupId(parseInt(e.target.value, 10) || null)}
+                                >
+                                    <option value="">(선택)</option>
+                                    {groups.map((g) => (
+                                        <option key={g.id} value={g.id}>{g.name}</option>
+                                    ))}
+                                </select>
+                            </label>
+                        </div>
+                    </section>
+
+                    <section className="san-section">
+                        <div className="san-section-head">
+                            <h6>발송할 알람</h6>
+                            <span className="san-section-meta">
+                                {selected.size} / {alerts.length}건 선택
+                            </span>
+                        </div>
+
+                        {alerts.length === 0 ? (
+                            <div className="san-empty">활성 알람이 없습니다.</div>
+                        ) : (
+                            <>
+                                <label className="san-check-all">
+                                    <input
+                                        type="checkbox"
+                                        checked={allSelected}
+                                        ref={(el) => { if (el) el.indeterminate = someSelected; }}
+                                        onChange={(e) => toggleAll(e.target.checked)}
+                                    />
+                                    <span>전체 선택</span>
+                                </label>
+                                <ul className="san-alarms">
+                                    {alerts.map((a, i) => {
+                                        const isChecked = selected.has(i);
+                                        return (
+                                            <li
+                                                key={i}
+                                                className={`san-alarm ${isChecked ? "is-selected" : ""}`}
+                                            >
+                                                <label className="san-alarm-label">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isChecked}
+                                                        onChange={() => toggle(i)}
+                                                    />
+                                                    <div className="san-alarm-body">
+                                                        <div className="san-alarm-title">
+                                                            <span className={`san-severity san-severity-${(a.level || "warn").toLowerCase()}`}>
+                                                                {(a.level || "warn").toUpperCase()}
+                                                            </span>
+                                                            <span className="san-alarm-name">
+                                                                {a.label || a.sourceId}
+                                                            </span>
+                                                        </div>
+                                                        <div className="san-alarm-meta">
+                                                            <span>{a.sourceType || "-"}</span>
+                                                            <span className="san-sep">·</span>
+                                                            <span>{a.metric || "-"}</span>
+                                                            <span className="san-sep">·</span>
+                                                            <span className="san-alarm-source">{a.sourceId}</span>
+                                                        </div>
+                                                        {a.message && (
+                                                            <div className="san-alarm-message">{a.message}</div>
+                                                        )}
+                                                    </div>
+                                                </label>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            </>
+                        )}
+                    </section>
+                </div>
+
+                <div className="san-footer">
                     {result && (
-                        <div className={result.ok ? "san-ok" : "san-err"}>
+                        <div className={`san-result ${result.ok ? "san-result-ok" : "san-result-err"}`}>
                             {result.ok ? "✔ " : "✘ "}{result.detail}
                         </div>
                     )}
-                    <button type="button" onClick={onClose}>닫기</button>
-                    <button type="button" onClick={send} disabled={busy} className="san-primary">
+                    <button
+                        type="button"
+                        className="secondary-btn san-footer-btn"
+                        onClick={onClose}
+                    >
+                        닫기
+                    </button>
+                    <button
+                        type="button"
+                        className="primary-btn san-footer-btn"
+                        onClick={send}
+                        disabled={busy || alerts.length === 0}
+                    >
                         {busy ? "전송 중…" : "지금 발송"}
                     </button>
-                </footer>
+                </div>
             </div>
-            <style>{`
-                .san-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9999;
-                               display: flex; align-items: center; justify-content: center; }
-                .san-modal { background: white; border-radius: 8px; min-width: 520px; max-width: 720px;
-                             width: 80vw; max-height: 80vh; display: flex; flex-direction: column;
-                             box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
-                .san-modal header { padding: 12px 16px; border-bottom: 1px solid #e5e7eb;
-                                    display: flex; justify-content: space-between; align-items: center; }
-                .san-modal header h3 { margin: 0; font-size: 14px; }
-                .san-modal header button { background: none; border: none; cursor: pointer; font-size: 16px; }
-                .san-body { padding: 14px 16px; overflow: auto; flex: 1; }
-                .san-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-bottom: 14px; }
-                .san-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #374151; }
-                .san-form select { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; }
-                .san-modal h4 { font-size: 12px; color: #6b7280; margin: 12px 0 6px; }
-                .san-alarms { list-style: none; padding: 0; margin: 0; }
-                .san-alarms li { padding: 6px 0; border-bottom: 1px solid #f3f4f6; }
-                .san-alarms label { display: grid; grid-template-columns: 20px 1fr 200px; gap: 8px;
-                                    cursor: pointer; align-items: baseline; }
-                .san-label { font-weight: 500; }
-                .san-meta { color: #6b7280; font-size: 11px; }
-                .san-message { grid-column: 2 / -1; color: #6b7280; font-size: 11px; margin-top: 2px; }
-                .san-muted { color: #9ca3af; font-size: 12px; padding: 8px; }
-                .san-modal footer { padding: 10px 16px; border-top: 1px solid #e5e7eb;
-                                    display: flex; gap: 8px; align-items: center; }
-                .san-modal footer button { padding: 6px 14px; border-radius: 4px; cursor: pointer;
-                                          border: 1px solid #d1d5db; background: white; font-size: 13px; }
-                .san-modal footer .san-primary { background: #2563eb; color: white; border-color: #2563eb; margin-left: auto; }
-                .san-ok { color: #166534; font-size: 12px; flex: 1; }
-                .san-err { color: #991b1b; font-size: 12px; flex: 1; }
-            `}</style>
         </div>
     );
+
+    return createPortal(modal, document.body);
 }

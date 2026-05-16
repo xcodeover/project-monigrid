@@ -691,14 +691,25 @@ export default function ConfigEditorPage() {
     );
 
     // 활성 탭 → 어떤 binding 을 사용할지 결정. 위젯 그룹의 sub-tab 도 고려.
+    //
+    // 알림 탭은 ConfigEditorPage 가 자식 sub-tab(channels/rules/...) 을 직접
+    // 모르므로, NotificationsTab 의 각 패널이 "notif-channels"/"notif-rules"
+    // 같은 key 로 register 한다. 활성화된 패널은 한 번에 하나라 prefix 매치로
+    // 첫 번째 등록된 binding 을 찾아 그것을 active 로 본다.
     const activeBindingKey = useMemo(() => {
         if (activeTab === "widgetGroup") {
             if (activeWidgetSubTab === "apis") return "apis-list";
             if (SELF_BINDING_SUB_TABS.has(activeWidgetSubTab)) return activeWidgetSubTab;
         }
+        if (activeTab === "notifications") {
+            for (const k of Object.keys(tabBindings)) {
+                if (k.startsWith("notif-") && tabBindings[k]) return k;
+            }
+            return null;
+        }
         if (SELF_BINDING_TOP_TABS.has(activeTab)) return activeTab;
         return null;
-    }, [activeTab, activeWidgetSubTab]);
+    }, [activeTab, activeWidgetSubTab, tabBindings]);
     const activeBinding = activeBindingKey ? tabBindings[activeBindingKey] : null;
 
     // Draft state
@@ -816,12 +827,23 @@ export default function ConfigEditorPage() {
     // 완료 시점에 .finally() 로 false 로 리셋.
     const [discarding, setDiscarding] = useState(false);
 
-    // 페이지 전체 dirty — apiList / monitor / 일반 영역 합산. discarding 중엔 무시.
+    // 페이지 전체 dirty — apiList / monitor / 일반 영역 + 활성 self-binding
+    // 탭 (timemachine / notifications) 의 dirty 합산. discarding 중엔 무시.
+    //
+    // 주의: apiList / monitor 는 자체 state 로 이미 합산되고, 그 binding 의
+    // isDirty/dirtyCount 는 같은 값을 footer 표시에만 사용한다 (중복 합산
+    // 금지). 반면 timemachine 과 notif-* binding 은 자식 컴포넌트 내부
+    // state 라 부모가 직접 볼 수 없으므로 binding 으로만 합산해야 한다.
+    const isSelfBindingDirtyTab =
+        activeBindingKey === "timemachine" || activeBindingKey?.startsWith("notif-");
+    const activeBindingIsDirty = isSelfBindingDirtyTab && !!activeBinding?.isDirty;
+    const activeBindingDirtyCount = isSelfBindingDirtyTab ? (activeBinding?.dirtyCount || 0) : 0;
     const isPageDirty = !discarding
-        && (apiList.isDirty || monitorTotalDirty > 0 || generalDirty);
+        && (apiList.isDirty || monitorTotalDirty > 0 || generalDirty || activeBindingIsDirty);
     const pageDirtyCount = discarding
         ? 0
-        : apiList.dirtyCount.total + monitorTotalDirty + (generalDirty ? 1 : 0);
+        : apiList.dirtyCount.total + monitorTotalDirty + (generalDirty ? 1 : 0)
+          + activeBindingDirtyCount;
 
     // 닫기 가드 — 페이지 이탈 시 navigate
     const closeToDashboard = useCallback(() => {
@@ -1158,6 +1180,30 @@ export default function ConfigEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [apiList, endpointNewItemFactory]);
 
+    // 데이터 API sub-tab 의 dirty/save 정보를 footer binding 으로 노출.
+    // handleSave 는 매 렌더 새 closure 라 ref 로 latest 를 전달, useEffect 는
+    // dirty/saving 변경에만 재실행 → 무한 루프 회피 + footer 클릭 시 항상
+    // 최신 함수 호출.
+    // NOTE: 아래 hook 3개는 비밀번호 게이트(early return) 보다 반드시 위에
+    // 와야 한다. 그렇지 않으면 인증 전→후 전환 렌더에서 hook 개수가 늘어나
+    // "Rendered more hooks than during the previous render" 가 발생한다.
+    const handleSaveRef = useRef();
+    useEffect(() => {
+        handleSaveRef.current = handleSave;
+    });
+    useEffect(() => {
+        if (!verified) return undefined;
+        registerTabBinding("apis-list", {
+            _key: "apis-list",
+            isDirty: apiList.isDirty,
+            dirtyCount: apiList.dirtyCount.total,
+            isSaving: saving,
+            save: () => handleSaveRef.current?.(),
+            saveLabel: "저장 & 적용",
+        });
+        return () => registerTabBinding("apis-list", null);
+    }, [verified, apiList.isDirty, apiList.dirtyCount.total, saving, registerTabBinding]);
+
     /* ── 비밀번호 게이트 ───────────────────────────────────── */
     if (!isAdmin) return null;
 
@@ -1175,26 +1221,6 @@ export default function ConfigEditorPage() {
     }
 
     const apisVisibleCount = apiList.visibleItems.filter((a) => !a._isDeleted).length;
-
-    // 데이터 API sub-tab 의 dirty/save 정보를 footer binding 으로 노출.
-    // handleSave 는 매 렌더 새 closure 라 ref 로 latest 를 전달, useEffect 는
-    // dirty/saving 변경에만 재실행 → 무한 루프 회피 + footer 클릭 시 항상
-    // 최신 함수 호출.
-    const handleSaveRef = useRef();
-    useEffect(() => {
-        handleSaveRef.current = handleSave;
-    });
-    useEffect(() => {
-        registerTabBinding("apis-list", {
-            _key: "apis-list",
-            isDirty: apiList.isDirty,
-            dirtyCount: apiList.dirtyCount.total,
-            isSaving: saving,
-            save: () => handleSaveRef.current?.(),
-            saveLabel: "저장 & 적용",
-        });
-        return () => registerTabBinding("apis-list", null);
-    }, [apiList.isDirty, apiList.dirtyCount.total, saving, registerTabBinding]);
 
     return (
         <ConfigFooterContext.Provider value={footerCtxValue}>
@@ -1580,6 +1606,13 @@ export default function ConfigEditorPage() {
                     const dirtyCount = useBinding ? activeBinding.dirtyCount : null;
                     const onSave = useBinding ? activeBinding.save : handleSave;
                     const label = (activeBinding && activeBinding.saveLabel) || "저장 & 적용";
+                    // self-binding 탭(timemachine/notifications) 인데 현재
+                    // 활성 sub-panel 이 binding 을 등록 안 한 경우(예: 알림
+                    // master/groups/silences/queue) 페이지 PUT 이 호출되면
+                    // 사용자 의도와 다른 동작 → 비활성화. 일반 탭(general/
+                    // connections) 은 종전대로 페이지 PUT 활성.
+                    const isSelfBindingTab = SELF_BINDING_TOP_TABS.has(activeTab);
+                    const isOrphanedSelfBinding = isSelfBindingTab && !useBinding;
                     return (
                         <div className="cfgpage-footer-right">
                             {useBinding && dirtyCount != null && (
@@ -1594,7 +1627,15 @@ export default function ConfigEditorPage() {
                                 type="button"
                                 className="cfg-footer-btn cfg-btn-primary"
                                 onClick={() => onSave?.()}
-                                disabled={isSavingNow || loading || (useBinding && !isDirty)}
+                                disabled={
+                                    isSavingNow
+                                    || loading
+                                    || (useBinding && !isDirty)
+                                    || isOrphanedSelfBinding
+                                }
+                                title={isOrphanedSelfBinding
+                                    ? "현재 탭에는 저장할 변경 사항이 없습니다."
+                                    : undefined}
                             >
                                 {isSavingNow ? "저장 중..." : label}
                             </button>
